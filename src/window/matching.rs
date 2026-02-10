@@ -90,7 +90,8 @@ pub fn find_app(query: &str, apps: &[AppInfo], fuzzy_threshold: usize) -> Option
 /// Get list of running applications
 #[cfg(target_os = "macos")]
 pub fn get_running_apps() -> Result<Vec<AppInfo>> {
-    use objc2_app_kit::NSWorkspace;
+    use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
+    use std::collections::HashMap;
 
     let mut apps = Vec::new();
 
@@ -98,6 +99,12 @@ pub fn get_running_apps() -> Result<Vec<AppInfo>> {
     let running_apps = workspace.runningApplications();
 
     for app in running_apps.iter() {
+        // only include regular apps (those that appear in Dock and have UI)
+        // skip accessory apps and prohibited (background-only) apps
+        if app.activationPolicy() != NSApplicationActivationPolicy::Regular {
+            continue;
+        }
+
         let name = match app.localizedName() {
             Some(name) => name.to_string(),
             None => continue,
@@ -107,7 +114,6 @@ pub fn get_running_apps() -> Result<Vec<AppInfo>> {
 
         let bundle_id = app.bundleIdentifier().map(|s| s.to_string());
 
-        // skip background apps (those without a name or with pid -1)
         if !name.is_empty() && pid > 0 {
             apps.push(AppInfo {
                 name,
@@ -119,6 +125,21 @@ pub fn get_running_apps() -> Result<Vec<AppInfo>> {
 
     // sort alphabetically
     apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    // handle duplicate names by appending instance number
+    let mut name_counts: HashMap<String, usize> = HashMap::new();
+    for app in &apps {
+        *name_counts.entry(app.name.clone()).or_insert(0) += 1;
+    }
+
+    let mut name_indices: HashMap<String, usize> = HashMap::new();
+    for app in &mut apps {
+        if name_counts.get(&app.name).copied().unwrap_or(0) > 1 {
+            let idx = name_indices.entry(app.name.clone()).or_insert(0);
+            *idx += 1;
+            app.name = format!("{} ({})", app.name, idx);
+        }
+    }
 
     Ok(apps)
 }
