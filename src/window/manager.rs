@@ -188,7 +188,23 @@ unsafe fn set_window_position(window: AXUIElementRef, x: f64, y: f64) -> Result<
     core_foundation::base::CFRelease(position_value as CFTypeRef);
 
     if result != K_AX_ERROR_SUCCESS {
-        return Err(anyhow!("Failed to set window position (error: {})", result));
+        let err_msg = match result {
+            -25200 => "cannot complete (window may be fullscreen or app restricts access)",
+            -25201 => "invalid element",
+            -25202 => "invalid observer",
+            -25203 => "failure",
+            -25204 => "attribute unsupported",
+            -25205 => "action unsupported",
+            -25206 => "notification unsupported",
+            -25207 => "not implemented",
+            -25208 => "notification already registered",
+            -25209 => "notification not registered",
+            -25210 => "API disabled",
+            -25211 => "no value",
+            -25212 => "parameter error",
+            _ => "unknown error",
+        };
+        return Err(anyhow!("Failed to set window position: {} ({})", err_msg, result));
     }
 
     Ok(())
