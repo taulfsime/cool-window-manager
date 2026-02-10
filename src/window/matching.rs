@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use strsim::levenshtein;
 
 #[derive(Debug, Clone)]
@@ -91,7 +91,6 @@ pub fn find_app(query: &str, apps: &[AppInfo], fuzzy_threshold: usize) -> Option
 #[cfg(target_os = "macos")]
 pub fn get_running_apps() -> Result<Vec<AppInfo>> {
     use cocoa::base::nil;
-    use cocoa::foundation::NSString;
     use objc::runtime::Object;
 
     let mut apps = Vec::new();

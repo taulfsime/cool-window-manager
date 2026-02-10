@@ -472,7 +472,6 @@ fn get_usable_bounds_for_display(display_index: usize) -> Result<(f64, f64, f64,
         }
 
         let visible_frame: NSRect = msg_send![screen, visibleFrame];
-        let frame: NSRect = msg_send![screen, frame];
 
         // NSScreen uses bottom-left origin, AX uses top-left
         // also need to account for multi-display coordinate system

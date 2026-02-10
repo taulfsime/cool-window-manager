@@ -1,6 +1,9 @@
 mod schema;
 
-pub use schema::{should_launch, Behavior, Config, Matching, Shortcut};
+pub use schema::{should_launch, Config, Shortcut};
+
+#[allow(unused_imports)]
+pub use schema::{Behavior, Matching};
 
 use anyhow::{anyhow, Context, Result};
 use std::env;
@@ -87,27 +90,4 @@ fn parse_bool(value: &str) -> Result<bool> {
     }
 }
 
-pub fn add_shortcut(config: &mut Config, shortcut: Shortcut) -> Result<bool> {
-    // check if shortcut with same keys already exists
-    let existing_index = config
-        .shortcuts
-        .iter()
-        .position(|s| s.keys.to_lowercase() == shortcut.keys.to_lowercase());
 
-    if let Some(index) = existing_index {
-        // return false to indicate duplicate found, caller should ask for confirmation
-        config.shortcuts[index] = shortcut;
-        Ok(false)
-    } else {
-        config.shortcuts.push(shortcut);
-        Ok(true)
-    }
-}
-
-pub fn remove_shortcut_by_keys(config: &mut Config, keys: &str) -> bool {
-    let initial_len = config.shortcuts.len();
-    config
-        .shortcuts
-        .retain(|s| s.keys.to_lowercase() != keys.to_lowercase());
-    config.shortcuts.len() < initial_len
-}

@@ -27,26 +27,7 @@ pub struct Shortcut {
     pub launch_if_not_running: Option<bool>,
 }
 
-impl Shortcut {
-    pub fn new(keys: String, action: String) -> Self {
-        Self {
-            keys,
-            action,
-            app: None,
-            launch_if_not_running: None,
-        }
-    }
 
-    pub fn with_app(mut self, app: String) -> Self {
-        self.app = Some(app);
-        self
-    }
-
-    pub fn with_launch(mut self, launch: bool) -> Self {
-        self.launch_if_not_running = Some(launch);
-        self
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Matching {

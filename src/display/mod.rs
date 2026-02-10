@@ -2,7 +2,6 @@ use anyhow::{anyhow, Result};
 
 #[derive(Debug, Clone)]
 pub struct DisplayInfo {
-    pub id: u32,
     pub index: usize,
     pub name: String,
     pub width: u32,
@@ -40,7 +39,6 @@ pub fn get_displays() -> Result<Vec<DisplayInfo>> {
             let bounds = display.bounds();
 
             DisplayInfo {
-                id,
                 index,
                 name: format!("Display {}", id),
                 width: bounds.size.width as u32,

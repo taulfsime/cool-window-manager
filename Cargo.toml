@@ -32,6 +32,9 @@ tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 thiserror = "1"
 
+# Signal handling
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2"

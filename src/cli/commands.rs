@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 
-use crate::config::{self, Config};
+use crate::config::{self, Config, Shortcut};
+use crate::daemon::hotkeys;
 use crate::display;
 use crate::window::{accessibility, manager, matching};
 
@@ -127,12 +128,15 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum DaemonCommands {
-    /// Start the daemon
+    /// Start the daemon in the background
     Start,
     /// Stop the daemon
     Stop,
     /// Check daemon status
     Status,
+    /// Run the daemon in the foreground (used internally)
+    #[command(hide = true)]
+    RunForeground,
 }
 
 #[derive(Subcommand)]
@@ -306,31 +310,114 @@ pub fn execute(cli: Cli) -> Result<()> {
         }
 
         Commands::RecordShortcut {
-            action: _,
-            app: _,
-            launch: _,
-            no_launch: _,
-            yes: _,
+            action,
+            app,
+            launch,
+            no_launch,
+            yes,
         } => {
-            println!("Record shortcut command not yet implemented");
-            println!("This will capture keyboard input and output a shortcut string.");
+            // record the hotkey
+            let keys = hotkeys::record_hotkey()?;
+            println!("\nDetected: {}", keys);
+
+            // if no action specified, just print the keys and exit
+            if action.is_none() {
+                println!("\nTo save this shortcut, run with --action:");
+                println!("  cwm record-shortcut --action focus --app \"AppName\"");
+                return Ok(());
+            }
+
+            let action = action.unwrap();
+
+            // validate action
+            let valid_actions = ["focus", "maximize"];
+            let is_valid = valid_actions.contains(&action.as_str())
+                || action.starts_with("move_display:");
+
+            if !is_valid {
+                return Err(anyhow!(
+                    "Invalid action: '{}'. Valid actions: focus, maximize, move_display:next, move_display:prev, move_display:N",
+                    action
+                ));
+            }
+
+            // focus requires app
+            if action == "focus" && app.is_none() {
+                return Err(anyhow!("Action 'focus' requires --app to be specified"));
+            }
+
+            // build the shortcut
+            let mut shortcut = Shortcut {
+                keys: keys.clone(),
+                action: action.clone(),
+                app: app.clone(),
+                launch_if_not_running: None,
+            };
+
+            if launch {
+                shortcut.launch_if_not_running = Some(true);
+            } else if no_launch {
+                shortcut.launch_if_not_running = Some(false);
+            }
+
+            // show what will be added
+            let json = serde_json::to_string_pretty(&shortcut)
+                .context("Failed to serialize shortcut")?;
+            println!("\nShortcut to add:\n{}", json);
+
+            // load config and check for duplicates
+            let mut config = config::load()?;
+            let existing = config
+                .shortcuts
+                .iter()
+                .position(|s| s.keys.to_lowercase() == keys.to_lowercase());
+
+            if let Some(idx) = existing {
+                let existing_shortcut = &config.shortcuts[idx];
+                println!(
+                    "\nWarning: '{}' is already bound to '{}'",
+                    keys, existing_shortcut.action
+                );
+
+                if !yes {
+                    print!("Overwrite? [y/N]: ");
+                    use std::io::{self, Write};
+                    io::stdout().flush()?;
+
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+
+                    if !input.trim().eq_ignore_ascii_case("y") {
+                        println!("Cancelled.");
+                        return Ok(());
+                    }
+                }
+
+                config.shortcuts[idx] = shortcut;
+            } else {
+                config.shortcuts.push(shortcut);
+            }
+
+            // save config
+            config::save(&config)?;
+            println!("\nSaved to {}", config::get_config_path().display());
+
             Ok(())
         }
 
         Commands::Daemon { command } => match command {
             DaemonCommands::Start => {
-                println!("Starting daemon...");
-                println!("Daemon start not yet implemented");
-                Ok(())
+                crate::daemon::start()
             }
             DaemonCommands::Stop => {
-                println!("Stopping daemon...");
-                println!("Daemon stop not yet implemented");
-                Ok(())
+                crate::daemon::stop()
             }
             DaemonCommands::Status => {
-                println!("Daemon status not yet implemented");
+                crate::daemon::status()?;
                 Ok(())
+            }
+            DaemonCommands::RunForeground => {
+                crate::daemon::start_foreground()
             }
         },
 
