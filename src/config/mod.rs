@@ -2,9 +2,6 @@ mod schema;
 
 pub use schema::{should_launch, Config, Shortcut};
 
-#[allow(unused_imports)]
-pub use schema::{Behavior, Matching};
-
 use anyhow::{anyhow, Context, Result};
 use std::env;
 use std::fs;

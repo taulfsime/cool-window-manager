@@ -2,7 +2,10 @@ pub mod hotkeys;
 pub mod ipc;
 
 use anyhow::{anyhow, Result};
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use crate::config::{self, should_launch, Config};
 use crate::window::{manager, matching};
@@ -11,12 +14,60 @@ use hotkeys::Hotkey;
 use ipc::{get_pid_file_path, is_daemon_running, remove_pid_file, write_pid_file};
 
 static DAEMON_SHOULD_STOP: AtomicBool = AtomicBool::new(false);
+static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
+
+fn log(msg: &str) {
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let line = format!("[{}] {}", timestamp, msg);
+
+    if let Ok(mut guard) = LOG_FILE.lock() {
+        if let Some(ref mut file) = *guard {
+            let _ = writeln!(file, "{}", line);
+            let _ = file.flush();
+            return;
+        }
+    }
+
+    println!("{}", line);
+}
+
+fn log_err(msg: &str) {
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let line = format!("[{}] ERROR: {}", timestamp, msg);
+
+    if let Ok(mut guard) = LOG_FILE.lock() {
+        if let Some(ref mut file) = *guard {
+            let _ = writeln!(file, "{}", line);
+            let _ = file.flush();
+            return;
+        }
+    }
+
+    eprintln!("{}", line);
+}
+
+fn setup_logging(log_path: Option<String>) -> Result<()> {
+    if let Some(path) = log_path {
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| anyhow!("Failed to open log file '{}': {}", path, e))?;
+
+        if let Ok(mut guard) = LOG_FILE.lock() {
+            *guard = Some(file);
+        }
+    }
+    Ok(())
+}
 
 /// Start the daemon in the foreground (blocking)
-pub fn start_foreground() -> Result<()> {
+pub fn start_foreground(log_path: Option<String>) -> Result<()> {
     if is_daemon_running() {
         return Err(anyhow!("Daemon is already running"));
     }
+
+    setup_logging(log_path)?;
 
     // write PID file
     write_pid_file()?;
@@ -24,73 +75,79 @@ pub fn start_foreground() -> Result<()> {
     // set up signal handler for graceful shutdown
     setup_signal_handlers()?;
 
-    println!("cwm daemon starting...");
+    log("cwm daemon starting...");
 
     // load config
     let config = config::load()?;
 
     if config.shortcuts.is_empty() {
-        println!("No shortcuts configured. Add shortcuts with 'cwm record-shortcut'");
+        log("No shortcuts configured. Add shortcuts with 'cwm record-shortcut'");
     } else {
-        println!("Loaded {} shortcut(s)", config.shortcuts.len());
+        log(&format!("Loaded {} shortcut(s)", config.shortcuts.len()));
     }
 
     // parse shortcuts into hotkeys
     let shortcuts = parse_shortcuts(&config)?;
 
     if shortcuts.is_empty() {
-        println!("No valid shortcuts to listen for");
+        log("No valid shortcuts to listen for");
         remove_pid_file()?;
         return Ok(());
     }
 
     for (hotkey, action) in &shortcuts {
-        println!("  {} -> {}", hotkey.to_string(), action);
+        log(&format!("  {} -> {}", hotkey.to_string(), action));
     }
 
-    println!("\nListening for hotkeys... (Ctrl+C to stop)");
+    log("Listening for hotkeys... (Ctrl+C to stop)");
 
     // clone config for the callback
     let config_for_callback = config.clone();
 
     // start the hotkey listener
-    hotkeys::start_hotkey_listener(shortcuts, move |action, _hotkey| {
+    hotkeys::start_hotkey_listener(shortcuts, move |action, hotkey| {
+        log(&format!("Hotkey triggered: {} -> {}", hotkey.to_string(), action));
         if let Err(e) = execute_action(action, &config_for_callback) {
-            eprintln!("Error executing action '{}': {}", action, e);
+            log_err(&format!("Failed to execute '{}': {}", action, e));
         }
     })?;
 
     // cleanup
     remove_pid_file()?;
-    println!("\nDaemon stopped.");
+    log("Daemon stopped.");
 
     Ok(())
 }
 
 /// Start the daemon in the background (daemonized)
-pub fn start() -> Result<()> {
+pub fn start(log_path: Option<String>) -> Result<()> {
     if is_daemon_running() {
         return Err(anyhow!("Daemon is already running"));
     }
 
-    // fork the process
     #[cfg(target_os = "macos")]
     {
         use std::process::Command;
 
-        // get the current executable path
         let exe = std::env::current_exe()?;
 
-        // spawn a detached child process that runs the daemon
-        let child = Command::new(&exe)
-            .arg("daemon")
-            .arg("run-foreground")
+        let mut cmd = Command::new(&exe);
+        cmd.arg("daemon").arg("run-foreground");
+
+        if let Some(ref path) = log_path {
+            cmd.arg("--log").arg(path);
+        }
+
+        let child = cmd
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()?;
 
         println!("Daemon started with PID {}", child.id());
+        if let Some(path) = log_path {
+            println!("Logging to: {}", path);
+        }
         println!("Use 'cwm daemon status' to check status");
         println!("Use 'cwm daemon stop' to stop");
     }
@@ -113,7 +170,6 @@ pub fn stop() -> Result<()> {
     let pid_str = std::fs::read_to_string(&pid_path)?;
     let pid: i32 = pid_str.trim().parse()?;
 
-    // send SIGTERM to the daemon
     #[cfg(target_os = "macos")]
     {
         use std::process::Command;
@@ -126,12 +182,10 @@ pub fn stop() -> Result<()> {
         if status.success() {
             println!("Sent stop signal to daemon (PID {})", pid);
 
-            // wait a bit for it to stop
             std::thread::sleep(std::time::Duration::from_millis(500));
 
             if !is_daemon_running() {
                 println!("Daemon stopped");
-                // clean up PID file if it still exists
                 let _ = remove_pid_file();
             } else {
                 println!("Daemon may still be stopping...");
@@ -167,14 +221,12 @@ pub fn status() -> Result<bool> {
     Ok(running)
 }
 
-/// Parse shortcuts from config into Hotkey structs
 fn parse_shortcuts(config: &Config) -> Result<Vec<(Hotkey, String)>> {
     let mut result = Vec::new();
 
     for shortcut in &config.shortcuts {
         match Hotkey::parse(&shortcut.keys) {
             Ok(hotkey) => {
-                // build action string including app if present
                 let action = if let Some(ref app) = shortcut.app {
                     format!("{}:{}", shortcut.action, app)
                 } else {
@@ -183,7 +235,7 @@ fn parse_shortcuts(config: &Config) -> Result<Vec<(Hotkey, String)>> {
                 result.push((hotkey, action));
             }
             Err(e) => {
-                eprintln!("Warning: Invalid shortcut '{}': {}", shortcut.keys, e);
+                log_err(&format!("Invalid shortcut '{}': {}", shortcut.keys, e));
             }
         }
     }
@@ -191,9 +243,7 @@ fn parse_shortcuts(config: &Config) -> Result<Vec<(Hotkey, String)>> {
     Ok(result)
 }
 
-/// Execute an action triggered by a hotkey
 fn execute_action(action: &str, config: &Config) -> Result<()> {
-    // parse action string
     let (action_type, action_arg) = if let Some(idx) = action.find(':') {
         (&action[..idx], Some(&action[idx + 1..]))
     } else {
@@ -204,7 +254,6 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
         "focus" => {
             let app_name = action_arg.ok_or_else(|| anyhow!("focus action requires app name"))?;
 
-            // find the shortcut config for this action to get launch_if_not_running
             let shortcut_launch = find_shortcut_launch(config, action);
 
             let running_apps = matching::get_running_apps()?;
@@ -236,7 +285,6 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
         "move_display" => {
             let target_str = action_arg.ok_or_else(|| anyhow!("move_display requires target"))?;
 
-            // check if there's an app specified after the target
             let (display_target_str, app_name) = if let Some(idx) = target_str.find(':') {
                 (&target_str[..idx], Some(&target_str[idx + 1..]))
             } else {
@@ -263,7 +311,6 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Find the launch_if_not_running setting for a specific action
 fn find_shortcut_launch(config: &Config, action: &str) -> Option<bool> {
     for shortcut in &config.shortcuts {
         let shortcut_action = if let Some(ref app) = shortcut.app {
@@ -279,7 +326,6 @@ fn find_shortcut_launch(config: &Config, action: &str) -> Option<bool> {
     None
 }
 
-/// Set up signal handlers for graceful shutdown
 fn setup_signal_handlers() -> Result<()> {
     #[cfg(target_os = "macos")]
     {

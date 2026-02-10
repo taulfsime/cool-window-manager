@@ -129,14 +129,26 @@ pub enum Commands {
 #[derive(Subcommand)]
 pub enum DaemonCommands {
     /// Start the daemon in the background
-    Start,
+    Start {
+        /// Log file path (default: no logging when in background)
+        #[arg(long)]
+        log: Option<String>,
+
+        /// Run in foreground instead of daemonizing
+        #[arg(long, short)]
+        foreground: bool,
+    },
     /// Stop the daemon
     Stop,
     /// Check daemon status
     Status,
     /// Run the daemon in the foreground (used internally)
     #[command(hide = true)]
-    RunForeground,
+    RunForeground {
+        /// Log file path
+        #[arg(long)]
+        log: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -406,8 +418,12 @@ pub fn execute(cli: Cli) -> Result<()> {
         }
 
         Commands::Daemon { command } => match command {
-            DaemonCommands::Start => {
-                crate::daemon::start()
+            DaemonCommands::Start { log, foreground } => {
+                if foreground {
+                    crate::daemon::start_foreground(log)
+                } else {
+                    crate::daemon::start(log)
+                }
             }
             DaemonCommands::Stop => {
                 crate::daemon::stop()
@@ -416,8 +432,8 @@ pub fn execute(cli: Cli) -> Result<()> {
                 crate::daemon::status()?;
                 Ok(())
             }
-            DaemonCommands::RunForeground => {
-                crate::daemon::start_foreground()
+            DaemonCommands::RunForeground { log } => {
+                crate::daemon::start_foreground(log)
             }
         },
 

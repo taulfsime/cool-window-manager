@@ -35,6 +35,9 @@ thiserror = "1"
 # Signal handling
 libc = "0.2"
 
+# Logging timestamps
+chrono = "0.4"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2"
