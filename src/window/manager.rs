@@ -469,7 +469,7 @@ fn find_display_for_point(x: f64, y: f64, displays: &[crate::display::DisplayInf
 
 /// Get usable bounds for a specific display (excluding menu bar and dock)
 #[cfg(target_os = "macos")]
-fn get_usable_bounds_for_display(display_index: usize) -> Result<(f64, f64, f64, f64)> {
+fn get_usable_bounds_for_display(display: &crate::display::DisplayInfo) -> Result<(f64, f64, f64, f64)> {
     use cocoa::base::nil;
     use cocoa::foundation::{NSArray, NSRect};
     use objc::runtime::Object;
@@ -478,30 +478,44 @@ fn get_usable_bounds_for_display(display_index: usize) -> Result<(f64, f64, f64,
         let screens: *mut Object = msg_send![class!(NSScreen), screens];
         let count: usize = NSArray::count(screens) as usize;
 
-        if display_index >= count {
-            return Err(anyhow!("Display index {} out of range", display_index));
-        }
-
-        let screen: *mut Object = NSArray::objectAtIndex(screens, display_index as u64);
-        if screen == nil {
-            return Err(anyhow!("Failed to get screen at index {}", display_index));
-        }
-
-        let visible_frame: NSRect = msg_send![screen, visibleFrame];
-
-        // NSScreen uses bottom-left origin, AX uses top-left
-        // also need to account for multi-display coordinate system
+        // find the screen that matches our display by comparing frame coordinates
         let main_screen: *mut Object = msg_send![class!(NSScreen), mainScreen];
         let main_frame: NSRect = msg_send![main_screen, frame];
 
-        // convert y coordinate relative to main screen
-        let y = main_frame.size.height - visible_frame.origin.y - visible_frame.size.height;
+        for i in 0..count {
+            let screen: *mut Object = NSArray::objectAtIndex(screens, i as u64);
+            if screen == nil {
+                continue;
+            }
 
+            let frame: NSRect = msg_send![screen, frame];
+
+            // convert NSScreen coordinates (bottom-left origin) to our coordinates (top-left origin)
+            let screen_x = frame.origin.x as i32;
+            let screen_y = (main_frame.size.height - frame.origin.y - frame.size.height) as i32;
+
+            // check if this screen matches our display
+            if screen_x == display.x && screen_y == display.y {
+                let visible_frame: NSRect = msg_send![screen, visibleFrame];
+
+                // convert y coordinate
+                let y = main_frame.size.height - visible_frame.origin.y - visible_frame.size.height;
+
+                return Ok((
+                    visible_frame.origin.x,
+                    y,
+                    visible_frame.size.width,
+                    visible_frame.size.height,
+                ));
+            }
+        }
+
+        // fallback: use display bounds directly (no menu bar/dock adjustment)
         Ok((
-            visible_frame.origin.x,
-            y,
-            visible_frame.size.width,
-            visible_frame.size.height,
+            display.x as f64,
+            display.y as f64,
+            display.width as f64,
+            display.height as f64,
         ))
     }
 }
@@ -559,7 +573,7 @@ pub fn move_to_display(
     }
 
     // get usable bounds for target display
-    let (tx, ty, tw, th) = get_usable_bounds_for_display(target_display.index)?;
+    let (tx, ty, tw, th) = get_usable_bounds_for_display(target_display)?;
 
     if verbose {
         println!("Target display usable bounds: {}x{} at ({}, {})", tw, th, tx, ty);
