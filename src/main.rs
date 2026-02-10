@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate objc;
-
 mod cli;
 mod config;
 mod daemon;

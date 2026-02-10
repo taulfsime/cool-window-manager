@@ -426,17 +426,14 @@ mod macos {
 
     /// Get the current frontmost application PID
     fn get_frontmost_pid() -> i32 {
-        use objc::runtime::Object;
+        use objc2_app_kit::NSWorkspace;
         
-        unsafe {
-            let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
-            let frontmost: *mut Object = msg_send![workspace, frontmostApplication];
-            
-            if frontmost.is_null() {
-                return -1;
-            }
-            
-            msg_send![frontmost, processIdentifier]
+        let workspace = NSWorkspace::sharedWorkspace();
+        let frontmost = workspace.frontmostApplication();
+        
+        match frontmost {
+            Some(app) => app.processIdentifier(),
+            None => -1,
         }
     }
 

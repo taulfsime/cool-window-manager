@@ -34,10 +34,9 @@ const K_AX_ERROR_SUCCESS: i32 = 0;
 
 /// Focus an application by bringing it to the foreground
 #[cfg(target_os = "macos")]
+#[allow(deprecated)]
 pub fn focus_app(app: &AppInfo, verbose: bool) -> Result<()> {
-    use cocoa::appkit::NSApplicationActivateIgnoringOtherApps;
-    use cocoa::base::nil;
-    use objc::runtime::Object;
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 
     if !accessibility::is_trusted() {
         return Err(anyhow!(
@@ -49,24 +48,19 @@ pub fn focus_app(app: &AppInfo, verbose: bool) -> Result<()> {
         println!("Focusing: {} (PID: {})", app.name, app.pid);
     }
 
-    unsafe {
-        let running_app: *mut Object = msg_send![
-            class!(NSRunningApplication),
-            runningApplicationWithProcessIdentifier: app.pid
-        ];
+    let running_app = NSRunningApplication::runningApplicationWithProcessIdentifier(app.pid);
 
-        if running_app == nil {
-            return Err(anyhow!("Could not find running application with PID {}", app.pid));
-        }
+    let Some(running_app) = running_app else {
+        return Err(anyhow!("Could not find running application with PID {}", app.pid));
+    };
 
-        let success: bool = msg_send![
-            running_app,
-            activateWithOptions: NSApplicationActivateIgnoringOtherApps
-        ];
+    // ActivateIgnoringOtherApps is deprecated in macOS 14 but still works for older versions
+    let success = running_app.activateWithOptions(
+        NSApplicationActivationOptions::ActivateIgnoringOtherApps,
+    );
 
-        if !success {
-            return Err(anyhow!("Failed to activate application: {}", app.name));
-        }
+    if !success {
+        return Err(anyhow!("Failed to activate application: {}", app.name));
     }
 
     if verbose {
@@ -143,18 +137,17 @@ extern "C" {
 /// Get the focused window (from the frontmost application)
 #[cfg(target_os = "macos")]
 unsafe fn get_focused_window() -> Result<(AXUIElementRef, i32)> {
-    use cocoa::base::nil;
-    use objc::runtime::Object;
+    use objc2_app_kit::NSWorkspace;
 
     // get the frontmost application
-    let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
-    let frontmost_app: *mut Object = msg_send![workspace, frontmostApplication];
+    let workspace = NSWorkspace::sharedWorkspace();
+    let frontmost_app = workspace.frontmostApplication();
 
-    if frontmost_app == nil {
+    let Some(frontmost_app) = frontmost_app else {
         return Err(anyhow!("No frontmost application"));
-    }
+    };
 
-    let pid: i32 = msg_send![frontmost_app, processIdentifier];
+    let pid = frontmost_app.processIdentifier();
 
     if pid <= 0 {
         return Err(anyhow!("Invalid PID for frontmost application"));
@@ -257,39 +250,48 @@ extern "C" {
 /// Get the display bounds, accounting for menu bar
 #[cfg(target_os = "macos")]
 fn get_usable_display_bounds() -> (f64, f64, f64, f64) {
-    use cocoa::base::nil;
-    use cocoa::foundation::NSRect;
-    use objc::runtime::Object;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSScreen;
 
-    unsafe {
-        let screen: *mut Object = msg_send![class!(NSScreen), mainScreen];
-        if screen == nil {
-            // fallback to CGDisplay
-            let display = CGDisplay::main();
-            let bounds = display.bounds();
-            return (
-                bounds.origin.x,
-                bounds.origin.y,
-                bounds.size.width,
-                bounds.size.height,
-            );
-        }
+    // try to get main thread marker - if we're not on main thread, fall back to CGDisplay
+    let Some(mtm) = MainThreadMarker::new() else {
+        let display = CGDisplay::main();
+        let bounds = display.bounds();
+        return (
+            bounds.origin.x,
+            bounds.origin.y,
+            bounds.size.width,
+            bounds.size.height,
+        );
+    };
 
-        // visibleFrame excludes menu bar and dock
-        let visible_frame: NSRect = msg_send![screen, visibleFrame];
-        let frame: NSRect = msg_send![screen, frame];
+    let screen = NSScreen::mainScreen(mtm);
+    let Some(screen) = screen else {
+        // fallback to CGDisplay
+        let display = CGDisplay::main();
+        let bounds = display.bounds();
+        return (
+            bounds.origin.x,
+            bounds.origin.y,
+            bounds.size.width,
+            bounds.size.height,
+        );
+    };
 
-        // NSScreen uses bottom-left origin, but AX uses top-left
-        // convert y coordinate
-        let y = frame.size.height - visible_frame.origin.y - visible_frame.size.height;
+    // visibleFrame excludes menu bar and dock
+    let visible_frame = screen.visibleFrame();
+    let frame = screen.frame();
 
-        (
-            visible_frame.origin.x,
-            y,
-            visible_frame.size.width,
-            visible_frame.size.height,
-        )
-    }
+    // NSScreen uses bottom-left origin, but AX uses top-left
+    // convert y coordinate
+    let y = frame.size.height - visible_frame.origin.y - visible_frame.size.height;
+
+    (
+        visible_frame.origin.x,
+        y,
+        visible_frame.size.width,
+        visible_frame.size.height,
+    )
 }
 
 /// Maximize a window to fill the screen
@@ -470,54 +472,64 @@ fn find_display_for_point(x: f64, y: f64, displays: &[crate::display::DisplayInf
 /// Get usable bounds for a specific display (excluding menu bar and dock)
 #[cfg(target_os = "macos")]
 fn get_usable_bounds_for_display(display: &crate::display::DisplayInfo) -> Result<(f64, f64, f64, f64)> {
-    use cocoa::base::nil;
-    use cocoa::foundation::{NSArray, NSRect};
-    use objc::runtime::Object;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSScreen;
 
-    unsafe {
-        let screens: *mut Object = msg_send![class!(NSScreen), screens];
-        let count: usize = NSArray::count(screens) as usize;
-
-        // find the screen that matches our display by comparing frame coordinates
-        let main_screen: *mut Object = msg_send![class!(NSScreen), mainScreen];
-        let main_frame: NSRect = msg_send![main_screen, frame];
-
-        for i in 0..count {
-            let screen: *mut Object = NSArray::objectAtIndex(screens, i as u64);
-            if screen == nil {
-                continue;
-            }
-
-            let frame: NSRect = msg_send![screen, frame];
-
-            // convert NSScreen coordinates (bottom-left origin) to our coordinates (top-left origin)
-            let screen_x = frame.origin.x as i32;
-            let screen_y = (main_frame.size.height - frame.origin.y - frame.size.height) as i32;
-
-            // check if this screen matches our display
-            if screen_x == display.x && screen_y == display.y {
-                let visible_frame: NSRect = msg_send![screen, visibleFrame];
-
-                // convert y coordinate
-                let y = main_frame.size.height - visible_frame.origin.y - visible_frame.size.height;
-
-                return Ok((
-                    visible_frame.origin.x,
-                    y,
-                    visible_frame.size.width,
-                    visible_frame.size.height,
-                ));
-            }
-        }
-
-        // fallback: use display bounds directly (no menu bar/dock adjustment)
-        Ok((
+    // try to get main thread marker - if we're not on main thread, fall back to display bounds
+    let Some(mtm) = MainThreadMarker::new() else {
+        return Ok((
             display.x as f64,
             display.y as f64,
             display.width as f64,
             display.height as f64,
-        ))
+        ));
+    };
+
+    let screens = NSScreen::screens(mtm);
+    let main_screen = NSScreen::mainScreen(mtm);
+
+    let Some(main_screen) = main_screen else {
+        // fallback: use display bounds directly
+        return Ok((
+            display.x as f64,
+            display.y as f64,
+            display.width as f64,
+            display.height as f64,
+        ));
+    };
+
+    let main_frame = main_screen.frame();
+
+    for screen in screens.iter() {
+        let frame = screen.frame();
+
+        // convert NSScreen coordinates (bottom-left origin) to our coordinates (top-left origin)
+        let screen_x = frame.origin.x as i32;
+        let screen_y = (main_frame.size.height - frame.origin.y - frame.size.height) as i32;
+
+        // check if this screen matches our display
+        if screen_x == display.x && screen_y == display.y {
+            let visible_frame = screen.visibleFrame();
+
+            // convert y coordinate
+            let y = main_frame.size.height - visible_frame.origin.y - visible_frame.size.height;
+
+            return Ok((
+                visible_frame.origin.x,
+                y,
+                visible_frame.size.width,
+                visible_frame.size.height,
+            ));
+        }
     }
+
+    // fallback: use display bounds directly (no menu bar/dock adjustment)
+    Ok((
+        display.x as f64,
+        display.y as f64,
+        display.width as f64,
+        display.height as f64,
+    ))
 }
 
 /// Move a window to another display

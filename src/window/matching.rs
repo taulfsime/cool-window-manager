@@ -90,58 +90,30 @@ pub fn find_app(query: &str, apps: &[AppInfo], fuzzy_threshold: usize) -> Option
 /// Get list of running applications
 #[cfg(target_os = "macos")]
 pub fn get_running_apps() -> Result<Vec<AppInfo>> {
-    use cocoa::base::nil;
-    use objc::runtime::Object;
+    use objc2_app_kit::NSWorkspace;
 
     let mut apps = Vec::new();
 
-    unsafe {
-        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let running_apps: *mut Object = msg_send![workspace, runningApplications];
-        let count: usize = msg_send![running_apps, count];
+    let workspace = NSWorkspace::sharedWorkspace();
+    let running_apps = workspace.runningApplications();
 
-        for i in 0..count {
-            let app: *mut Object = msg_send![running_apps, objectAtIndex: i];
+    for app in running_apps.iter() {
+        let name = match app.localizedName() {
+            Some(name) => name.to_string(),
+            None => continue,
+        };
 
-            let name_ns: *mut Object = msg_send![app, localizedName];
-            if name_ns == nil {
-                continue;
-            }
+        let pid = app.processIdentifier();
 
-            let name_ptr: *const i8 = msg_send![name_ns, UTF8String];
-            if name_ptr.is_null() {
-                continue;
-            }
-            let name = std::ffi::CStr::from_ptr(name_ptr)
-                .to_string_lossy()
-                .into_owned();
+        let bundle_id = app.bundleIdentifier().map(|s| s.to_string());
 
-            let pid: i32 = msg_send![app, processIdentifier];
-
-            let bundle_id_ns: *mut Object = msg_send![app, bundleIdentifier];
-            let bundle_id = if bundle_id_ns != nil {
-                let bundle_ptr: *const i8 = msg_send![bundle_id_ns, UTF8String];
-                if !bundle_ptr.is_null() {
-                    Some(
-                        std::ffi::CStr::from_ptr(bundle_ptr)
-                            .to_string_lossy()
-                            .into_owned(),
-                    )
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            // skip background apps (those without a name or with pid -1)
-            if !name.is_empty() && pid > 0 {
-                apps.push(AppInfo {
-                    name,
-                    pid,
-                    bundle_id,
-                });
-            }
+        // skip background apps (those without a name or with pid -1)
+        if !name.is_empty() && pid > 0 {
+            apps.push(AppInfo {
+                name,
+                pid,
+                bundle_id,
+            });
         }
     }
 
@@ -153,7 +125,7 @@ pub fn get_running_apps() -> Result<Vec<AppInfo>> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn get_running_apps() -> Result<Vec<AppInfo>> {
-    Err(anyhow!("Getting running apps is only supported on macOS"))
+    Err(anyhow::anyhow!("Getting running apps is only supported on macOS"))
 }
 
 
