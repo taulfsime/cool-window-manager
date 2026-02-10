@@ -142,6 +142,18 @@ pub enum DaemonCommands {
     Stop,
     /// Check daemon status
     Status,
+    /// Install daemon to run on login
+    Install {
+        /// Path to cwm binary (defaults to current executable)
+        #[arg(long)]
+        bin: Option<String>,
+
+        /// Log file path for the daemon
+        #[arg(long)]
+        log: Option<String>,
+    },
+    /// Uninstall daemon from login items
+    Uninstall,
     /// Run the daemon in the foreground (used internally)
     #[command(hide = true)]
     RunForeground {
@@ -431,6 +443,12 @@ pub fn execute(cli: Cli) -> Result<()> {
             DaemonCommands::Status => {
                 crate::daemon::status()?;
                 Ok(())
+            }
+            DaemonCommands::Install { bin, log } => {
+                crate::daemon::install(bin, log)
+            }
+            DaemonCommands::Uninstall => {
+                crate::daemon::uninstall()
             }
             DaemonCommands::RunForeground { log } => {
                 crate::daemon::start_foreground(log)

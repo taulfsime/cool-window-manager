@@ -1,5 +1,6 @@
 pub mod hotkeys;
 pub mod ipc;
+mod launchd;
 
 use anyhow::{anyhow, Result};
 use std::fs::{File, OpenOptions};
@@ -12,6 +13,7 @@ use crate::window::{manager, matching};
 
 use hotkeys::Hotkey;
 use ipc::{get_pid_file_path, is_daemon_running, remove_pid_file, write_pid_file};
+pub use launchd::{install, uninstall};
 
 static DAEMON_SHOULD_STOP: AtomicBool = AtomicBool::new(false);
 static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);

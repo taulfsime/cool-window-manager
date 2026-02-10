@@ -146,7 +146,13 @@ Manage the background daemon for global hotkeys.
 cwm daemon start
 cwm daemon stop
 cwm daemon status
+cwm daemon install              # install to run on login
+cwm daemon uninstall            # remove from login items
 ```
+
+Options for `install`:
+- `--bin <PATH>` - Path to cwm binary (defaults to current executable)
+- `--log <PATH>` - Log file path for the daemon
 
 ## Configuration
 
