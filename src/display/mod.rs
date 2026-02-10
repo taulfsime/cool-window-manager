@@ -9,6 +9,12 @@ pub struct DisplayInfo {
     pub x: i32,
     pub y: i32,
     pub is_main: bool,
+    pub display_id: u32,
+    pub vendor_id: Option<u32>,
+    pub model_id: Option<u32>,
+    pub serial_number: Option<u32>,
+    pub unit_number: u32,
+    pub is_builtin: bool,
 }
 
 impl DisplayInfo {
@@ -18,6 +24,56 @@ impl DisplayInfo {
             "Display {}: {} - {}x{} at ({}, {}){}",
             self.index, self.name, self.width, self.height, self.x, self.y, main_marker
         )
+    }
+
+    pub fn describe_detailed(&self) -> String {
+        let mut lines = vec![format!("Display {}:", self.index)];
+        lines.push(format!("  Name:          {}", self.name));
+        lines.push(format!("  Resolution:    {}x{}", self.width, self.height));
+        lines.push(format!("  Position:      ({}, {})", self.x, self.y));
+        lines.push(format!("  Display ID:    {}", self.display_id));
+        lines.push(format!("  Unit Number:   {}", self.unit_number));
+
+        if let Some(vendor) = self.vendor_id {
+            lines.push(format!("  Vendor ID:     0x{:04X} ({})", vendor, vendor_name(vendor)));
+        }
+        if let Some(model) = self.model_id {
+            lines.push(format!("  Model ID:      0x{:04X}", model));
+        }
+        if let Some(serial) = self.serial_number {
+            lines.push(format!("  Serial Number: {}", serial));
+        }
+
+        lines.push(format!("  Built-in:      {}", if self.is_builtin { "Yes" } else { "No" }));
+        lines.push(format!("  Main Display:  {}", if self.is_main { "Yes" } else { "No" }));
+
+        lines.join("\n")
+    }
+
+    /// unique identifier that persists across reboots
+    /// format: vendor_model_serial (if available) or display_id
+    pub fn unique_id(&self) -> String {
+        match (self.vendor_id, self.model_id, self.serial_number) {
+            (Some(v), Some(m), Some(s)) => format!("{:04X}_{:04X}_{}", v, m, s),
+            (Some(v), Some(m), None) => format!("{:04X}_{:04X}_unit{}", v, m, self.unit_number),
+            _ => format!("display_{}", self.display_id),
+        }
+    }
+}
+
+fn vendor_name(vendor_id: u32) -> &'static str {
+    match vendor_id {
+        0x0610 => "Apple",
+        0x1E6D => "LG",
+        0x10AC => "Dell",
+        0x0469 => "HP",
+        0x34AC => "Samsung",
+        0x0E6A => "ASUS",
+        0x0D1E => "BenQ",
+        0x0220 => "ViewSonic",
+        0x0026 => "Acer",
+        0x4C2D => "Lenovo",
+        _ => "Unknown",
     }
 }
 
@@ -38,14 +94,29 @@ pub fn get_displays() -> Result<Vec<DisplayInfo>> {
             let display = CGDisplay::new(id);
             let bounds = display.bounds();
 
+            let vendor_id = display.vendor_number();
+            let model_id = display.model_number();
+            let serial_number = display.serial_number();
+            let unit_number = display.unit_number();
+            let is_builtin = display.is_builtin();
+
+            // try to get a meaningful name
+            let name = get_display_name(id, vendor_id, model_id, is_builtin);
+
             DisplayInfo {
                 index,
-                name: format!("Display {}", id),
+                name,
                 width: bounds.size.width as u32,
                 height: bounds.size.height as u32,
                 x: bounds.origin.x as i32,
                 y: bounds.origin.y as i32,
                 is_main: id == main_display_id,
+                display_id: id,
+                vendor_id: if vendor_id != 0 { Some(vendor_id) } else { None },
+                model_id: if model_id != 0 { Some(model_id) } else { None },
+                serial_number: if serial_number != 0 { Some(serial_number) } else { None },
+                unit_number,
+                is_builtin,
             }
         })
         .collect();
@@ -59,6 +130,56 @@ pub fn get_displays() -> Result<Vec<DisplayInfo>> {
     }
 
     Ok(displays)
+}
+
+#[cfg(target_os = "macos")]
+fn get_display_name(display_id: u32, vendor_id: u32, model_id: u32, is_builtin: bool) -> String {
+    // try to get the localized name from IOKit via NSScreen
+    if let Some(name) = get_nsscreen_name(display_id) {
+        return name;
+    }
+
+    // fallback to a descriptive name
+    if is_builtin {
+        return "Built-in Display".to_string();
+    }
+
+    let vendor = vendor_name(vendor_id);
+    if vendor != "Unknown" {
+        format!("{} Display (0x{:04X})", vendor, model_id)
+    } else {
+        format!("External Display {}", display_id)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn get_nsscreen_name(display_id: u32) -> Option<String> {
+    use objc2_app_kit::NSScreen;
+    use objc2::MainThreadMarker;
+    use objc2::msg_send;
+
+    // NSScreen requires main thread
+    let mtm = MainThreadMarker::new()?;
+    let screens = NSScreen::screens(mtm);
+
+    for screen in screens.iter() {
+        let device_desc = screen.deviceDescription();
+        let screen_number_key = objc2_foundation::NSString::from_str("NSScreenNumber");
+
+        if let Some(screen_number) = device_desc.objectForKey(&screen_number_key) {
+            // NSScreenNumber is an NSNumber containing the CGDirectDisplayID
+            let screen_id: u32 = unsafe {
+                msg_send![&*screen_number, unsignedIntValue]
+            };
+
+            if screen_id == display_id {
+                let localized_name = screen.localizedName();
+                return Some(localized_name.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -123,7 +244,7 @@ pub fn resolve_target_display<'a>(
     Ok(&displays[target_index])
 }
 
-pub fn print_displays() -> Result<()> {
+pub fn print_displays(detailed: bool) -> Result<()> {
     let displays = get_displays()?;
 
     if displays.is_empty() {
@@ -131,9 +252,20 @@ pub fn print_displays() -> Result<()> {
         return Ok(());
     }
 
-    println!("Available displays:");
-    for display in &displays {
-        println!("  {}", display.describe());
+    if detailed {
+        println!("Connected Displays:\n");
+        for (i, display) in displays.iter().enumerate() {
+            println!("{}", display.describe_detailed());
+            println!("  Unique ID:     {}", display.unique_id());
+            if i < displays.len() - 1 {
+                println!();
+            }
+        }
+    } else {
+        println!("Available displays:");
+        for display in &displays {
+            println!("  {}", display.describe());
+        }
     }
 
     Ok(())
@@ -153,6 +285,12 @@ mod tests {
                 x: 0,
                 y: 0,
                 is_main: true,
+                display_id: 1,
+                vendor_id: Some(0x0610),
+                model_id: Some(0xA032),
+                serial_number: None,
+                unit_number: 0,
+                is_builtin: true,
             },
             DisplayInfo {
                 index: 1,
@@ -162,6 +300,12 @@ mod tests {
                 x: 2560,
                 y: 0,
                 is_main: false,
+                display_id: 2,
+                vendor_id: Some(0x1E6D),
+                model_id: Some(0x5B11),
+                serial_number: Some(12345),
+                unit_number: 0,
+                is_builtin: false,
             },
             DisplayInfo {
                 index: 2,
@@ -171,6 +315,12 @@ mod tests {
                 x: 6400,
                 y: 0,
                 is_main: false,
+                display_id: 3,
+                vendor_id: Some(0x10AC),
+                model_id: Some(0xD0B3),
+                serial_number: Some(67890),
+                unit_number: 0,
+                is_builtin: false,
             },
         ]
     }
@@ -185,6 +335,12 @@ mod tests {
             x: 100,
             y: 200,
             is_main: false,
+            display_id: 1,
+            vendor_id: None,
+            model_id: None,
+            serial_number: None,
+            unit_number: 0,
+            is_builtin: false,
         };
         assert_eq!(
             display.describe(),
@@ -202,11 +358,77 @@ mod tests {
             x: 0,
             y: 0,
             is_main: true,
+            display_id: 1,
+            vendor_id: Some(0x0610),
+            model_id: Some(0xA032),
+            serial_number: None,
+            unit_number: 0,
+            is_builtin: true,
         };
         assert_eq!(
             display.describe(),
             "Display 0: Main Display - 2560x1440 at (0, 0) (main)"
         );
+    }
+
+    #[test]
+    fn test_unique_id_with_serial() {
+        let display = DisplayInfo {
+            index: 0,
+            name: "Test".to_string(),
+            width: 1920,
+            height: 1080,
+            x: 0,
+            y: 0,
+            is_main: false,
+            display_id: 123,
+            vendor_id: Some(0x1E6D),
+            model_id: Some(0x5B11),
+            serial_number: Some(12345),
+            unit_number: 0,
+            is_builtin: false,
+        };
+        assert_eq!(display.unique_id(), "1E6D_5B11_12345");
+    }
+
+    #[test]
+    fn test_unique_id_without_serial() {
+        let display = DisplayInfo {
+            index: 0,
+            name: "Test".to_string(),
+            width: 1920,
+            height: 1080,
+            x: 0,
+            y: 0,
+            is_main: false,
+            display_id: 123,
+            vendor_id: Some(0x0610),
+            model_id: Some(0xA032),
+            serial_number: None,
+            unit_number: 2,
+            is_builtin: true,
+        };
+        assert_eq!(display.unique_id(), "0610_A032_unit2");
+    }
+
+    #[test]
+    fn test_unique_id_fallback() {
+        let display = DisplayInfo {
+            index: 0,
+            name: "Test".to_string(),
+            width: 1920,
+            height: 1080,
+            x: 0,
+            y: 0,
+            is_main: false,
+            display_id: 456,
+            vendor_id: None,
+            model_id: None,
+            serial_number: None,
+            unit_number: 0,
+            is_builtin: false,
+        };
+        assert_eq!(display.unique_id(), "display_456");
     }
 
     #[test]
@@ -339,6 +561,12 @@ mod tests {
             x: 0,
             y: 0,
             is_main: true,
+            display_id: 1,
+            vendor_id: None,
+            model_id: None,
+            serial_number: None,
+            unit_number: 0,
+            is_builtin: true,
         }];
 
         // next wraps to same display

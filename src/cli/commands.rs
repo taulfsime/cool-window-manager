@@ -135,7 +135,11 @@ pub enum Commands {
     },
 
     /// List available displays
-    ListDisplays,
+    ListDisplays {
+        /// Show detailed information including identifiers
+        #[arg(short, long)]
+        detailed: bool,
+    },
 
     /// List running application windows
     ListWindows,
@@ -568,8 +572,8 @@ pub fn execute(cli: Cli) -> Result<()> {
             }
         },
 
-        Commands::ListDisplays => {
-            display::print_displays()?;
+        Commands::ListDisplays { detailed } => {
+            display::print_displays(detailed)?;
             Ok(())
         }
 

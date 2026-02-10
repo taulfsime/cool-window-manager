@@ -125,11 +125,22 @@ cwm list-windows
 
 ### list-displays
 
-List available displays.
+List available displays with their identifiers.
 
 ```bash
-cwm list-displays
+cwm list-displays                # simple view
+cwm list-displays --detailed     # show all identifiers
 ```
+
+Options:
+- `--detailed, -d` - Show detailed information including vendor ID, model ID, serial number, and unique ID
+
+The detailed view shows:
+- **Display ID** - macOS display identifier (may change on reconnect)
+- **Vendor ID** - Manufacturer ID with known vendor names (Apple, LG, Dell, etc.)
+- **Model ID** - Model identifier
+- **Serial Number** - Display serial (if available)
+- **Unique ID** - Stable identifier for the display (vendor_model_serial or vendor_model_unitN)
 
 ### config
 
