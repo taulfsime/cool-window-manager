@@ -141,8 +141,8 @@ pub enum Commands {
         detailed: bool,
     },
 
-    /// List running application windows
-    ListWindows,
+    /// List running applications
+    ListApps,
 
     /// Check accessibility permissions
     CheckPermissions {
@@ -217,7 +217,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             let config = config::load()?;
             let running_apps = matching::get_running_apps()?;
 
-            let match_result = matching::find_app(&app, &running_apps, config.matching.fuzzy_threshold);
+            let match_result = matching::find_app(&app, &running_apps, config.settings.fuzzy_threshold);
 
             match match_result {
                 Some(result) => {
@@ -231,11 +231,11 @@ pub fn execute(cli: Cli) -> Result<()> {
                 }
                 None => {
                     // app not found, check if we should launch
-                        let should_launch = config::should_launch(
+                    let should_launch = config::should_launch(
                         launch,
                         no_launch,
                         None,
-                        config.behavior.launch_if_not_running,
+                        config.settings.launch,
                     );
 
                     if should_launch {
@@ -270,7 +270,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             let target_app = if let Some(app_name) = app {
                 let running_apps = matching::get_running_apps()?;
                 let match_result =
-                    matching::find_app(&app_name, &running_apps, config.matching.fuzzy_threshold);
+                    matching::find_app(&app_name, &running_apps, config.settings.fuzzy_threshold);
 
                 match match_result {
                     Some(result) => {
@@ -280,11 +280,11 @@ pub fn execute(cli: Cli) -> Result<()> {
                         Some(result.app)
                     }
                     None => {
-                    let should_launch = config::should_launch(
+                        let should_launch = config::should_launch(
                             launch,
                             no_launch,
                             None,
-                            config.behavior.launch_if_not_running,
+                            config.settings.launch,
                         );
 
                         if should_launch {
@@ -305,7 +305,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 None
             };
 
-            manager::maximize_window(target_app.as_ref(), verbose)?;
+            manager::maximize_app(target_app.as_ref(), verbose)?;
             Ok(())
         }
 
@@ -322,7 +322,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             let target_app = if let Some(app_name) = app {
                 let running_apps = matching::get_running_apps()?;
                 let match_result =
-                    matching::find_app(&app_name, &running_apps, config.matching.fuzzy_threshold);
+                    matching::find_app(&app_name, &running_apps, config.settings.fuzzy_threshold);
 
                 match match_result {
                     Some(result) => {
@@ -336,7 +336,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                             launch,
                             no_launch,
                             None,
-                            config.behavior.launch_if_not_running,
+                            config.settings.launch,
                         );
 
                         if should_launch {
@@ -384,7 +384,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             let target_app = if let Some(app_name) = app {
                 let running_apps = matching::get_running_apps()?;
                 let match_result =
-                    matching::find_app(&app_name, &running_apps, config.matching.fuzzy_threshold);
+                    matching::find_app(&app_name, &running_apps, config.settings.fuzzy_threshold);
 
                 match match_result {
                     Some(result) => {
@@ -398,7 +398,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                             launch,
                             no_launch,
                             None,
-                            config.behavior.launch_if_not_running,
+                            config.settings.launch,
                         );
 
                         if should_launch {
@@ -417,7 +417,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 None
             };
 
-            manager::resize_window(target_app.as_ref(), percent, verbose)?;
+            manager::resize_app(target_app.as_ref(), percent, verbose)?;
             Ok(())
         }
 
@@ -464,13 +464,13 @@ pub fn execute(cli: Cli) -> Result<()> {
                 keys: keys.clone(),
                 action: action.clone(),
                 app: app.clone(),
-                launch_if_not_running: None,
+                launch: None,
             };
 
             if launch {
-                shortcut.launch_if_not_running = Some(true);
+                shortcut.launch = Some(true);
             } else if no_launch {
-                shortcut.launch_if_not_running = Some(false);
+                shortcut.launch = Some(false);
             }
 
             // show what will be added
@@ -577,7 +577,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             Ok(())
         }
 
-        Commands::ListWindows => {
+        Commands::ListApps => {
             let apps = matching::get_running_apps()?;
             println!("Running applications:");
             for app in &apps {

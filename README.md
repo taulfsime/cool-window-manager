@@ -115,12 +115,12 @@ Options:
 - `--no-launch` - Never launch app
 - `--verbose, -v` - Show details
 
-### list-windows
+### list-apps
 
 List all running applications.
 
 ```bash
-cwm list-windows
+cwm list-apps
 ```
 
 ### list-displays
@@ -154,9 +154,13 @@ cwm config reset                 # reset to defaults
 ```
 
 Config keys:
-- `behavior.launch_if_not_running` - Launch apps if not running (true/false)
-- `behavior.animate` - Animate window movements (true/false)
-- `matching.fuzzy_threshold` - Levenshtein distance threshold (default: 2)
+- `settings.launch` - Launch apps if not running (true/false)
+- `settings.animate` - Animate window movements (true/false)
+- `settings.fuzzy_threshold` - Levenshtein distance threshold (default: 2)
+- `settings.delay_ms` - Default delay before app rule actions (default: 500)
+- `settings.retry.count` - Number of retry attempts (default: 10)
+- `settings.retry.delay_ms` - Initial retry delay in milliseconds (default: 100)
+- `settings.retry.backoff` - Backoff multiplier for each retry (default: 1.5)
 
 ### record-shortcut
 
@@ -196,7 +200,7 @@ Example config:
       "keys": "ctrl+alt+s",
       "action": "focus",
       "app": "Slack",
-      "launch_if_not_running": true
+      "launch": true
     },
     {
       "keys": "ctrl+alt+c",
@@ -231,16 +235,16 @@ Example config:
       "delay_ms": 1000
     }
   ],
-  "matching": {
-    "fuzzy_threshold": 2
-  },
-  "behavior": {
-    "launch_if_not_running": false,
+  "settings": {
+    "fuzzy_threshold": 2,
+    "launch": false,
     "animate": false,
-    "app_rule_delay_ms": 500,
-    "app_rule_retry_count": 10,
-    "app_rule_retry_delay_ms": 100,
-    "app_rule_retry_backoff": 1.5
+    "delay_ms": 500,
+    "retry": {
+      "count": 10,
+      "delay_ms": 100,
+      "backoff": 1.5
+    }
   }
 }
 ```
@@ -250,7 +254,7 @@ Example config:
 - `keys` - Key combination (e.g., `ctrl+alt+s`, `cmd+shift+return`)
 - `action` - One of: `focus`, `maximize`, `move_display:next`, `move_display:prev`, `move_display:N`, `resize:N`, `resize:full`
 - `app` - Target app name (optional for maximize/move_display/resize)
-- `launch_if_not_running` - Override global setting (optional)
+- `launch` - Override global setting (optional)
 
 ### App rules
 
@@ -260,12 +264,12 @@ App rules automatically apply actions when applications are launched. The daemon
 - `action` - Same action format as shortcuts: `maximize`, `move_display:N`, `resize:N`, etc.
 - `delay_ms` - Delay in milliseconds before executing the action (optional, overrides global setting)
 
-The global default delay is set via `behavior.app_rule_delay_ms` (default: 500ms). This delay allows the window to appear before the action is applied.
+The global default delay is set via `settings.delay_ms` (default: 500ms). This delay allows the window to appear before the action is applied.
 
 If the window is not ready after the initial delay, the action will be retried with exponential backoff:
-- `app_rule_retry_count` - Number of retry attempts (default: 10)
-- `app_rule_retry_delay_ms` - Initial retry delay in milliseconds (default: 100)
-- `app_rule_retry_backoff` - Backoff multiplier for each retry (default: 1.5, meaning each retry waits 1.5x longer)
+- `settings.retry.count` - Number of retry attempts (default: 10)
+- `settings.retry.delay_ms` - Initial retry delay in milliseconds (default: 100)
+- `settings.retry.backoff` - Backoff multiplier for each retry (default: 1.5, meaning each retry waits 1.5x longer)
 
 This is useful for automatically moving apps to specific monitors or resizing them when launched.
 

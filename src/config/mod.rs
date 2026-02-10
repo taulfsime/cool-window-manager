@@ -54,20 +54,40 @@ pub fn set_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
     let parts: Vec<&str> = key.split('.').collect();
 
     match parts.as_slice() {
-        ["behavior", "launch_if_not_running"] => {
-            config.behavior.launch_if_not_running = parse_bool(value)?;
+        ["settings", "launch"] => {
+            config.settings.launch = parse_bool(value)?;
         }
-        ["behavior", "animate"] => {
-            config.behavior.animate = parse_bool(value)?;
+        ["settings", "animate"] => {
+            config.settings.animate = parse_bool(value)?;
         }
-        ["matching", "fuzzy_threshold"] => {
-            config.matching.fuzzy_threshold = value
+        ["settings", "fuzzy_threshold"] => {
+            config.settings.fuzzy_threshold = value
+                .parse()
+                .with_context(|| format!("Invalid number: {}", value))?;
+        }
+        ["settings", "delay_ms"] => {
+            config.settings.delay_ms = value
+                .parse()
+                .with_context(|| format!("Invalid number: {}", value))?;
+        }
+        ["settings", "retry", "count"] => {
+            config.settings.retry.count = value
+                .parse()
+                .with_context(|| format!("Invalid number: {}", value))?;
+        }
+        ["settings", "retry", "delay_ms"] => {
+            config.settings.retry.delay_ms = value
+                .parse()
+                .with_context(|| format!("Invalid number: {}", value))?;
+        }
+        ["settings", "retry", "backoff"] => {
+            config.settings.retry.backoff = value
                 .parse()
                 .with_context(|| format!("Invalid number: {}", value))?;
         }
         _ => {
             return Err(anyhow!(
-                "Unknown config key: {}. Valid keys: behavior.launch_if_not_running, behavior.animate, matching.fuzzy_threshold",
+                "Unknown config key: {}. Valid keys: settings.launch, settings.animate, settings.fuzzy_threshold, settings.delay_ms, settings.retry.count, settings.retry.delay_ms, settings.retry.backoff",
                 key
             ));
         }
@@ -124,54 +144,89 @@ mod tests {
     }
 
     #[test]
-    fn test_set_value_launch_if_not_running() {
+    fn test_set_value_launch() {
         let mut config = Config::default();
-        assert!(!config.behavior.launch_if_not_running);
+        assert!(!config.settings.launch);
 
-        set_value(&mut config, "behavior.launch_if_not_running", "true").unwrap();
-        assert!(config.behavior.launch_if_not_running);
+        set_value(&mut config, "settings.launch", "true").unwrap();
+        assert!(config.settings.launch);
 
-        set_value(&mut config, "behavior.launch_if_not_running", "false").unwrap();
-        assert!(!config.behavior.launch_if_not_running);
+        set_value(&mut config, "settings.launch", "false").unwrap();
+        assert!(!config.settings.launch);
     }
 
     #[test]
     fn test_set_value_animate() {
         let mut config = Config::default();
-        assert!(!config.behavior.animate);
+        assert!(!config.settings.animate);
 
-        set_value(&mut config, "behavior.animate", "yes").unwrap();
-        assert!(config.behavior.animate);
+        set_value(&mut config, "settings.animate", "yes").unwrap();
+        assert!(config.settings.animate);
 
-        set_value(&mut config, "behavior.animate", "no").unwrap();
-        assert!(!config.behavior.animate);
+        set_value(&mut config, "settings.animate", "no").unwrap();
+        assert!(!config.settings.animate);
     }
 
     #[test]
     fn test_set_value_fuzzy_threshold() {
         let mut config = Config::default();
-        assert_eq!(config.matching.fuzzy_threshold, 2);
+        assert_eq!(config.settings.fuzzy_threshold, 2);
 
-        set_value(&mut config, "matching.fuzzy_threshold", "5").unwrap();
-        assert_eq!(config.matching.fuzzy_threshold, 5);
+        set_value(&mut config, "settings.fuzzy_threshold", "5").unwrap();
+        assert_eq!(config.settings.fuzzy_threshold, 5);
 
-        set_value(&mut config, "matching.fuzzy_threshold", "0").unwrap();
-        assert_eq!(config.matching.fuzzy_threshold, 0);
+        set_value(&mut config, "settings.fuzzy_threshold", "0").unwrap();
+        assert_eq!(config.settings.fuzzy_threshold, 0);
+    }
+
+    #[test]
+    fn test_set_value_delay_ms() {
+        let mut config = Config::default();
+        assert_eq!(config.settings.delay_ms, 500);
+
+        set_value(&mut config, "settings.delay_ms", "1000").unwrap();
+        assert_eq!(config.settings.delay_ms, 1000);
+    }
+
+    #[test]
+    fn test_set_value_retry_count() {
+        let mut config = Config::default();
+        assert_eq!(config.settings.retry.count, 10);
+
+        set_value(&mut config, "settings.retry.count", "5").unwrap();
+        assert_eq!(config.settings.retry.count, 5);
+    }
+
+    #[test]
+    fn test_set_value_retry_delay_ms() {
+        let mut config = Config::default();
+        assert_eq!(config.settings.retry.delay_ms, 100);
+
+        set_value(&mut config, "settings.retry.delay_ms", "200").unwrap();
+        assert_eq!(config.settings.retry.delay_ms, 200);
+    }
+
+    #[test]
+    fn test_set_value_retry_backoff() {
+        let mut config = Config::default();
+        assert_eq!(config.settings.retry.backoff, 1.5);
+
+        set_value(&mut config, "settings.retry.backoff", "2.0").unwrap();
+        assert_eq!(config.settings.retry.backoff, 2.0);
     }
 
     #[test]
     fn test_set_value_invalid_key() {
         let mut config = Config::default();
         assert!(set_value(&mut config, "invalid.key", "true").is_err());
-        assert!(set_value(&mut config, "behavior", "true").is_err());
-        assert!(set_value(&mut config, "behavior.unknown", "true").is_err());
+        assert!(set_value(&mut config, "settings", "true").is_err());
+        assert!(set_value(&mut config, "settings.unknown", "true").is_err());
     }
 
     #[test]
     fn test_set_value_invalid_value() {
         let mut config = Config::default();
-        assert!(set_value(&mut config, "behavior.animate", "maybe").is_err());
-        assert!(set_value(&mut config, "matching.fuzzy_threshold", "abc").is_err());
-        assert!(set_value(&mut config, "matching.fuzzy_threshold", "-1").is_err());
+        assert!(set_value(&mut config, "settings.animate", "maybe").is_err());
+        assert!(set_value(&mut config, "settings.fuzzy_threshold", "abc").is_err());
     }
 }

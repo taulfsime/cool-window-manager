@@ -119,7 +119,7 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
     // start app watcher if we have rules
     if has_app_rules {
         let config_for_watcher = config.clone();
-        let global_delay = config.behavior.app_rule_delay_ms;
+        let global_delay = config.settings.delay_ms;
         app_watcher::start_watching(config.app_rules.clone(), move |rule, _pid| {
             let delay = rule.delay_ms.unwrap_or(global_delay);
             log(&format!("App '{}' launched, executing: {} (delay: {}ms)", rule.app_name, rule.action, delay));
@@ -296,14 +296,14 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
             let shortcut_launch = find_shortcut_launch(config, action);
 
             let running_apps = matching::get_running_apps()?;
-            let match_result = matching::find_app(app_name, &running_apps, config.matching.fuzzy_threshold);
+            let match_result = matching::find_app(app_name, &running_apps, config.settings.fuzzy_threshold);
 
             match match_result {
                 Some(result) => {
                     manager::focus_app(&result.app, false)?;
                 }
                 None => {
-                    let do_launch = should_launch(false, false, shortcut_launch, config.behavior.launch_if_not_running);
+                    let do_launch = should_launch(false, false, shortcut_launch, config.settings.launch);
                     if do_launch {
                         manager::launch_app(app_name, false)?;
                     }
@@ -313,13 +313,13 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
         "maximize" => {
             let target_app = if let Some(app_name) = action_arg {
                 let running_apps = matching::get_running_apps()?;
-                matching::find_app(app_name, &running_apps, config.matching.fuzzy_threshold)
+                matching::find_app(app_name, &running_apps, config.settings.fuzzy_threshold)
                     .map(|r| r.app)
             } else {
                 None
             };
 
-            manager::maximize_window(target_app.as_ref(), false)?;
+            manager::maximize_app(target_app.as_ref(), false)?;
         }
         "move_display" => {
             let target_str = action_arg.ok_or_else(|| anyhow!("move_display requires target"))?;
@@ -334,7 +334,7 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
 
             let target_app = if let Some(name) = app_name {
                 let running_apps = matching::get_running_apps()?;
-                matching::find_app(name, &running_apps, config.matching.fuzzy_threshold)
+                matching::find_app(name, &running_apps, config.settings.fuzzy_threshold)
                     .map(|r| r.app)
             } else {
                 None
@@ -362,13 +362,13 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
 
             let target_app = if let Some(name) = app_name {
                 let running_apps = matching::get_running_apps()?;
-                matching::find_app(name, &running_apps, config.matching.fuzzy_threshold)
+                matching::find_app(name, &running_apps, config.settings.fuzzy_threshold)
                     .map(|r| r.app)
             } else {
                 None
             };
 
-            manager::resize_window(target_app.as_ref(), percent, false)?;
+            manager::resize_app(target_app.as_ref(), percent, false)?;
         }
         _ => {
             return Err(anyhow!("Unknown action: {}", action_type));
@@ -382,7 +382,7 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
 fn execute_action_for_app(action: &str, app_name: &str, config: &Config) -> Result<()> {
     // find the app by name in running apps
     let running_apps = matching::get_running_apps()?;
-    let match_result = matching::find_app(app_name, &running_apps, config.matching.fuzzy_threshold);
+    let match_result = matching::find_app(app_name, &running_apps, config.settings.fuzzy_threshold);
 
     let target_app = match match_result {
         Some(result) => result.app,
@@ -409,9 +409,9 @@ fn execute_action_for_app_info(action: &str, target_app: &matching::AppInfo, con
     }
 
     // retry logic with exponential backoff from config
-    let max_retries = config.behavior.app_rule_retry_count;
-    let initial_delay = config.behavior.app_rule_retry_delay_ms;
-    let backoff = config.behavior.app_rule_retry_backoff;
+    let max_retries = config.settings.retry.count;
+    let initial_delay = config.settings.retry.delay_ms;
+    let backoff = config.settings.retry.backoff;
 
     let mut last_error = None;
     let mut current_delay = initial_delay as f64;
@@ -422,7 +422,7 @@ fn execute_action_for_app_info(action: &str, target_app: &matching::AppInfo, con
                 manager::focus_app(target_app, false)
             }
             "maximize" => {
-                manager::maximize_window(Some(target_app), false)
+                manager::maximize_app(Some(target_app), false)
             }
             "move_display" => {
                 let target_str = match action_arg {
@@ -444,7 +444,7 @@ fn execute_action_for_app_info(action: &str, target_app: &matching::AppInfo, con
                         anyhow!("Invalid size '{}'. Use a number 1-100 or 'full'", size_str)
                     })?
                 };
-                manager::resize_window(Some(target_app), percent, false)
+                manager::resize_app(Some(target_app), percent, false)
             }
             _ => {
                 return Err(anyhow!("Unknown action: {}", action_type));
@@ -484,7 +484,7 @@ fn find_shortcut_launch(config: &Config, action: &str) -> Option<bool> {
         };
 
         if shortcut_action == action {
-            return shortcut.launch_if_not_running;
+            return shortcut.launch;
         }
     }
     None

@@ -309,9 +309,9 @@ fn get_usable_display_bounds() -> (f64, f64, f64, f64) {
     )
 }
 
-/// Maximize a window to fill the screen
+/// Maximize an app's window to fill the screen
 #[cfg(target_os = "macos")]
-pub fn maximize_window(app: Option<&AppInfo>, verbose: bool) -> Result<()> {
+pub fn maximize_app(app: Option<&AppInfo>, verbose: bool) -> Result<()> {
     use core_foundation::base::CFTypeRef;
 
     if !accessibility::is_trusted() {
@@ -352,14 +352,14 @@ pub fn maximize_window(app: Option<&AppInfo>, verbose: bool) -> Result<()> {
     if verbose {
         println!("Done.");
     } else {
-        println!("Window maximized");
+        println!("App maximized");
     }
 
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn maximize_window(_app: Option<&AppInfo>, _verbose: bool) -> Result<()> {
+pub fn maximize_app(_app: Option<&AppInfo>, _verbose: bool) -> Result<()> {
     Err(anyhow!("Maximize is only supported on macOS"))
 }
 
@@ -657,9 +657,9 @@ pub fn move_to_display(
     Err(anyhow!("Move to display is only supported on macOS"))
 }
 
-/// Resize a window to a percentage of the screen (centered)
+/// Resize an app's window to a percentage of the screen (centered)
 #[cfg(target_os = "macos")]
-pub fn resize_window(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Result<()> {
+pub fn resize_app(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Result<()> {
     use core_foundation::base::CFTypeRef;
 
     if !accessibility::is_trusted() {
@@ -674,7 +674,7 @@ pub fn resize_window(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Resu
 
     // 100% is just maximize
     if percent == 100 {
-        return maximize_window(app, verbose);
+        return maximize_app(app, verbose);
     }
 
     let (window, pid) = unsafe {
@@ -719,13 +719,13 @@ pub fn resize_window(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Resu
     if verbose {
         println!("Done.");
     } else {
-        println!("Window resized to {}%", percent);
+        println!("App resized to {}%", percent);
     }
 
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn resize_window(_app: Option<&AppInfo>, _percent: u32, _verbose: bool) -> Result<()> {
+pub fn resize_app(_app: Option<&AppInfo>, _percent: u32, _verbose: bool) -> Result<()> {
     Err(anyhow!("Resize is only supported on macOS"))
 }
