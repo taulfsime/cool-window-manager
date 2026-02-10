@@ -206,6 +206,8 @@ pub enum ConfigCommands {
     Reset,
     /// Show the default configuration with example shortcuts and rules
     Default,
+    /// Verify configuration file for errors
+    Verify,
 }
 
 pub fn execute(cli: Cli) -> Result<()> {
@@ -219,7 +221,8 @@ pub fn execute(cli: Cli) -> Result<()> {
             let config = config::load()?;
             let running_apps = matching::get_running_apps()?;
 
-            let match_result = matching::find_app(&app, &running_apps, config.settings.fuzzy_threshold);
+            let match_result =
+                matching::find_app(&app, &running_apps, config.settings.fuzzy_threshold);
 
             match match_result {
                 Some(result) => {
@@ -233,12 +236,8 @@ pub fn execute(cli: Cli) -> Result<()> {
                 }
                 None => {
                     // app not found, check if we should launch
-                    let should_launch = config::should_launch(
-                        launch,
-                        no_launch,
-                        None,
-                        config.settings.launch,
-                    );
+                    let should_launch =
+                        config::should_launch(launch, no_launch, None, config.settings.launch);
 
                     if should_launch {
                         if verbose {
@@ -282,12 +281,8 @@ pub fn execute(cli: Cli) -> Result<()> {
                         Some(result.app)
                     }
                     None => {
-                        let should_launch = config::should_launch(
-                            launch,
-                            no_launch,
-                            None,
-                            config.settings.launch,
-                        );
+                        let should_launch =
+                            config::should_launch(launch, no_launch, None, config.settings.launch);
 
                         if should_launch {
                             if verbose {
@@ -334,12 +329,8 @@ pub fn execute(cli: Cli) -> Result<()> {
                         Some(result.app)
                     }
                     None => {
-                        let should_launch = config::should_launch(
-                            launch,
-                            no_launch,
-                            None,
-                            config.settings.launch,
-                        );
+                        let should_launch =
+                            config::should_launch(launch, no_launch, None, config.settings.launch);
 
                         if should_launch {
                             if verbose {
@@ -374,9 +365,8 @@ pub fn execute(cli: Cli) -> Result<()> {
             let percent: u32 = if size.eq_ignore_ascii_case("full") {
                 100
             } else {
-                size.parse().map_err(|_| {
-                    anyhow!("Invalid size '{}'. Use a number 1-100 or 'full'", size)
-                })?
+                size.parse()
+                    .map_err(|_| anyhow!("Invalid size '{}'. Use a number 1-100 or 'full'", size))?
             };
 
             if percent == 0 || percent > 100 {
@@ -396,12 +386,8 @@ pub fn execute(cli: Cli) -> Result<()> {
                         Some(result.app)
                     }
                     None => {
-                        let should_launch = config::should_launch(
-                            launch,
-                            no_launch,
-                            None,
-                            config.settings.launch,
-                        );
+                        let should_launch =
+                            config::should_launch(launch, no_launch, None, config.settings.launch);
 
                         if should_launch {
                             if verbose {
@@ -476,8 +462,8 @@ pub fn execute(cli: Cli) -> Result<()> {
             }
 
             // show what will be added
-            let json = serde_json::to_string_pretty(&shortcut)
-                .context("Failed to serialize shortcut")?;
+            let json =
+                serde_json::to_string_pretty(&shortcut).context("Failed to serialize shortcut")?;
             println!("\nShortcut to add:\n{}", json);
 
             // load config and check for duplicates
@@ -528,29 +514,21 @@ pub fn execute(cli: Cli) -> Result<()> {
                     crate::daemon::start(log)
                 }
             }
-            DaemonCommands::Stop => {
-                crate::daemon::stop()
-            }
+            DaemonCommands::Stop => crate::daemon::stop(),
             DaemonCommands::Status => {
                 crate::daemon::status()?;
                 Ok(())
             }
-            DaemonCommands::Install { bin, log } => {
-                crate::daemon::install(bin, log)
-            }
-            DaemonCommands::Uninstall => {
-                crate::daemon::uninstall()
-            }
-            DaemonCommands::RunForeground { log } => {
-                crate::daemon::start_foreground(log)
-            }
+            DaemonCommands::Install { bin, log } => crate::daemon::install(bin, log),
+            DaemonCommands::Uninstall => crate::daemon::uninstall(),
+            DaemonCommands::RunForeground { log } => crate::daemon::start_foreground(log),
         },
 
         Commands::Config { command } => match command {
             ConfigCommands::Show => {
                 let config = config::load()?;
-                let json = serde_json::to_string_pretty(&config)
-                    .context("Failed to serialize config")?;
+                let json =
+                    serde_json::to_string_pretty(&config).context("Failed to serialize config")?;
                 println!("{}", json);
                 Ok(())
             }
@@ -574,10 +552,30 @@ pub fn execute(cli: Cli) -> Result<()> {
             }
             ConfigCommands::Default => {
                 let config = config::default_with_examples();
-                let json = serde_json::to_string_pretty(&config)
-                    .context("Failed to serialize config")?;
+                let json =
+                    serde_json::to_string_pretty(&config).context("Failed to serialize config")?;
                 println!("{}", json);
                 Ok(())
+            }
+            ConfigCommands::Verify => {
+                let path = config::get_config_path();
+                let errors = config::verify(&path)?;
+
+                if errors.is_empty() {
+                    println!("✓ Configuration is valid: {}", path.display());
+                    Ok(())
+                } else {
+                    println!(
+                        "✗ Configuration has {} error(s): {}",
+                        errors.len(),
+                        path.display()
+                    );
+                    println!();
+                    for error in &errors {
+                        println!("  - {}", error);
+                    }
+                    Err(anyhow!("configuration validation failed"))
+                }
             }
         },
 

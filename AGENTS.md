@@ -111,7 +111,7 @@ Manages JSON configuration file at `~/.cwm.json` (or `$CWM_CONFIG`).
 
 | File | Responsibility |
 |------|----------------|
-| `mod.rs` | `load_config()`, `save_config()`, `get_config_path()`, `set_config_value()` |
+| `mod.rs` | `load()`, `save()`, `get_config_path()`, `set_value()`, `verify()` |
 | `schema.rs` | data structures with serde derive |
 
 Key types:
