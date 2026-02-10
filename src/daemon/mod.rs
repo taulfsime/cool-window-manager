@@ -305,6 +305,34 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
 
             manager::move_to_display(target_app.as_ref(), &display_target, false)?;
         }
+        "resize" => {
+            let size_str = action_arg.ok_or_else(|| anyhow!("resize requires size"))?;
+
+            // parse size:app or just size
+            let (percent_str, app_name) = if let Some(idx) = size_str.find(':') {
+                (&size_str[..idx], Some(&size_str[idx + 1..]))
+            } else {
+                (size_str, None)
+            };
+
+            let percent: u32 = if percent_str.eq_ignore_ascii_case("full") {
+                100
+            } else {
+                percent_str.parse().map_err(|_| {
+                    anyhow!("Invalid size '{}'. Use a number 1-100 or 'full'", percent_str)
+                })?
+            };
+
+            let target_app = if let Some(name) = app_name {
+                let running_apps = matching::get_running_apps()?;
+                matching::find_app(name, &running_apps, config.matching.fuzzy_threshold)
+                    .map(|r| r.app)
+            } else {
+                None
+            };
+
+            manager::resize_window(target_app.as_ref(), percent, false)?;
+        }
         _ => {
             return Err(anyhow!("Unknown action: {}", action_type));
         }

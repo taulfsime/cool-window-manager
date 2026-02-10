@@ -641,3 +641,76 @@ pub fn move_to_display(
 ) -> Result<()> {
     Err(anyhow!("Move to display is only supported on macOS"))
 }
+
+/// Resize a window to a percentage of the screen (centered)
+#[cfg(target_os = "macos")]
+pub fn resize_window(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Result<()> {
+    use core_foundation::base::CFTypeRef;
+
+    if !accessibility::is_trusted() {
+        return Err(anyhow!(
+            "Accessibility permissions required. Run 'cwm check-permissions' for help."
+        ));
+    }
+
+    if percent == 0 || percent > 100 {
+        return Err(anyhow!("Percent must be between 1 and 100"));
+    }
+
+    // 100% is just maximize
+    if percent == 100 {
+        return maximize_window(app, verbose);
+    }
+
+    let (window, pid) = unsafe {
+        if let Some(app_info) = app {
+            let w = get_frontmost_window(app_info.pid)?;
+            (w, app_info.pid)
+        } else {
+            get_focused_window()?
+        }
+    };
+
+    if verbose {
+        println!("Resizing window for PID {} to {}%", pid, percent);
+    }
+
+    // get usable display bounds (excluding menu bar and dock)
+    let (dx, dy, dw, dh) = get_usable_display_bounds();
+
+    if verbose {
+        println!("Usable display bounds: {}x{} at ({}, {})", dw, dh, dx, dy);
+    }
+
+    // calculate new size as percentage of display
+    let scale = percent as f64 / 100.0;
+    let new_w = dw * scale;
+    let new_h = dh * scale;
+
+    // center the window
+    let new_x = dx + (dw - new_w) / 2.0;
+    let new_y = dy + (dh - new_h) / 2.0;
+
+    if verbose {
+        println!("New size: {}x{} at ({}, {})", new_w, new_h, new_x, new_y);
+    }
+
+    unsafe {
+        set_window_position(window, new_x, new_y)?;
+        set_window_size(window, new_w, new_h)?;
+        core_foundation::base::CFRelease(window as CFTypeRef);
+    }
+
+    if verbose {
+        println!("Done.");
+    } else {
+        println!("Window resized to {}%", percent);
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn resize_window(_app: Option<&AppInfo>, _percent: u32, _verbose: bool) -> Result<()> {
+    Err(anyhow!("Resize is only supported on macOS"))
+}

@@ -77,6 +77,28 @@ pub enum Commands {
         verbose: bool,
     },
 
+    /// Resize a window to a percentage of the screen (centered)
+    Resize {
+        /// Percentage of screen (1-100), or "full" for 100%
+        size: String,
+
+        /// Target app name (fuzzy matched), uses focused window if not specified
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Force launch app if not running
+        #[arg(long, conflicts_with = "no_launch")]
+        launch: bool,
+
+        /// Never launch app even if configured to
+        #[arg(long, conflicts_with = "launch")]
+        no_launch: bool,
+
+        /// Show verbose output including match details
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
     /// Record a keyboard shortcut
     RecordShortcut {
         /// Action to bind (focus, maximize, move_display:next, etc.)
@@ -333,6 +355,68 @@ pub fn execute(cli: Cli) -> Result<()> {
             Ok(())
         }
 
+        Commands::Resize {
+            size,
+            app,
+            launch,
+            no_launch,
+            verbose,
+        } => {
+            let config = config::load()?;
+
+            // parse size: "full" or a number 1-100
+            let percent: u32 = if size.eq_ignore_ascii_case("full") {
+                100
+            } else {
+                size.parse().map_err(|_| {
+                    anyhow!("Invalid size '{}'. Use a number 1-100 or 'full'", size)
+                })?
+            };
+
+            if percent == 0 || percent > 100 {
+                return Err(anyhow!("Size must be between 1 and 100"));
+            }
+
+            let target_app = if let Some(app_name) = app {
+                let running_apps = matching::get_running_apps()?;
+                let match_result =
+                    matching::find_app(&app_name, &running_apps, config.matching.fuzzy_threshold);
+
+                match match_result {
+                    Some(result) => {
+                        if verbose {
+                            println!("Matched {} -> {}", app_name, result.describe());
+                        }
+                        Some(result.app)
+                    }
+                    None => {
+                        let should_launch = config::should_launch(
+                            launch,
+                            no_launch,
+                            None,
+                            config.behavior.launch_if_not_running,
+                        );
+
+                        if should_launch {
+                            if verbose {
+                                println!("App '{}' not running, launching...", app_name);
+                            }
+                            manager::launch_app(&app_name, verbose)?;
+                            println!("App launched. Run resize again once it's ready.");
+                            return Ok(());
+                        } else {
+                            return Err(anyhow!("App '{}' not found", app_name));
+                        }
+                    }
+                }
+            } else {
+                None
+            };
+
+            manager::resize_window(target_app.as_ref(), percent, verbose)?;
+            Ok(())
+        }
+
         Commands::RecordShortcut {
             action,
             app,
@@ -356,11 +440,12 @@ pub fn execute(cli: Cli) -> Result<()> {
             // validate action
             let valid_actions = ["focus", "maximize"];
             let is_valid = valid_actions.contains(&action.as_str())
-                || action.starts_with("move_display:");
+                || action.starts_with("move_display:")
+                || action.starts_with("resize:");
 
             if !is_valid {
                 return Err(anyhow!(
-                    "Invalid action: '{}'. Valid actions: focus, maximize, move_display:next, move_display:prev, move_display:N",
+                    "Invalid action: '{}'. Valid actions: focus, maximize, move_display:next, move_display:prev, move_display:N, resize:N, resize:full",
                     action
                 ));
             }

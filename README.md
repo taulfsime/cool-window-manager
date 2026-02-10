@@ -97,6 +97,24 @@ Options:
 - `--no-launch` - Never launch app
 - `--verbose, -v` - Show details
 
+### resize
+
+Resize a window to a percentage of the screen (centered).
+
+```bash
+cwm resize 75                    # resize focused window to 75%
+cwm resize full                  # resize to 100% (same as maximize)
+cwm resize 80 --app "Safari"     # resize specific app to 80%
+cwm resize 50 -v                 # verbose output
+```
+
+Options:
+- `<SIZE>` - Percentage (1-100) or `full` for 100%
+- `--app, -a <NAME>` - Target app name (optional, uses focused window if omitted)
+- `--launch` - Launch app if not running
+- `--no-launch` - Never launch app
+- `--verbose, -v` - Show details
+
 ### list-windows
 
 List all running applications.
@@ -181,6 +199,14 @@ Example config:
     {
       "keys": "ctrl+alt+right",
       "action": "move_display:next"
+    },
+    {
+      "keys": "ctrl+alt+7",
+      "action": "resize:75"
+    },
+    {
+      "keys": "ctrl+alt+f",
+      "action": "resize:full"
     }
   ],
   "matching": {
@@ -196,8 +222,8 @@ Example config:
 ### Shortcut format
 
 - `keys` - Key combination (e.g., `ctrl+alt+s`, `cmd+shift+return`)
-- `action` - One of: `focus`, `maximize`, `move_display:next`, `move_display:prev`, `move_display:N`
-- `app` - Target app name (optional for maximize/move_display)
+- `action` - One of: `focus`, `maximize`, `move_display:next`, `move_display:prev`, `move_display:N`, `resize:N`, `resize:full`
+- `app` - Target app name (optional for maximize/move_display/resize)
 - `launch_if_not_running` - Override global setting (optional)
 
 ### Fuzzy matching
