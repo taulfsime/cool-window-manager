@@ -87,4 +87,91 @@ fn parse_bool(value: &str) -> Result<bool> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_parse_bool_true_values() {
+        assert!(parse_bool("true").unwrap());
+        assert!(parse_bool("TRUE").unwrap());
+        assert!(parse_bool("True").unwrap());
+        assert!(parse_bool("1").unwrap());
+        assert!(parse_bool("yes").unwrap());
+        assert!(parse_bool("YES").unwrap());
+        assert!(parse_bool("on").unwrap());
+        assert!(parse_bool("ON").unwrap());
+    }
+
+    #[test]
+    fn test_parse_bool_false_values() {
+        assert!(!parse_bool("false").unwrap());
+        assert!(!parse_bool("FALSE").unwrap());
+        assert!(!parse_bool("False").unwrap());
+        assert!(!parse_bool("0").unwrap());
+        assert!(!parse_bool("no").unwrap());
+        assert!(!parse_bool("NO").unwrap());
+        assert!(!parse_bool("off").unwrap());
+        assert!(!parse_bool("OFF").unwrap());
+    }
+
+    #[test]
+    fn test_parse_bool_invalid() {
+        assert!(parse_bool("").is_err());
+        assert!(parse_bool("maybe").is_err());
+        assert!(parse_bool("2").is_err());
+        assert!(parse_bool("yep").is_err());
+    }
+
+    #[test]
+    fn test_set_value_launch_if_not_running() {
+        let mut config = Config::default();
+        assert!(!config.behavior.launch_if_not_running);
+
+        set_value(&mut config, "behavior.launch_if_not_running", "true").unwrap();
+        assert!(config.behavior.launch_if_not_running);
+
+        set_value(&mut config, "behavior.launch_if_not_running", "false").unwrap();
+        assert!(!config.behavior.launch_if_not_running);
+    }
+
+    #[test]
+    fn test_set_value_animate() {
+        let mut config = Config::default();
+        assert!(!config.behavior.animate);
+
+        set_value(&mut config, "behavior.animate", "yes").unwrap();
+        assert!(config.behavior.animate);
+
+        set_value(&mut config, "behavior.animate", "no").unwrap();
+        assert!(!config.behavior.animate);
+    }
+
+    #[test]
+    fn test_set_value_fuzzy_threshold() {
+        let mut config = Config::default();
+        assert_eq!(config.matching.fuzzy_threshold, 2);
+
+        set_value(&mut config, "matching.fuzzy_threshold", "5").unwrap();
+        assert_eq!(config.matching.fuzzy_threshold, 5);
+
+        set_value(&mut config, "matching.fuzzy_threshold", "0").unwrap();
+        assert_eq!(config.matching.fuzzy_threshold, 0);
+    }
+
+    #[test]
+    fn test_set_value_invalid_key() {
+        let mut config = Config::default();
+        assert!(set_value(&mut config, "invalid.key", "true").is_err());
+        assert!(set_value(&mut config, "behavior", "true").is_err());
+        assert!(set_value(&mut config, "behavior.unknown", "true").is_err());
+    }
+
+    #[test]
+    fn test_set_value_invalid_value() {
+        let mut config = Config::default();
+        assert!(set_value(&mut config, "behavior.animate", "maybe").is_err());
+        assert!(set_value(&mut config, "matching.fuzzy_threshold", "abc").is_err());
+        assert!(set_value(&mut config, "matching.fuzzy_threshold", "-1").is_err());
+    }
+}
