@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub shortcuts: Vec<Shortcut>,
+    #[serde(default)]
+    pub app_rules: Vec<AppRule>,
     pub matching: Matching,
     pub behavior: Behavior,
 }
@@ -11,6 +13,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             shortcuts: vec![],
+            app_rules: vec![],
             matching: Matching::default(),
             behavior: Behavior::default(),
         }
@@ -27,6 +30,16 @@ pub struct Shortcut {
     pub launch_if_not_running: Option<bool>,
 }
 
+/// Rule to apply an action when an app launches
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppRule {
+    pub app: String,
+    pub action: String,
+    /// delay in milliseconds before executing the action (overrides global)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delay_ms: Option<u64>,
+}
+
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,10 +53,43 @@ impl Default for Matching {
     }
 }
 
+pub const DEFAULT_APP_RULE_DELAY_MS: u64 = 500;
+pub const DEFAULT_APP_RULE_RETRY_COUNT: u32 = 10;
+pub const DEFAULT_APP_RULE_RETRY_DELAY_MS: u64 = 100;
+pub const DEFAULT_APP_RULE_RETRY_BACKOFF: f64 = 1.5;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Behavior {
     pub launch_if_not_running: bool,
     pub animate: bool,
+    /// default delay in milliseconds before executing app rule actions
+    #[serde(default = "default_app_rule_delay")]
+    pub app_rule_delay_ms: u64,
+    /// number of retry attempts if window is not ready
+    #[serde(default = "default_app_rule_retry_count")]
+    pub app_rule_retry_count: u32,
+    /// initial retry delay in milliseconds
+    #[serde(default = "default_app_rule_retry_delay")]
+    pub app_rule_retry_delay_ms: u64,
+    /// backoff multiplier for each retry (e.g., 1.5 means each retry waits 1.5x longer)
+    #[serde(default = "default_app_rule_retry_backoff")]
+    pub app_rule_retry_backoff: f64,
+}
+
+fn default_app_rule_delay() -> u64 {
+    DEFAULT_APP_RULE_DELAY_MS
+}
+
+fn default_app_rule_retry_count() -> u32 {
+    DEFAULT_APP_RULE_RETRY_COUNT
+}
+
+fn default_app_rule_retry_delay() -> u64 {
+    DEFAULT_APP_RULE_RETRY_DELAY_MS
+}
+
+fn default_app_rule_retry_backoff() -> f64 {
+    DEFAULT_APP_RULE_RETRY_BACKOFF
 }
 
 impl Default for Behavior {
@@ -51,6 +97,10 @@ impl Default for Behavior {
         Self {
             launch_if_not_running: false,
             animate: false,
+            app_rule_delay_ms: DEFAULT_APP_RULE_DELAY_MS,
+            app_rule_retry_count: DEFAULT_APP_RULE_RETRY_COUNT,
+            app_rule_retry_delay_ms: DEFAULT_APP_RULE_RETRY_DELAY_MS,
+            app_rule_retry_backoff: DEFAULT_APP_RULE_RETRY_BACKOFF,
         }
     }
 }

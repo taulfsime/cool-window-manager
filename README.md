@@ -220,12 +220,27 @@ Example config:
       "action": "resize:full"
     }
   ],
+  "app_rules": [
+    {
+      "app": "Slack",
+      "action": "move_display:1"
+    },
+    {
+      "app": "Terminal",
+      "action": "maximize",
+      "delay_ms": 1000
+    }
+  ],
   "matching": {
     "fuzzy_threshold": 2
   },
   "behavior": {
     "launch_if_not_running": false,
-    "animate": false
+    "animate": false,
+    "app_rule_delay_ms": 500,
+    "app_rule_retry_count": 10,
+    "app_rule_retry_delay_ms": 100,
+    "app_rule_retry_backoff": 1.5
   }
 }
 ```
@@ -236,6 +251,23 @@ Example config:
 - `action` - One of: `focus`, `maximize`, `move_display:next`, `move_display:prev`, `move_display:N`, `resize:N`, `resize:full`
 - `app` - Target app name (optional for maximize/move_display/resize)
 - `launch_if_not_running` - Override global setting (optional)
+
+### App rules
+
+App rules automatically apply actions when applications are launched. The daemon watches for new app launches and executes the configured action.
+
+- `app` - Application name to match (case-insensitive, supports prefix matching)
+- `action` - Same action format as shortcuts: `maximize`, `move_display:N`, `resize:N`, etc.
+- `delay_ms` - Delay in milliseconds before executing the action (optional, overrides global setting)
+
+The global default delay is set via `behavior.app_rule_delay_ms` (default: 500ms). This delay allows the window to appear before the action is applied.
+
+If the window is not ready after the initial delay, the action will be retried with exponential backoff:
+- `app_rule_retry_count` - Number of retry attempts (default: 10)
+- `app_rule_retry_delay_ms` - Initial retry delay in milliseconds (default: 100)
+- `app_rule_retry_backoff` - Backoff multiplier for each retry (default: 1.5, meaning each retry waits 1.5x longer)
+
+This is useful for automatically moving apps to specific monitors or resizing them when launched.
 
 ### Fuzzy matching
 

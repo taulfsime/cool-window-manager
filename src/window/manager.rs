@@ -85,7 +85,22 @@ unsafe fn get_frontmost_window(pid: i32) -> Result<AXUIElementRef> {
         return Err(anyhow!("Failed to create AXUIElement for PID {}", pid));
     }
 
-    // get the windows attribute
+    // first try AXFocusedWindow - works better for focused/active apps
+    let focused_window_attr = CFString::new("AXFocusedWindow");
+    let mut focused_window: CFTypeRef = std::ptr::null_mut();
+
+    let result = AXUIElementCopyAttributeValue(
+        app_element,
+        focused_window_attr.as_concrete_TypeRef(),
+        &mut focused_window,
+    );
+
+    if result == K_AX_ERROR_SUCCESS && !focused_window.is_null() {
+        core_foundation::base::CFRelease(app_element as CFTypeRef);
+        return Ok(focused_window as AXUIElementRef);
+    }
+
+    // fall back to AXWindows array
     let windows_attr = CFString::new("AXWindows");
     let mut windows_value: CFTypeRef = std::ptr::null_mut();
 

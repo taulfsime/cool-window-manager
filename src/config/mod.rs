@@ -1,6 +1,6 @@
 mod schema;
 
-pub use schema::{should_launch, Config, Shortcut};
+pub use schema::{should_launch, AppRule, Config, Shortcut};
 
 use anyhow::{anyhow, Context, Result};
 use std::env;

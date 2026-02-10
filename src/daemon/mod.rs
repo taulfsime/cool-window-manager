@@ -1,3 +1,4 @@
+pub mod app_watcher;
 pub mod hotkeys;
 pub mod ipc;
 mod launchd;
@@ -88,25 +89,60 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
         log(&format!("Loaded {} shortcut(s)", config.shortcuts.len()));
     }
 
+    if config.app_rules.is_empty() {
+        log("No app rules configured");
+    } else {
+        log(&format!("Loaded {} app rule(s)", config.app_rules.len()));
+        for rule in &config.app_rules {
+            log(&format!("  {} -> {}", rule.app, rule.action));
+        }
+    }
+
     // parse shortcuts into hotkeys
     let shortcuts = parse_shortcuts(&config)?;
 
-    if shortcuts.is_empty() {
-        log("No valid shortcuts to listen for");
+    let has_shortcuts = !shortcuts.is_empty();
+    let has_app_rules = !config.app_rules.is_empty();
+
+    if !has_shortcuts && !has_app_rules {
+        log("No shortcuts or app rules to listen for");
         remove_pid_file()?;
         return Ok(());
     }
 
-    for (hotkey, action) in &shortcuts {
-        log(&format!("  {} -> {}", hotkey.to_string(), action));
+    if has_shortcuts {
+        for (hotkey, action) in &shortcuts {
+            log(&format!("  {} -> {}", hotkey.to_string(), action));
+        }
     }
 
-    log("Listening for hotkeys... (Ctrl+C to stop)");
+    // start app watcher if we have rules
+    if has_app_rules {
+        let config_for_watcher = config.clone();
+        let global_delay = config.behavior.app_rule_delay_ms;
+        app_watcher::start_watching(config.app_rules.clone(), move |rule, _pid| {
+            let delay = rule.delay_ms.unwrap_or(global_delay);
+            log(&format!("App '{}' launched, executing: {} (delay: {}ms)", rule.app_name, rule.action, delay));
+            // delay to let the window appear
+            std::thread::sleep(std::time::Duration::from_millis(delay));
+            if let Err(e) = execute_action_for_app(&rule.action, &rule.app_name, &config_for_watcher) {
+                log_err(&format!("Failed to execute '{}' for '{}': {}", rule.action, rule.app_name, e));
+            }
+        })?;
+        log("Watching for app launches...");
+    }
+
+    if has_shortcuts {
+        log("Listening for hotkeys... (Ctrl+C to stop)");
+    } else {
+        log("Watching for app launches... (Ctrl+C to stop)");
+    }
 
     // clone config for the callback
     let config_for_callback = config.clone();
 
-    // start the hotkey listener
+    // start the hotkey listener (this runs the main run loop)
+    // even with no shortcuts, we need the run loop for app watcher notifications
     hotkeys::start_hotkey_listener(shortcuts, move |action, hotkey| {
         log(&format!("Hotkey triggered: {} -> {}", hotkey.to_string(), action));
         if let Err(e) = execute_action(action, &config_for_callback) {
@@ -115,6 +151,7 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
     })?;
 
     // cleanup
+    app_watcher::stop_watching();
     remove_pid_file()?;
     log("Daemon stopped.");
 
@@ -341,6 +378,103 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
     Ok(())
 }
 
+/// Execute an action for an app by name (used by app watcher)
+fn execute_action_for_app(action: &str, app_name: &str, config: &Config) -> Result<()> {
+    // find the app by name in running apps
+    let running_apps = matching::get_running_apps()?;
+    let match_result = matching::find_app(app_name, &running_apps, config.matching.fuzzy_threshold);
+
+    let target_app = match match_result {
+        Some(result) => result.app,
+        None => {
+            return Err(anyhow!("Could not find running application '{}'", app_name));
+        }
+    };
+
+    execute_action_for_app_info(action, &target_app, config)
+}
+
+/// Execute an action for a specific app (used by app watcher)
+fn execute_action_for_app_info(action: &str, target_app: &matching::AppInfo, config: &Config) -> Result<()> {
+    let (action_type, action_arg) = if let Some(idx) = action.find(':') {
+        (&action[..idx], Some(&action[idx + 1..]))
+    } else {
+        (action, None)
+    };
+
+    // first, try to activate the app to ensure its windows are accessible
+    // this helps with apps that don't expose windows until focused
+    if let Err(e) = manager::focus_app(target_app, false) {
+        log(&format!("Note: Could not focus app before action: {}", e));
+    }
+
+    // retry logic with exponential backoff from config
+    let max_retries = config.behavior.app_rule_retry_count;
+    let initial_delay = config.behavior.app_rule_retry_delay_ms;
+    let backoff = config.behavior.app_rule_retry_backoff;
+
+    let mut last_error = None;
+    let mut current_delay = initial_delay as f64;
+
+    for attempt in 0..max_retries {
+        let result = match action_type {
+            "focus" => {
+                manager::focus_app(target_app, false)
+            }
+            "maximize" => {
+                manager::maximize_window(Some(target_app), false)
+            }
+            "move_display" => {
+                let target_str = match action_arg {
+                    Some(s) => s,
+                    None => return Err(anyhow!("move_display requires target")),
+                };
+                let display_target = crate::display::DisplayTarget::parse(target_str)?;
+                manager::move_to_display(Some(target_app), &display_target, false)
+            }
+            "resize" => {
+                let size_str = match action_arg {
+                    Some(s) => s,
+                    None => return Err(anyhow!("resize requires size")),
+                };
+                let percent: u32 = if size_str.eq_ignore_ascii_case("full") {
+                    100
+                } else {
+                    size_str.parse().map_err(|_| {
+                        anyhow!("Invalid size '{}'. Use a number 1-100 or 'full'", size_str)
+                    })?
+                };
+                manager::resize_window(Some(target_app), percent, false)
+            }
+            _ => {
+                return Err(anyhow!("Unknown action: {}", action_type));
+            }
+        };
+
+        match result {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                let err_str = e.to_string();
+                // retry on "no windows" or "attribute unsupported" errors
+                if err_str.contains("no windows") || err_str.contains("-25204") || err_str.contains("Application has no windows") {
+                    last_error = Some(e);
+                    if attempt < max_retries - 1 {
+                        let delay_ms = current_delay as u64;
+                        log(&format!("Window not ready, retrying in {}ms (attempt {}/{})", delay_ms, attempt + 1, max_retries));
+                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                        current_delay *= backoff;
+                        continue;
+                    }
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow!("Failed after {} retries", max_retries)))
+}
+
 fn find_shortcut_launch(config: &Config, action: &str) -> Option<bool> {
     for shortcut in &config.shortcuts {
         let shortcut_action = if let Some(ref app) = shortcut.app {
@@ -370,5 +504,6 @@ fn setup_signal_handlers() -> Result<()> {
 #[cfg(target_os = "macos")]
 extern "C" fn handle_signal(_sig: libc::c_int) {
     DAEMON_SHOULD_STOP.store(true, Ordering::SeqCst);
+    app_watcher::stop_watching();
     hotkeys::stop_hotkey_listener();
 }
