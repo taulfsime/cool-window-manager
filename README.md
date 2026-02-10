@@ -53,12 +53,14 @@ Bring an application window to the foreground.
 
 ```bash
 cwm focus --app "Slack"
-cwm focus --app "slck"           # fuzzy matching
+cwm focus --app "slck"           # fuzzy matching by name
+cwm focus --app "New Tab"        # match by window title
+cwm focus --app "GitHub - cool"  # match by title prefix
 cwm focus --app "Chrome" --verbose
 ```
 
 Options:
-- `--app, -a <NAME>` - Target app name (required, fuzzy matched)
+- `--app, -a <NAME>` - Target app name or window title (required, fuzzy matched)
 - `--launch` - Launch app if not running
 - `--no-launch` - Never launch app
 - `--verbose, -v` - Show matching details
@@ -117,11 +119,13 @@ Options:
 
 ### list-apps
 
-List all running applications.
+List all running applications with their window titles.
 
 ```bash
 cwm list-apps
 ```
+
+Output includes app name, PID, bundle ID, and all window titles for each app.
 
 ### list-displays
 
@@ -209,6 +213,11 @@ Example config:
       "app": "Google Chrome"
     },
     {
+      "keys": "ctrl+alt+g",
+      "action": "focus",
+      "app": "GitHub"
+    },
+    {
       "keys": "ctrl+alt+return",
       "action": "maximize"
     },
@@ -254,8 +263,10 @@ Example config:
 
 - `keys` - Key combination (e.g., `ctrl+alt+s`, `cmd+shift+return`)
 - `action` - One of: `focus`, `maximize`, `move_display:next`, `move_display:prev`, `move_display:N`, `resize:N`, `resize:full`
-- `app` - Target app name (optional for maximize/move_display/resize)
+- `app` - Target app name or window title (optional for maximize/move_display/resize, fuzzy matched)
 - `launch` - Override global setting (optional)
+
+The `app` field matches against both application names and window titles. For example, `"GitHub"` will match a Safari or Chrome window with "GitHub" in its title.
 
 ### App rules
 
@@ -276,16 +287,24 @@ This is useful for automatically moving apps to specific monitors or resizing th
 
 ### Fuzzy matching
 
-App names are matched with priority:
+Apps are matched by name and window title with priority:
+
+**Name matching:**
 1. Exact match (case-insensitive)
 2. Prefix match
 3. Fuzzy match (Levenshtein distance within threshold)
 
+**Title matching (if no name match):**
+4. Title exact match
+5. Title prefix match
+6. Title fuzzy match
+
 Examples:
-- `"Slack"` → Slack (exact)
-- `"slck"` → Slack (fuzzy, distance=1)
-- `"Goo"` → Google Chrome (prefix)
-- `"chr"` → Google Chrome (fuzzy)
+- `"Slack"` → Slack (name exact)
+- `"slck"` → Slack (name fuzzy, distance=1)
+- `"Goo"` → Google Chrome (name prefix)
+- `"New Tab"` → Google Chrome (title exact)
+- `"GitHub - taulfsime"` → Safari (title prefix)
 
 ## License
 

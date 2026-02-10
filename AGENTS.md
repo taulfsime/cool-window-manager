@@ -157,7 +157,7 @@ Core window manipulation using macOS Accessibility API.
 | `mod.rs` | re-exports key types and functions |
 | `accessibility.rs` | `check_accessibility_permissions()`, `prompt_accessibility_permissions()` |
 | `manager.rs` | `focus_app()`, `maximize_app()`, `move_to_display()`, `resize_app()`, `launch_app()` |
-| `matching.rs` | `find_matching_app()`, `MatchType` enum, Levenshtein distance calculation |
+| `matching.rs` | `find_app()`, `get_running_apps()`, `get_window_titles()`, `AppInfo`, `MatchType` enum, Levenshtein distance calculation |
 
 ---
 
@@ -165,11 +165,16 @@ Core window manipulation using macOS Accessibility API.
 
 ### Fuzzy Matching
 
-Application names are matched with the following priority:
+Applications are matched by name and window title with the following priority:
 
-1. **Exact match** (case-insensitive): `"safari"` matches `"Safari"`
-2. **Prefix match**: `"saf"` matches `"Safari"`
-3. **Fuzzy match**: Levenshtein distance within threshold (default: 2)
+1. **Name exact match** (case-insensitive): `"safari"` matches `"Safari"`
+2. **Name prefix match**: `"saf"` matches `"Safari"`
+3. **Name fuzzy match**: Levenshtein distance within threshold (default: 2)
+4. **Title exact match**: `"New Tab"` matches Chrome window with that title
+5. **Title prefix match**: `"GitHub - taulfsime"` matches window starting with that
+6. **Title fuzzy match**: Levenshtein distance within threshold
+
+Window titles are retrieved via the Accessibility API (`AXTitle` attribute) for all windows of each running application. The `AppInfo` struct contains a `titles: Vec<String>` field with all window titles.
 
 The threshold is configurable via `settings.fuzzy_threshold` in config.
 
@@ -328,7 +333,7 @@ Tests are located in `#[cfg(test)]` modules within:
 | `src/config/mod.rs` | config value parsing, key setting |
 | `src/config/schema.rs` | `should_launch` priority logic |
 | `src/display/mod.rs` | display target parsing, resolution with wraparound |
-| `src/window/matching.rs` | exact, prefix, fuzzy matching |
+| `src/window/matching.rs` | name matching (exact, prefix, fuzzy), title matching (exact, prefix, fuzzy) |
 | `src/daemon/hotkeys.rs` | hotkey string parsing |
 
 ### Run

@@ -112,6 +112,13 @@ pub fn default_with_examples() -> Config {
                 app: Some("Terminal".to_string()),
                 launch: None,
             },
+            // match by window title instead of app name
+            Shortcut {
+                keys: "ctrl+alt+g".to_string(),
+                action: "focus".to_string(),
+                app: Some("GitHub".to_string()),
+                launch: None,
+            },
             Shortcut {
                 keys: "ctrl+alt+m".to_string(),
                 action: "maximize".to_string(),

@@ -596,6 +596,9 @@ pub fn execute(cli: Cli) -> Result<()> {
                     .map(|b| format!(" ({})", b))
                     .unwrap_or_default();
                 println!("  {} [PID: {}]{}", app.name, app.pid, bundle);
+                for title in &app.titles {
+                    println!("    - {}", title);
+                }
             }
             println!("\nTotal: {} applications", apps.len());
             Ok(())
