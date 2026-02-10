@@ -151,6 +151,7 @@ cwm config show                  # show current config
 cwm config path                  # show config file path
 cwm config set <key> <value>     # set a value
 cwm config reset                 # reset to defaults
+cwm config default               # show default config with examples
 ```
 
 Config keys:

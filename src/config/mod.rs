@@ -1,6 +1,6 @@
 mod schema;
 
-pub use schema::{should_launch, AppRule, Config, Shortcut};
+pub use schema::{should_launch, AppRule, Config, Settings, Shortcut};
 
 use anyhow::{anyhow, Context, Result};
 use std::env;
@@ -94,6 +94,52 @@ pub fn set_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// generates a default config with example shortcuts and rules
+pub fn default_with_examples() -> Config {
+    Config {
+        shortcuts: vec![
+            Shortcut {
+                keys: "ctrl+alt+s".to_string(),
+                action: "focus".to_string(),
+                app: Some("Slack".to_string()),
+                launch: Some(true),
+            },
+            Shortcut {
+                keys: "ctrl+alt+t".to_string(),
+                action: "focus".to_string(),
+                app: Some("Terminal".to_string()),
+                launch: None,
+            },
+            Shortcut {
+                keys: "ctrl+alt+m".to_string(),
+                action: "maximize".to_string(),
+                app: None,
+                launch: None,
+            },
+            Shortcut {
+                keys: "ctrl+alt+right".to_string(),
+                action: "move_display:next".to_string(),
+                app: None,
+                launch: None,
+            },
+            Shortcut {
+                keys: "ctrl+alt+8".to_string(),
+                action: "resize:80".to_string(),
+                app: None,
+                launch: None,
+            },
+        ],
+        app_rules: vec![
+            AppRule {
+                app: "Terminal".to_string(),
+                action: "maximize".to_string(),
+                delay_ms: Some(500),
+            },
+        ],
+        settings: Settings::default(),
+    }
 }
 
 fn parse_bool(value: &str) -> Result<bool> {

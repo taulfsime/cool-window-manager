@@ -204,6 +204,8 @@ pub enum ConfigCommands {
     },
     /// Reset configuration to defaults
     Reset,
+    /// Show the default configuration with example shortcuts and rules
+    Default,
 }
 
 pub fn execute(cli: Cli) -> Result<()> {
@@ -568,6 +570,13 @@ pub fn execute(cli: Cli) -> Result<()> {
                 let config = Config::default();
                 config::save(&config)?;
                 println!("Configuration reset to defaults");
+                Ok(())
+            }
+            ConfigCommands::Default => {
+                let config = config::default_with_examples();
+                let json = serde_json::to_string_pretty(&config)
+                    .context("Failed to serialize config")?;
+                println!("{}", json);
                 Ok(())
             }
         },
