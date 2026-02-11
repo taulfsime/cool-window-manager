@@ -76,6 +76,24 @@ cool-window-mng/
 │   ├── release-beta.sh     # helper script to create beta releases
 │   ├── release-stable.sh   # helper script to create stable releases
 │   └── list-releases.sh    # helper script to list all releases
+├── tests/
+│   ├── integration.rs      # integration test entry point
+│   ├── integration_tests/
+│   │   ├── common.rs       # shared test utilities
+│   │   ├── test_install.rs # install test scenarios
+│   │   ├── test_update.rs  # update test scenarios
+│   │   ├── test_rollback.rs # rollback test scenarios
+│   │   └── test_channels.rs # channel switching tests
+│   ├── docker/
+│   │   ├── Dockerfile.mock-server    # mock GitHub API server
+│   │   ├── Dockerfile.test-runner    # test execution container
+│   │   ├── docker-compose.yml        # local development
+│   │   └── docker-compose.ci.yml     # CI environment
+│   ├── mock_server/
+│   │   ├── package.json    # mock server dependencies
+│   │   └── server.js       # mock GitHub API implementation (Node.js/Express)
+│   └── scripts/
+│       └── run-docker-tests.sh # local test runner
 └── src/
     ├── main.rs             # entry point, update check, delegates to cli::run()
     ├── version.rs          # version management (Version, VersionInfo)
@@ -381,8 +399,14 @@ The build.rs script automatically embeds:
 ### Test
 
 ```bash
+# unit tests
 cargo test
+
+# integration tests (requires Docker)
+./tests/scripts/run-docker-tests.sh
 ```
+
+#### Unit Tests
 
 Tests are located in `#[cfg(test)]` modules within:
 
@@ -396,6 +420,41 @@ Tests are located in `#[cfg(test)]` modules within:
 | `src/version.rs` | version parsing, comparison, serialization |
 | `src/installer/paths.rs` | path detection, writability checks, PATH detection |
 | `src/installer/github.rs` | release parsing, architecture detection |
+
+#### Integration Tests
+
+Docker-based integration tests for install, update, and rollback features:
+
+```bash
+# run all integration tests
+./tests/scripts/run-docker-tests.sh
+
+# run specific test
+./tests/scripts/run-docker-tests.sh --test test_rollback_on_binary_test_failure
+
+# debug mode (interactive shell)
+./tests/scripts/run-docker-tests.sh --debug
+
+# keep containers running after tests
+./tests/scripts/run-docker-tests.sh --no-cleanup
+
+# force rebuild Docker images
+./tests/scripts/run-docker-tests.sh --rebuild
+```
+
+Integration test files:
+
+| File | Test Coverage |
+|------|---------------|
+| `tests/integration_tests/test_install.rs` | fresh install, directory creation, permissions, force overwrite |
+| `tests/integration_tests/test_update.rs` | version checking, download, checksum verification, binary replacement |
+| `tests/integration_tests/test_rollback.rs` | backup creation, test failure rollback, checksum mismatch, corrupt download |
+| `tests/integration_tests/test_channels.rs` | dev/beta/stable channels, channel priority, upgrade paths |
+
+The integration tests use a mock GitHub API server that simulates:
+- Release listings with multiple channels (dev, beta, stable)
+- Binary downloads with checksum verification
+- Error scenarios (rate limiting, corrupt downloads, checksum mismatch)
 
 ### Run
 

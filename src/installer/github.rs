@@ -93,6 +93,11 @@ impl ReleaseInfo {
 pub struct GitHubClient {
     client: reqwest::blocking::Client,
     repo: String,
+    api_base_url: String,
+}
+
+fn get_api_base_url() -> String {
+    std::env::var("CWM_GITHUB_API_URL").unwrap_or_else(|_| "https://api.github.com".to_string())
 }
 
 impl GitHubClient {
@@ -105,11 +110,12 @@ impl GitHubClient {
         Ok(Self {
             client,
             repo: repo.to_string(),
+            api_base_url: get_api_base_url(),
         })
     }
 
     pub fn fetch_releases(&self) -> Result<Vec<GitHubRelease>> {
-        let url = format!("https://api.github.com/repos/{}/releases", self.repo);
+        let url = format!("{}/repos/{}/releases", self.api_base_url, self.repo);
 
         // implement retry with random delay for rate limiting
         let mut attempts = 0;
@@ -268,7 +274,7 @@ impl GitHubClient {
     }
 
     pub fn create_issue(&self, title: &str, body: &str, labels: Vec<&str>) -> Result<()> {
-        let url = format!("https://api.github.com/repos/{}/issues", self.repo);
+        let url = format!("{}/repos/{}/issues", self.api_base_url, self.repo);
 
         #[derive(Serialize)]
         struct IssueRequest {
@@ -298,19 +304,19 @@ impl GitHubClient {
 }
 
 fn detect_architecture() -> &'static str {
-    // detect current architecture
-    #[cfg(target_arch = "x86_64")]
-    let arch = "x86_64-apple-darwin";
-
-    #[cfg(target_arch = "aarch64")]
-    let arch = "aarch64-apple-darwin";
-
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    let arch = "unknown";
-
-    // check for Rosetta emulation
+    // detect current architecture based on OS
     #[cfg(target_os = "macos")]
     {
+        #[cfg(target_arch = "x86_64")]
+        let arch = "x86_64-apple-darwin";
+
+        #[cfg(target_arch = "aarch64")]
+        let arch = "aarch64-apple-darwin";
+
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let arch = "unknown";
+
+        // check for Rosetta emulation
         use std::process::Command;
 
         if let Ok(output) = Command::new("sysctl")
@@ -323,9 +329,26 @@ fn detect_architecture() -> &'static str {
                 return arch;
             }
         }
+
+        arch
     }
 
-    arch
+    #[cfg(target_os = "linux")]
+    {
+        #[cfg(target_arch = "x86_64")]
+        return "x86_64-unknown-linux-gnu";
+
+        #[cfg(target_arch = "aarch64")]
+        return "aarch64-unknown-linux-gnu";
+
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        return "unknown";
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        "unknown"
+    }
 }
 
 #[cfg(test)]
@@ -427,11 +450,17 @@ mod tests {
     fn test_detect_architecture() {
         let arch = detect_architecture();
 
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         assert_eq!(arch, "aarch64-apple-darwin");
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         assert_eq!(arch, "x86_64-apple-darwin");
+
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        assert_eq!(arch, "x86_64-unknown-linux-gnu");
+
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        assert_eq!(arch, "aarch64-unknown-linux-gnu");
     }
 
     #[test]

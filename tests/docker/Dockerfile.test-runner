@@ -1,0 +1,49 @@
+# test runner container for integration tests
+FROM rust:1.85-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    sudo \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# create test user with sudo access
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+WORKDIR /app
+
+# copy project files
+COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
+COPY src ./src
+COPY tests ./tests
+
+# pre-build dependencies
+RUN cargo fetch
+
+# build the project for Linux
+ENV RELEASE_CHANNEL=dev
+RUN cargo build --release
+
+# create directories for install tests and fix permissions
+RUN mkdir -p /home/testuser/.local/bin \
+    /home/testuser/.cwm \
+    /opt/readonly \
+    /usr/local/bin && \
+    chown -R testuser:testuser /home/testuser && \
+    chown -R testuser:testuser /app && \
+    chown -R testuser:testuser /usr/local/cargo && \
+    chmod 555 /opt/readonly
+
+USER testuser
+WORKDIR /app
+
+# environment for tests
+ENV CWM_GITHUB_API_URL=http://mock-github:8080
+ENV HOME=/home/testuser
+ENV PATH="/home/testuser/.local/bin:${PATH}"
+
+CMD ["cargo", "test", "--test", "integration", "--", "--test-threads=1"]
