@@ -64,17 +64,27 @@ macOS only. The codebase uses `#[cfg(target_os = "macos")]` guards with stub fal
 cool-window-mng/
 ├── Cargo.toml              # project manifest and dependencies
 ├── Cargo.lock              # locked dependency versions
+├── build.rs                # build script for git version info
 ├── README.md               # user-facing documentation
 ├── AGENTS.md               # this file
+├── install.sh              # shell installer script
 ├── .gitignore              # ignores target/ and session- files
+├── .github/
+│   └── workflows/
+│       └── ci.yml          # GitHub Actions CI/CD workflow
+├── scripts/
+│   ├── release-beta.sh     # helper script to create beta releases
+│   ├── release-stable.sh   # helper script to create stable releases
+│   └── list-releases.sh    # helper script to list all releases
 └── src/
-    ├── main.rs             # entry point, delegates to cli::run()
+    ├── main.rs             # entry point, update check, delegates to cli::run()
+    ├── version.rs          # version management (Version, VersionInfo)
     ├── cli/
     │   ├── mod.rs          # module exports
     │   └── commands.rs     # CLI command definitions and execution
     ├── config/
     │   ├── mod.rs          # config loading, saving, value manipulation
-    │   └── schema.rs       # Config, Shortcut, AppRule, Settings, Retry structs
+    │   └── schema.rs       # Config, Shortcut, AppRule, Settings, UpdateSettings
     ├── daemon/
     │   ├── mod.rs          # daemon lifecycle, action execution, hotkey parsing
     │   ├── hotkeys.rs      # global hotkey recording and listening (CGEventTap)
@@ -83,6 +93,13 @@ cool-window-mng/
     │   └── app_watcher.rs  # NSWorkspace notifications for app launches
     ├── display/
     │   └── mod.rs          # display enumeration, multi-monitor targeting
+    ├── installer/
+    │   ├── mod.rs          # module exports
+    │   ├── paths.rs        # installation path detection and validation
+    │   ├── install.rs      # binary installation logic
+    │   ├── github.rs       # GitHub API client for releases
+    │   ├── update.rs       # update checking and downloading
+    │   └── rollback.rs     # safe update with automatic rollback
     └── window/
         ├── mod.rs          # module exports
         ├── accessibility.rs # Accessibility API permission handling
@@ -103,23 +120,47 @@ Handles command-line argument parsing and command execution.
 | `mod.rs` | re-exports `run()` and `Cli` |
 | `commands.rs` | defines `Cli` struct with clap derive, `Commands` enum, and `run()` function that dispatches to appropriate handlers |
 
-Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list-apps`, `list-displays`, `check-permissions`, `record-shortcut`, `config`, `daemon`
+Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list-apps`, `list-displays`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`
 
 ### config/
 
-Manages JSON configuration file at `~/.cwm.json` (or `$CWM_CONFIG`).
+Manages JSON configuration file at `~/.cwm/config.json`.
 
 | File | Responsibility |
 |------|----------------|
-| `mod.rs` | `load()`, `save()`, `get_config_path()`, `set_value()`, `verify()` |
+| `mod.rs` | `load()`, `save()`, `get_config_path()`, `ensure_cwm_dir()`, `set_value()`, `verify()` |
 | `schema.rs` | data structures with serde derive |
 
 Key types:
 - `Config`: root configuration object
 - `Shortcut`: hotkey binding with keys, action, app, optional overrides
 - `AppRule`: automatic action when an app launches
-- `Settings`: global defaults (fuzzy_threshold, launch, animate, delay_ms, retry)
+- `Settings`: global defaults (fuzzy_threshold, launch, animate, delay_ms, retry, update)
 - `Retry`: retry configuration (count, delay_ms, backoff)
+- `UpdateSettings`: update configuration (enabled, check_frequency, auto_update, channels, telemetry)
+- `UpdateChannels`: channel selection (dev, beta, stable)
+- `TelemetrySettings`: error reporting settings
+
+### installer/
+
+Handles installation, updates, and version management.
+
+| File | Responsibility |
+|------|----------------|
+| `mod.rs` | module exports and coordination |
+| `paths.rs` | installation path detection and validation |
+| `install.rs` | binary installation logic |
+| `update.rs` | update checking and downloading |
+| `github.rs` | GitHub API client for releases |
+| `rollback.rs` | safe update with automatic rollback |
+
+### version.rs
+
+Standalone module for version information.
+
+- `Version` struct with commit hash, timestamp, channel
+- `VersionInfo` for persistent version tracking at `~/.cwm/version.json`
+- Build-time version embedding via `build.rs`
 
 ### daemon/
 
@@ -282,8 +323,15 @@ pub fn some_function() -> Result<()> {
 | `anyhow` | error handling with context |
 | `thiserror` | custom error type derivation |
 | `tokio` (full) | async runtime for daemon |
-| `chrono` | timestamp formatting |
+| `chrono` | timestamp formatting with serde support |
 | `libc` | signal handling |
+| `reqwest` (v0.11) | HTTP client for GitHub API |
+| `sha2` (v0.10) | SHA256 checksum verification |
+| `hex` (v0.4) | hex encoding for checksums |
+| `tempfile` (v3) | temporary files during updates |
+| `indicatif` (v0.17) | progress bars for downloads |
+| `rand` (v0.8) | random delays for rate limiting |
+| `shellexpand` (v3) | path expansion (~/.local/bin) |
 
 ### macOS-Specific
 
@@ -316,9 +364,19 @@ cargo build
 # release build (recommended for actual use)
 cargo build --release
 
+# build with specific channel
+RELEASE_CHANNEL=stable cargo build --release
+
 # binary location
 ./target/release/cwm
 ```
+
+The build.rs script automatically embeds:
+- Git commit hash
+- Commit timestamp
+- Build date
+- Release channel
+- GitHub repository URL
 
 ### Test
 
@@ -331,10 +389,13 @@ Tests are located in `#[cfg(test)]` modules within:
 | File | Test Coverage |
 |------|---------------|
 | `src/config/mod.rs` | config value parsing, key setting |
-| `src/config/schema.rs` | `should_launch` priority logic |
+| `src/config/schema.rs` | `should_launch` priority logic, update settings serialization |
 | `src/display/mod.rs` | display target parsing, resolution with wraparound |
 | `src/window/matching.rs` | name matching (exact, prefix, fuzzy), title matching (exact, prefix, fuzzy) |
 | `src/daemon/hotkeys.rs` | hotkey string parsing |
+| `src/version.rs` | version parsing, comparison, serialization |
+| `src/installer/paths.rs` | path detection, writability checks, PATH detection |
+| `src/installer/github.rs` | release parsing, architecture detection |
 
 ### Run
 
@@ -372,8 +433,9 @@ The tool requires **Accessibility permissions** to function:
 
 ### File Location
 
-- Default: `~/.cwm.json`
-- Override: set `CWM_CONFIG` environment variable
+- Configuration: `~/.cwm/config.json`
+- Version info: `~/.cwm/version.json`
+- Override config: set `CWM_CONFIG` environment variable
 
 ### Schema
 
@@ -403,6 +465,20 @@ The tool requires **Accessibility permissions** to function:
       "count": 10,
       "delay_ms": 100,
       "backoff": 1.5
+    },
+    "update": {
+      "enabled": true,
+      "check_frequency": "daily",
+      "auto_update": "prompt",
+      "channels": {
+        "dev": false,
+        "beta": false,
+        "stable": true
+      },
+      "telemetry": {
+        "enabled": false,
+        "include_system_info": false
+      }
     }
   }
 }
@@ -461,3 +537,56 @@ The daemon logs to stdout with timestamps using `chrono`. Log format:
 ```
 
 No log levels or external logging framework; simple `println!` with timestamp prefix.
+
+---
+
+## CI/CD
+
+The project uses GitHub Actions for continuous integration and deployment.
+
+### Release Strategy
+
+- **Dev releases**: Automatic on every push to main
+- **Beta releases**: Manual via git tags (`beta-{commit}`)
+- **Stable releases**: Manual via git tags (`stable-{commit}`)
+
+### Workflows
+
+Located in `.github/workflows/ci.yml`:
+
+1. **Test Job**: Runs on all PRs and pushes
+   - cargo test
+   - cargo fmt check
+   - cargo clippy
+
+2. **Build Job**: Creates release binaries
+   - Builds for both x86_64 and aarch64 macOS
+   - Strips debug symbols for smaller size
+   - Creates tar.gz archives with checksums
+
+3. **Release Job**: Publishes to GitHub Releases
+   - Auto-generates release notes from commits
+   - Includes link to full diff
+   - Cleans up old dev releases (keeps last 3)
+
+### Creating Releases
+
+```bash
+# Dev release (automatic on push to main)
+git push origin main
+
+# Beta release
+./scripts/release-beta.sh
+
+# Stable release
+./scripts/release-stable.sh
+
+# List all releases
+./scripts/list-releases.sh
+```
+
+### Tag Format
+
+- Beta: `beta-{8-char-commit-hash}` (e.g., `beta-a3f2b1c4`)
+- Stable: `stable-{8-char-commit-hash}` (e.g., `stable-a3f2b1c4`)
+- Deprecated: `deprecated-{8-char-commit-hash}` (marks bad releases)

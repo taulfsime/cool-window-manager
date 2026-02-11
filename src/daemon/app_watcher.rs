@@ -12,12 +12,12 @@ pub struct MatchedRule {
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
-    use std::sync::Mutex;
     use std::ffi::c_void;
+    use std::sync::Mutex;
 
+    use objc2::msg_send;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
-    use objc2::msg_send;
     use objc2_app_kit::{NSRunningApplication, NSWorkspace};
     use objc2_foundation::{NSNotification, NSString};
 
@@ -50,7 +50,8 @@ mod macos {
             };
 
             // cast to NSRunningApplication
-            let app: &NSRunningApplication = &*(&*app_obj as *const AnyObject as *const NSRunningApplication);
+            let app: &NSRunningApplication =
+                &*(&*app_obj as *const AnyObject as *const NSRunningApplication);
 
             let app_name = match app.localizedName() {
                 Some(name) => name.to_string(),
@@ -104,22 +105,27 @@ mod macos {
         }
     }
 
-    pub fn start_watching(rules: Vec<AppRule>, callback: impl Fn(MatchedRule, i32) + Send + 'static) -> Result<()> {
+    pub fn start_watching(
+        rules: Vec<AppRule>,
+        callback: impl Fn(MatchedRule, i32) + Send + 'static,
+    ) -> Result<()> {
         // store rules and callback
         {
-            let mut rules_guard = APP_RULES.lock().map_err(|e| anyhow::anyhow!("lock error: {}", e))?;
+            let mut rules_guard = APP_RULES
+                .lock()
+                .map_err(|e| anyhow::anyhow!("lock error: {}", e))?;
             *rules_guard = Some(rules);
         }
         {
-            let mut callback_guard = CALLBACK.lock().map_err(|e| anyhow::anyhow!("lock error: {}", e))?;
+            let mut callback_guard = CALLBACK
+                .lock()
+                .map_err(|e| anyhow::anyhow!("lock error: {}", e))?;
             *callback_guard = Some(Box::new(callback));
         }
 
         // get the workspace notification center
         let workspace = NSWorkspace::sharedWorkspace();
-        let nc: Retained<AnyObject> = unsafe {
-            msg_send![&workspace, notificationCenter]
-        };
+        let nc: Retained<AnyObject> = unsafe { msg_send![&workspace, notificationCenter] };
 
         // create the notification name
         let notification_name = NSString::from_str("NSWorkspaceDidLaunchApplicationNotification");
@@ -128,9 +134,8 @@ mod macos {
         // use &AnyObject which encodes as '@' for Objective-C objects
         let block = block2::RcBlock::new(|notification: &AnyObject| {
             // cast AnyObject to NSNotification
-            let notification: &NSNotification = unsafe {
-                &*(notification as *const AnyObject as *const NSNotification)
-            };
+            let notification: &NSNotification =
+                unsafe { &*(notification as *const AnyObject as *const NSNotification) };
             handle_app_launch(notification);
         });
 
@@ -152,11 +157,15 @@ mod macos {
         let block_ptr = Box::into_raw(Box::new(block)) as *mut c_void;
 
         {
-            let mut ptr_guard = OBSERVER_PTR.lock().map_err(|e| anyhow::anyhow!("lock error: {}", e))?;
+            let mut ptr_guard = OBSERVER_PTR
+                .lock()
+                .map_err(|e| anyhow::anyhow!("lock error: {}", e))?;
             *ptr_guard = SendPtr(observer_ptr);
         }
         {
-            let mut ptr_guard = BLOCK_PTR.lock().map_err(|e| anyhow::anyhow!("lock error: {}", e))?;
+            let mut ptr_guard = BLOCK_PTR
+                .lock()
+                .map_err(|e| anyhow::anyhow!("lock error: {}", e))?;
             *ptr_guard = SendPtr(block_ptr);
         }
 
@@ -167,7 +176,10 @@ mod macos {
         // remove observer
         let observer_ptr = {
             let mut ptr_guard = OBSERVER_PTR.lock().ok();
-            ptr_guard.as_mut().map(|g| std::mem::replace(&mut g.0, std::ptr::null_mut())).unwrap_or(std::ptr::null_mut())
+            ptr_guard
+                .as_mut()
+                .map(|g| std::mem::replace(&mut g.0, std::ptr::null_mut()))
+                .unwrap_or(std::ptr::null_mut())
         };
 
         if !observer_ptr.is_null() {
@@ -187,7 +199,10 @@ mod macos {
         // drop the block
         let block_ptr = {
             let mut ptr_guard = BLOCK_PTR.lock().ok();
-            ptr_guard.as_mut().map(|g| std::mem::replace(&mut g.0, std::ptr::null_mut())).unwrap_or(std::ptr::null_mut())
+            ptr_guard
+                .as_mut()
+                .map(|g| std::mem::replace(&mut g.0, std::ptr::null_mut()))
+                .unwrap_or(std::ptr::null_mut())
         };
 
         if !block_ptr.is_null() {
@@ -210,7 +225,10 @@ mod macos {
 pub use macos::{start_watching, stop_watching};
 
 #[cfg(not(target_os = "macos"))]
-pub fn start_watching(_rules: Vec<AppRule>, _callback: impl Fn(MatchedRule, i32) + Send + 'static) -> Result<()> {
+pub fn start_watching(
+    _rules: Vec<AppRule>,
+    _callback: impl Fn(MatchedRule, i32) + Send + 'static,
+) -> Result<()> {
     Err(anyhow::anyhow!("App watching is only supported on macOS"))
 }
 

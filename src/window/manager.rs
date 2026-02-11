@@ -51,13 +51,15 @@ pub fn focus_app(app: &AppInfo, verbose: bool) -> Result<()> {
     let running_app = NSRunningApplication::runningApplicationWithProcessIdentifier(app.pid);
 
     let Some(running_app) = running_app else {
-        return Err(anyhow!("Could not find running application with PID {}", app.pid));
+        return Err(anyhow!(
+            "Could not find running application with PID {}",
+            app.pid
+        ));
     };
 
     // ActivateIgnoringOtherApps is deprecated in macOS 14 but still works for older versions
-    let success = running_app.activateWithOptions(
-        NSApplicationActivationOptions::ActivateIgnoringOtherApps,
-    );
+    let success =
+        running_app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps);
 
     if !success {
         return Err(anyhow!("Failed to activate application: {}", app.name));
@@ -112,7 +114,10 @@ unsafe fn get_frontmost_window(pid: i32) -> Result<AXUIElementRef> {
 
     if result != K_AX_ERROR_SUCCESS || windows_value.is_null() {
         core_foundation::base::CFRelease(app_element as CFTypeRef);
-        return Err(anyhow!("Failed to get windows for application (error: {})", result));
+        return Err(anyhow!(
+            "Failed to get windows for application (error: {})",
+            result
+        ));
     }
 
     // windows_value is a CFArray, get count and first element
@@ -126,7 +131,7 @@ unsafe fn get_frontmost_window(pid: i32) -> Result<AXUIElementRef> {
 
     // get the first (frontmost) window
     let window = CFArrayGetValueAtIndex(windows_value as _, 0) as AXUIElementRef;
-    
+
     if window.is_null() {
         core_foundation::base::CFRelease(windows_value);
         core_foundation::base::CFRelease(app_element as CFTypeRef);
@@ -135,7 +140,7 @@ unsafe fn get_frontmost_window(pid: i32) -> Result<AXUIElementRef> {
 
     // retain the window since we're returning it
     core_foundation::base::CFRetain(window as CFTypeRef);
-    
+
     core_foundation::base::CFRelease(windows_value);
     core_foundation::base::CFRelease(app_element as CFTypeRef);
 
@@ -146,7 +151,10 @@ unsafe fn get_frontmost_window(pid: i32) -> Result<AXUIElementRef> {
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFArrayGetCount(array: core_foundation::array::CFArrayRef) -> isize;
-    fn CFArrayGetValueAtIndex(array: core_foundation::array::CFArrayRef, index: isize) -> *const std::ffi::c_void;
+    fn CFArrayGetValueAtIndex(
+        array: core_foundation::array::CFArrayRef,
+        index: isize,
+    ) -> *const std::ffi::c_void;
 }
 
 /// Get the focused window (from the frontmost application)
@@ -181,7 +189,10 @@ unsafe fn set_window_position(window: AXUIElementRef, x: f64, y: f64) -> Result<
 
     // create an AXValue for the position (CGPoint)
     let point = core_graphics::geometry::CGPoint::new(x, y);
-    let position_value = AXValueCreate(K_AX_VALUE_TYPE_CG_POINT, &point as *const _ as *const std::ffi::c_void);
+    let position_value = AXValueCreate(
+        K_AX_VALUE_TYPE_CG_POINT,
+        &point as *const _ as *const std::ffi::c_void,
+    );
 
     if position_value.is_null() {
         return Err(anyhow!("Failed to create AXValue for position"));
@@ -212,7 +223,11 @@ unsafe fn set_window_position(window: AXUIElementRef, x: f64, y: f64) -> Result<
             -25212 => "parameter error",
             _ => "unknown error",
         };
-        return Err(anyhow!("Failed to set window position: {} ({})", err_msg, result));
+        return Err(anyhow!(
+            "Failed to set window position: {} ({})",
+            err_msg,
+            result
+        ));
     }
 
     Ok(())
@@ -227,7 +242,10 @@ unsafe fn set_window_size(window: AXUIElementRef, width: f64, height: f64) -> Re
 
     // create an AXValue for the size (CGSize)
     let size = core_graphics::geometry::CGSize::new(width, height);
-    let size_value = AXValueCreate(K_AX_VALUE_TYPE_CG_SIZE, &size as *const _ as *const std::ffi::c_void);
+    let size_value = AXValueCreate(
+        K_AX_VALUE_TYPE_CG_SIZE,
+        &size as *const _ as *const std::ffi::c_void,
+    );
 
     if size_value.is_null() {
         return Err(anyhow!("Failed to create AXValue for size"));
@@ -337,7 +355,10 @@ pub fn maximize_app(app: Option<&AppInfo>, verbose: bool) -> Result<()> {
     let (x, y, width, height) = get_usable_display_bounds();
 
     if verbose {
-        println!("Usable display bounds: {}x{} at ({}, {})", width, height, x, y);
+        println!(
+            "Usable display bounds: {}x{} at ({}, {})",
+            width, height, x, y
+        );
     }
 
     unsafe {
@@ -372,10 +393,7 @@ pub fn launch_app(app_name: &str, verbose: bool) -> Result<()> {
         println!("Launching: {}", app_name);
     }
 
-    let status = Command::new("open")
-        .arg("-a")
-        .arg(app_name)
-        .status()?;
+    let status = Command::new("open").arg("-a").arg(app_name).status()?;
 
     if !status.success() {
         return Err(anyhow!("Failed to launch application: {}", app_name));
@@ -435,11 +453,8 @@ unsafe fn get_window_size(window: AXUIElementRef) -> Result<(f64, f64)> {
     let size_attr = CFString::new("AXSize");
     let mut size_value: CFTypeRef = std::ptr::null_mut();
 
-    let result = AXUIElementCopyAttributeValue(
-        window,
-        size_attr.as_concrete_TypeRef(),
-        &mut size_value,
-    );
+    let result =
+        AXUIElementCopyAttributeValue(window, size_attr.as_concrete_TypeRef(), &mut size_value);
 
     if result != K_AX_ERROR_SUCCESS || size_value.is_null() {
         return Err(anyhow!("Failed to get window size (error: {})", result));
@@ -464,7 +479,11 @@ unsafe fn get_window_size(window: AXUIElementRef) -> Result<(f64, f64)> {
 #[cfg(target_os = "macos")]
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
-    fn AXValueGetValue(value: AXValueRef, value_type: u32, value_ptr: *mut std::ffi::c_void) -> bool;
+    fn AXValueGetValue(
+        value: AXValueRef,
+        value_type: u32,
+        value_ptr: *mut std::ffi::c_void,
+    ) -> bool;
 }
 
 /// Find which display a point is on
@@ -486,7 +505,9 @@ fn find_display_for_point(x: f64, y: f64, displays: &[crate::display::DisplayInf
 
 /// Get usable bounds for a specific display (excluding menu bar and dock)
 #[cfg(target_os = "macos")]
-fn get_usable_bounds_for_display(display: &crate::display::DisplayInfo) -> Result<(f64, f64, f64, f64)> {
+fn get_usable_bounds_for_display(
+    display: &crate::display::DisplayInfo,
+) -> Result<(f64, f64, f64, f64)> {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSScreen;
 
@@ -554,8 +575,8 @@ pub fn move_to_display(
     target: &crate::display::DisplayTarget,
     verbose: bool,
 ) -> Result<()> {
-    use core_foundation::base::CFTypeRef;
     use crate::display::{get_displays, resolve_target_display};
+    use core_foundation::base::CFTypeRef;
 
     if !accessibility::is_trusted() {
         return Err(anyhow!(
@@ -603,7 +624,10 @@ pub fn move_to_display(
     let (tx, ty, tw, th) = get_usable_bounds_for_display(target_display)?;
 
     if verbose {
-        println!("Target display usable bounds: {}x{} at ({}, {})", tw, th, tx, ty);
+        println!(
+            "Target display usable bounds: {}x{} at ({}, {})",
+            tw, th, tx, ty
+        );
     }
 
     // calculate new position - try to maintain relative position within display
@@ -628,7 +652,10 @@ pub fn move_to_display(
     }
 
     if verbose {
-        println!("Moving window to: {}x{} at ({}, {})", new_w, new_h, new_x, new_y);
+        println!(
+            "Moving window to: {}x{} at ({}, {})",
+            new_w, new_h, new_x, new_y
+        );
     }
 
     unsafe {

@@ -1,6 +1,9 @@
 mod schema;
 
-pub use schema::{should_launch, AppRule, Config, Settings, Shortcut};
+pub use schema::{
+    should_launch, AppRule, AutoUpdateMode, Config, Settings, Shortcut, TelemetrySettings,
+    UpdateFrequency, UpdateSettings,
+};
 
 use anyhow::{anyhow, Context, Result};
 use std::env;
@@ -10,22 +13,37 @@ use std::path::{Path, PathBuf};
 use crate::daemon::hotkeys::Hotkey;
 
 const CONFIG_ENV_VAR: &str = "CWM_CONFIG";
-const DEFAULT_CONFIG_FILE: &str = ".cwm.json";
 
 pub fn get_config_path() -> PathBuf {
     if let Ok(path) = env::var(CONFIG_ENV_VAR) {
         return PathBuf::from(path);
     }
 
+    // new location: ~/.cwm/config.json
     dirs::home_dir()
-        .map(|home| home.join(DEFAULT_CONFIG_FILE))
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_FILE))
+        .expect("Could not find home directory")
+        .join(".cwm")
+        .join("config.json")
+}
+
+pub fn ensure_cwm_dir() -> Result<PathBuf> {
+    let cwm_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow!("Could not find home directory"))?
+        .join(".cwm");
+
+    if !cwm_dir.exists() {
+        fs::create_dir_all(&cwm_dir)?;
+    }
+
+    Ok(cwm_dir)
 }
 
 pub fn load() -> Result<Config> {
     let path = get_config_path();
 
     if !path.exists() {
+        // ensure directory exists
+        ensure_cwm_dir()?;
         let config = Config::default();
         save(&config)?;
         return Ok(config);
@@ -42,6 +60,11 @@ pub fn load() -> Result<Config> {
 
 pub fn save(config: &Config) -> Result<()> {
     let path = get_config_path();
+
+    // ensure directory exists
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
 
     let content = serde_json::to_string_pretty(config).context("Failed to serialize config")?;
 
@@ -134,7 +157,7 @@ fn validate_action(action: &str) -> Result<(), String> {
         }
         if !arg.eq_ignore_ascii_case("full") {
             match arg.parse::<u32>() {
-                Ok(n) if n >= 1 && n <= 100 => {}
+                Ok(n) if (1..=100).contains(&n) => {}
                 Ok(n) => {
                     return Err(format!("resize size {} out of range (1-100)", n));
                 }
@@ -190,9 +213,53 @@ pub fn set_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
                 .parse()
                 .with_context(|| format!("Invalid number: {}", value))?;
         }
+        ["settings", "update", "enabled"] => {
+            config.settings.update.enabled = parse_bool(value)?;
+        }
+        ["settings", "update", "check_frequency"] => {
+            config.settings.update.check_frequency = match value.to_lowercase().as_str() {
+                "daily" => UpdateFrequency::Daily,
+                "weekly" => UpdateFrequency::Weekly,
+                "manual" => UpdateFrequency::Manual,
+                _ => {
+                    return Err(anyhow!(
+                        "Invalid check_frequency: {}. Use daily, weekly, or manual",
+                        value
+                    ))
+                }
+            };
+        }
+        ["settings", "update", "auto_update"] => {
+            config.settings.update.auto_update = match value.to_lowercase().as_str() {
+                "always" => AutoUpdateMode::Always,
+                "prompt" => AutoUpdateMode::Prompt,
+                "never" => AutoUpdateMode::Never,
+                _ => {
+                    return Err(anyhow!(
+                        "Invalid auto_update: {}. Use always, prompt, or never",
+                        value
+                    ))
+                }
+            };
+        }
+        ["settings", "update", "channels", "dev"] => {
+            config.settings.update.channels.dev = parse_bool(value)?;
+        }
+        ["settings", "update", "channels", "beta"] => {
+            config.settings.update.channels.beta = parse_bool(value)?;
+        }
+        ["settings", "update", "channels", "stable"] => {
+            config.settings.update.channels.stable = parse_bool(value)?;
+        }
+        ["settings", "update", "telemetry", "enabled"] => {
+            config.settings.update.telemetry.enabled = parse_bool(value)?;
+        }
+        ["settings", "update", "telemetry", "include_system_info"] => {
+            config.settings.update.telemetry.include_system_info = parse_bool(value)?;
+        }
         _ => {
             return Err(anyhow!(
-                "Unknown config key: {}. Valid keys: settings.launch, settings.animate, settings.fuzzy_threshold, settings.delay_ms, settings.retry.count, settings.retry.delay_ms, settings.retry.backoff",
+                "Unknown config key: {}. Valid keys include: settings.launch, settings.animate, settings.fuzzy_threshold, settings.update.enabled, settings.update.channels.stable, etc.",
                 key
             ));
         }

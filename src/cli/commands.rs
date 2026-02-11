@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 use crate::config::{self, Config, Shortcut};
 use crate::daemon::hotkeys;
@@ -149,6 +150,46 @@ pub enum Commands {
         /// Prompt to grant permissions if not already granted
         #[arg(long)]
         prompt: bool,
+    },
+
+    /// Display version information
+    Version,
+
+    /// Install cwm to system PATH
+    Install {
+        /// Installation directory
+        #[arg(long)]
+        path: Option<PathBuf>,
+
+        /// Force overwrite existing installation
+        #[arg(long)]
+        force: bool,
+
+        /// Don't use sudo even if needed
+        #[arg(long)]
+        no_sudo: bool,
+    },
+
+    /// Uninstall cwm from system
+    Uninstall {
+        /// Remove from specific path
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Update cwm to latest version
+    Update {
+        /// Only check for updates, don't install
+        #[arg(long)]
+        check: bool,
+
+        /// Force update even if on latest version
+        #[arg(long)]
+        force: bool,
+
+        /// Include pre-release versions
+        #[arg(long)]
+        prerelease: bool,
     },
 }
 
@@ -615,6 +656,159 @@ pub fn execute(cli: Cli) -> Result<()> {
             } else {
                 accessibility::print_permission_status()?;
             }
+            Ok(())
+        }
+
+        Commands::Version => {
+            use crate::version::{Version, VersionInfo};
+
+            let version = Version::current();
+            println!("cwm {}", version.version_string());
+            println!(
+                "Built: {}",
+                version.build_date.format("%Y-%m-%d %H:%M:%S UTC")
+            );
+
+            // try to load version info for install path
+            if let Ok(info) = VersionInfo::load() {
+                println!("Installed: {}", info.install_path.display());
+            }
+
+            println!("Repository: https://github.com/{}", env!("GITHUB_REPO"));
+            Ok(())
+        }
+
+        Commands::Install {
+            path,
+            force,
+            no_sudo,
+        } => {
+            use crate::installer::{detect_install_paths, install_binary};
+
+            let target_dir = if let Some(p) = path {
+                p
+            } else {
+                // interactive path selection
+                let paths = detect_install_paths();
+
+                if paths.is_empty() {
+                    return Err(anyhow!("No suitable installation directories found"));
+                }
+
+                println!("Where would you like to install cwm?\n");
+                for (i, path) in paths.iter().enumerate() {
+                    println!("  {}. {}", i + 1, path.status_line());
+                }
+                println!("  {}. Custom path...", paths.len() + 1);
+
+                print!("\nChoice [1]: ");
+                use std::io::{self, Write};
+                io::stdout().flush()?;
+
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                let choice = input.trim();
+
+                let idx = if choice.is_empty() {
+                    0
+                } else {
+                    choice
+                        .parse::<usize>()
+                        .map(|n| n.saturating_sub(1))
+                        .unwrap_or(0)
+                };
+
+                if idx < paths.len() {
+                    paths[idx].path.clone()
+                } else {
+                    // custom path
+                    print!("Enter custom path: ");
+                    io::stdout().flush()?;
+                    let mut custom = String::new();
+                    io::stdin().read_line(&mut custom)?;
+                    PathBuf::from(shellexpand::tilde(custom.trim()).to_string())
+                }
+            };
+
+            // check if we need sudo
+            let needs_sudo = !no_sudo && !crate::installer::paths::check_writable(&target_dir);
+
+            install_binary(&target_dir, force, needs_sudo)?;
+            Ok(())
+        }
+
+        Commands::Uninstall { path } => {
+            use crate::installer::uninstall_binary;
+
+            uninstall_binary(path.as_deref())?;
+            Ok(())
+        }
+
+        Commands::Update {
+            check,
+            force,
+            prerelease,
+        } => {
+            use crate::config;
+            use crate::installer::{check_for_updates, perform_update};
+            use crate::version::Version;
+
+            let mut config = config::load()?;
+
+            // enable prerelease channels if requested
+            if prerelease {
+                config.settings.update.channels.beta = true;
+                config.settings.update.channels.dev = true;
+            }
+
+            let current = Version::current();
+            println!("Current version: {}", current.version_string());
+
+            println!("Checking for updates...");
+            match check_for_updates(&config.settings.update, true)? {
+                Some(release) => {
+                    println!("\n🆕 New version available: {}", release.version);
+
+                    if let Some(ref notes) = release.release_notes {
+                        println!("\nRelease notes:");
+                        println!("{}", notes);
+                    }
+
+                    if check {
+                        println!("\nRun 'cwm update' to install");
+                    } else {
+                        println!("\nUpdate size: {:.2} MB", release.size as f64 / 1_048_576.0);
+
+                        if !force {
+                            print!("Install update? [Y/n]: ");
+                            use std::io::{self, Write};
+                            io::stdout().flush()?;
+
+                            let mut input = String::new();
+                            io::stdin().read_line(&mut input)?;
+
+                            if input.trim().to_lowercase() == "n" {
+                                println!("Update cancelled");
+                                return Ok(());
+                            }
+                        }
+
+                        perform_update(release, force)?;
+
+                        // update last check time
+                        config.settings.update.last_check = Some(chrono::Utc::now());
+                        config::save(&config)?;
+                    }
+                }
+                None => {
+                    println!("You are on the latest version");
+
+                    // update last check time
+                    config.settings.update.last_check = Some(chrono::Utc::now());
+                    config::save(&config)?;
+                }
+            }
+
             Ok(())
         }
     }

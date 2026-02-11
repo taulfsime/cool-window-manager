@@ -1,21 +1,14 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub shortcuts: Vec<Shortcut>,
     #[serde(default)]
     pub app_rules: Vec<AppRule>,
+    #[serde(default)]
     pub settings: Settings,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            shortcuts: vec![],
-            app_rules: vec![],
-            settings: Settings::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +49,8 @@ pub struct Settings {
     pub delay_ms: u64,
     #[serde(default)]
     pub retry: Retry,
+    #[serde(default)]
+    pub update: UpdateSettings,
 }
 
 fn default_fuzzy_threshold() -> usize {
@@ -74,6 +69,7 @@ impl Default for Settings {
             animate: false,
             delay_ms: DEFAULT_DELAY_MS,
             retry: Retry::default(),
+            update: UpdateSettings::default(),
         }
     }
 }
@@ -124,6 +120,92 @@ pub fn should_launch(
         return false;
     }
     shortcut_launch.unwrap_or(global_launch)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_daily")]
+    pub check_frequency: UpdateFrequency,
+    #[serde(default = "default_prompt")]
+    pub auto_update: AutoUpdateMode,
+    #[serde(default)]
+    pub channels: UpdateChannels,
+    #[serde(default)]
+    pub telemetry: TelemetrySettings,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_check: Option<DateTime<Utc>>,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            check_frequency: UpdateFrequency::Daily,
+            auto_update: AutoUpdateMode::Prompt,
+            channels: UpdateChannels::default(),
+            telemetry: TelemetrySettings::default(),
+            last_check: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateChannels {
+    #[serde(default)]
+    pub dev: bool,
+    #[serde(default)]
+    pub beta: bool,
+    #[serde(default = "default_true")]
+    pub stable: bool,
+}
+
+impl Default for UpdateChannels {
+    fn default() -> Self {
+        Self {
+            dev: false,
+            beta: false,
+            stable: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetrySettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub include_system_info: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateFrequency {
+    Daily,
+    Weekly,
+    Manual,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoUpdateMode {
+    Always,
+    Prompt,
+    Never,
+}
+
+// default functions for serde
+fn default_true() -> bool {
+    true
+}
+
+fn default_daily() -> UpdateFrequency {
+    UpdateFrequency::Daily
+}
+
+fn default_prompt() -> AutoUpdateMode {
+    AutoUpdateMode::Prompt
 }
 
 #[cfg(test)]
@@ -289,5 +371,148 @@ mod tests {
         assert_eq!(config.app_rules[0].app, "Safari");
         assert_eq!(config.app_rules[0].action, "maximize");
         assert!(config.app_rules[0].delay_ms.is_none());
+    }
+
+    #[test]
+    fn test_update_settings_defaults() {
+        let settings = UpdateSettings::default();
+
+        assert!(settings.enabled);
+        assert!(matches!(settings.check_frequency, UpdateFrequency::Daily));
+        assert!(matches!(settings.auto_update, AutoUpdateMode::Prompt));
+        assert!(!settings.channels.dev);
+        assert!(!settings.channels.beta);
+        assert!(settings.channels.stable);
+        assert!(!settings.telemetry.enabled);
+        assert!(!settings.telemetry.include_system_info);
+        assert!(settings.last_check.is_none());
+    }
+
+    #[test]
+    fn test_update_settings_serialization() {
+        let settings = UpdateSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        let parsed: UpdateSettings = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.enabled, settings.enabled);
+        assert!(parsed.channels.stable);
+    }
+
+    #[test]
+    fn test_update_channels_defaults() {
+        let channels = UpdateChannels::default();
+
+        assert!(!channels.dev);
+        assert!(!channels.beta);
+        assert!(channels.stable);
+    }
+
+    #[test]
+    fn test_telemetry_settings_defaults() {
+        let telemetry = TelemetrySettings::default();
+
+        assert!(!telemetry.enabled);
+        assert!(!telemetry.include_system_info);
+    }
+
+    #[test]
+    fn test_update_frequency_serialization() {
+        let daily = UpdateFrequency::Daily;
+        let json = serde_json::to_string(&daily).unwrap();
+        assert_eq!(json, "\"daily\"");
+
+        let weekly = UpdateFrequency::Weekly;
+        let json = serde_json::to_string(&weekly).unwrap();
+        assert_eq!(json, "\"weekly\"");
+
+        let manual = UpdateFrequency::Manual;
+        let json = serde_json::to_string(&manual).unwrap();
+        assert_eq!(json, "\"manual\"");
+    }
+
+    #[test]
+    fn test_auto_update_mode_serialization() {
+        let always = AutoUpdateMode::Always;
+        let json = serde_json::to_string(&always).unwrap();
+        assert_eq!(json, "\"always\"");
+
+        let prompt = AutoUpdateMode::Prompt;
+        let json = serde_json::to_string(&prompt).unwrap();
+        assert_eq!(json, "\"prompt\"");
+
+        let never = AutoUpdateMode::Never;
+        let json = serde_json::to_string(&never).unwrap();
+        assert_eq!(json, "\"never\"");
+    }
+
+    #[test]
+    fn test_config_with_update_settings() {
+        let json = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {
+                "update": {
+                    "enabled": true,
+                    "check_frequency": "weekly",
+                    "auto_update": "always",
+                    "channels": {
+                        "dev": true,
+                        "beta": true,
+                        "stable": true
+                    },
+                    "telemetry": {
+                        "enabled": true,
+                        "include_system_info": true
+                    }
+                }
+            }
+        }"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+
+        assert!(config.settings.update.enabled);
+        assert!(matches!(
+            config.settings.update.check_frequency,
+            UpdateFrequency::Weekly
+        ));
+        assert!(matches!(
+            config.settings.update.auto_update,
+            AutoUpdateMode::Always
+        ));
+        assert!(config.settings.update.channels.dev);
+        assert!(config.settings.update.channels.beta);
+        assert!(config.settings.update.channels.stable);
+        assert!(config.settings.update.telemetry.enabled);
+        assert!(config.settings.update.telemetry.include_system_info);
+    }
+
+    #[test]
+    fn test_partial_update_settings_uses_defaults() {
+        let json = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {
+                "update": {
+                    "check_frequency": "manual"
+                }
+            }
+        }"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+
+        // specified value
+        assert!(matches!(
+            config.settings.update.check_frequency,
+            UpdateFrequency::Manual
+        ));
+
+        // defaults
+        assert!(config.settings.update.enabled);
+        assert!(matches!(
+            config.settings.update.auto_update,
+            AutoUpdateMode::Prompt
+        ));
+        assert!(config.settings.update.channels.stable);
+        assert!(!config.settings.update.channels.dev);
     }
 }

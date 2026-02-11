@@ -1,25 +1,13 @@
 use anyhow::{anyhow, Result};
+use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Modifiers {
     pub ctrl: bool,
     pub alt: bool,
     pub cmd: bool,
     pub shift: bool,
 }
-
-impl Default for Modifiers {
-    fn default() -> Self {
-        Self {
-            ctrl: false,
-            alt: false,
-            cmd: false,
-            shift: false,
-        }
-    }
-}
-
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Hotkey {
@@ -35,7 +23,10 @@ impl Hotkey {
             return Err(anyhow!("Empty hotkey string"));
         }
 
-        let parts: Vec<String> = trimmed.split('+').map(|p| p.trim().to_lowercase()).collect();
+        let parts: Vec<String> = trimmed
+            .split('+')
+            .map(|p| p.trim().to_lowercase())
+            .collect();
 
         let mut modifiers = Modifiers::default();
         let mut keys: Vec<String> = Vec::new();
@@ -59,9 +50,10 @@ impl Hotkey {
 
         Ok(Hotkey { modifiers, keys })
     }
+}
 
-    /// Convert hotkey back to string representation
-    pub fn to_string(&self) -> String {
+impl fmt::Display for Hotkey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut parts: Vec<&str> = Vec::new();
 
         if self.modifiers.ctrl {
@@ -81,7 +73,7 @@ impl Hotkey {
             parts.push(key);
         }
 
-        parts.join("+")
+        write!(f, "{}", parts.join("+"))
     }
 }
 
@@ -182,7 +174,7 @@ fn keycode_to_string(keycode: i64) -> Option<String> {
 
 /// Check if keycode is a modifier key
 fn is_modifier_key(keycode: i64) -> bool {
-    matches!(keycode, 55 | 56 | 57 | 58 | 59 | 60 | 61 | 62 | 63)
+    matches!(keycode, 55..=63)
 }
 
 #[cfg(target_os = "macos")]
@@ -283,7 +275,11 @@ mod macos {
         ) -> CFRunLoopSourceRef;
 
         fn CFRunLoopGetCurrent() -> CFRunLoopRef;
-        fn CFRunLoopAddSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: *const std::ffi::c_void);
+        fn CFRunLoopAddSource(
+            rl: CFRunLoopRef,
+            source: CFRunLoopSourceRef,
+            mode: *const std::ffi::c_void,
+        );
         fn CFRunLoopRun();
         fn CFRunLoopStop(rl: CFRunLoopRef);
         fn CFRelease(cf: *const std::ffi::c_void);
@@ -401,7 +397,7 @@ mod macos {
             }
 
             // update display
-            let keys = CURRENT_KEYS.as_ref().map(|k| k.clone()).unwrap_or_default();
+            let keys = CURRENT_KEYS.clone().unwrap_or_default();
             let display = build_display_string(&CURRENT_MODIFIERS, &keys);
 
             // only update if changed
@@ -427,10 +423,10 @@ mod macos {
     /// Get the current frontmost application PID
     fn get_frontmost_pid() -> i32 {
         use objc2_app_kit::NSWorkspace;
-        
+
         let workspace = NSWorkspace::sharedWorkspace();
         let frontmost = workspace.frontmostApplication();
-        
+
         match frontmost {
             Some(app) => app.processIdentifier(),
             None => -1,
@@ -457,7 +453,7 @@ mod macos {
             SHOULD_STOP = false;
             CANCELLED = false;
             LAST_DISPLAY = String::new();
-            
+
             // capture the frontmost app PID at start (this is the terminal running us)
             INITIAL_FRONTMOST_PID = get_frontmost_pid();
 
@@ -508,19 +504,17 @@ mod macos {
             CGEventTapEnable(tap, true);
 
             // spawn a thread to check for focus loss
-            let check_focus = std::thread::spawn(|| {
-                loop {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    
-                    if SHOULD_STOP {
-                        break;
-                    }
-                    
-                    if !is_same_app_focused() {
-                        clear_line_and_print("Focus lost - cancelled.\n");
-                        stop_recording(true);
-                        break;
-                    }
+            let check_focus = std::thread::spawn(|| loop {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+
+                if SHOULD_STOP {
+                    break;
+                }
+
+                if !is_same_app_focused() {
+                    clear_line_and_print("Focus lost - cancelled.\n");
+                    stop_recording(true);
+                    break;
                 }
             });
 
@@ -530,7 +524,7 @@ mod macos {
             // cleanup
             SHOULD_STOP = true; // signal focus thread to stop
             let _ = check_focus.join();
-            
+
             CURRENT_RUN_LOOP = std::ptr::null_mut();
             EVENT_TAP = std::ptr::null_mut();
             CFRelease(source);
@@ -549,9 +543,12 @@ mod macos {
         }
     }
 
+    // type alias for listener callback to reduce complexity
+    type ListenerCallback = Box<dyn Fn(&str, &Hotkey) + Send>;
+
     // listener state
     static mut LISTENER_SHORTCUTS: Option<Vec<(Hotkey, String)>> = None;
-    static mut LISTENER_CALLBACK: Option<Box<dyn Fn(&str, &Hotkey) + Send>> = None;
+    static mut LISTENER_CALLBACK: Option<ListenerCallback> = None;
     static mut LISTENER_RUNNING: bool = false;
     static mut LISTENER_RUN_LOOP: CFRunLoopRef = std::ptr::null_mut();
     static mut LISTENER_EVENT_TAP: CFMachPortRef = std::ptr::null_mut();
@@ -564,7 +561,10 @@ mod macos {
     };
 
     /// Check if the current key combination matches a registered hotkey
-    fn check_hotkey_match(modifiers: &Modifiers, keys: &BTreeSet<String>) -> Option<(String, Hotkey)> {
+    fn check_hotkey_match(
+        modifiers: &Modifiers,
+        keys: &BTreeSet<String>,
+    ) -> Option<(String, Hotkey)> {
         unsafe {
             if let Some(ref shortcuts) = LISTENER_SHORTCUTS {
                 for (hotkey, action) in shortcuts {
@@ -622,7 +622,9 @@ mod macos {
                                 keys.insert(key);
 
                                 // check for hotkey match
-                                if let Some((action, hotkey)) = check_hotkey_match(&LISTENER_MODIFIERS, keys) {
+                                if let Some((action, hotkey)) =
+                                    check_hotkey_match(&LISTENER_MODIFIERS, keys)
+                                {
                                     if let Some(ref callback) = LISTENER_CALLBACK {
                                         callback(&action, &hotkey);
                                     }
@@ -750,8 +752,6 @@ pub fn record_hotkey() -> Result<String> {
 pub fn record_hotkey() -> Result<String> {
     Err(anyhow!("Hotkey recording is only supported on macOS"))
 }
-
-
 
 /// Start listening for global hotkeys and call the callback when one is pressed
 #[cfg(target_os = "macos")]

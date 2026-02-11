@@ -1,0 +1,324 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'beta-*'
+      - 'stable-*'
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CWM_GITHUB_REPO: taulfsime/cool-window-manager
+
+jobs:
+  test:
+    name: Test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Run tests
+        run: cargo test --all-features
+      
+      - name: Check formatting
+        run: cargo fmt -- --check
+      
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+  build:
+    name: Build
+    needs: test
+    runs-on: macos-latest
+    if: github.event_name == 'push'
+    
+    strategy:
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      
+      - name: Determine release channel
+        id: channel
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/beta-* ]]; then
+            CHANNEL="beta"
+            TAG="${{ github.ref_name }}"
+          elif [[ "${{ github.ref }}" == refs/tags/stable-* ]]; then
+            CHANNEL="stable"
+            TAG="${{ github.ref_name }}"
+          else
+            CHANNEL="dev"
+            TAG="dev-$(git rev-parse --short HEAD)"
+          fi
+          
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Building for channel: $CHANNEL"
+      
+      - name: Validate tag format
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${{ github.ref_name }}"
+          
+          if [[ "$TAG" =~ ^(beta|stable)-([a-f0-9]{8})$ ]]; then
+            CHANNEL="${BASH_REMATCH[1]}"
+            TAG_COMMIT="${BASH_REMATCH[2]}"
+            CURRENT_COMMIT=$(git rev-parse --short HEAD)
+            
+            if [ "$TAG_COMMIT" != "$CURRENT_COMMIT" ]; then
+              echo "Error: Tag commit ($TAG_COMMIT) doesn't match current HEAD ($CURRENT_COMMIT)"
+              exit 1
+            fi
+            
+            echo "✓ Valid ${CHANNEL} tag for commit ${TAG_COMMIT}"
+          else
+            echo "Error: Invalid tag format: $TAG"
+            echo "Expected format: beta-{8-char-hash} or stable-{8-char-hash}"
+            exit 1
+          fi
+      
+      - name: Build release binary
+        env:
+          RELEASE_CHANNEL: ${{ steps.channel.outputs.channel }}
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+          strip target/${{ matrix.target }}/release/cwm
+      
+      - name: Create archive
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date +%Y%m%d)
+          CHANNEL=${{ steps.channel.outputs.channel }}
+          ARCH=${{ matrix.target }}
+          
+          FILENAME="cwm-${CHANNEL}-${COMMIT}-${DATE}-${ARCH}.tar.gz"
+          
+          cd target/${{ matrix.target }}/release
+          tar czf "../../../${FILENAME}" cwm
+          cd ../../..
+          
+          shasum -a 256 "${FILENAME}" > "${FILENAME}.sha256"
+          
+          echo "ARTIFACT_NAME=${FILENAME}" >> $GITHUB_ENV
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            ${{ env.ARTIFACT_NAME }}
+            ${{ env.ARTIFACT_NAME }}.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+      
+      - name: Determine release properties
+        id: release
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date +%Y%m%d)
+          
+          if [[ "${{ github.ref }}" == refs/tags/beta-* ]]; then
+            CHANNEL="beta"
+            TAG="${{ github.ref_name }}"
+            NAME="Beta Release ${COMMIT} (${DATE})"
+            PRERELEASE="true"
+          elif [[ "${{ github.ref }}" == refs/tags/stable-* ]]; then
+            CHANNEL="stable"
+            TAG="${{ github.ref_name }}"
+            NAME="Stable Release ${COMMIT} (${DATE})"
+            PRERELEASE="false"
+          else
+            CHANNEL="dev"
+            TAG="dev-${COMMIT}"
+            NAME="Development Build ${COMMIT} (${DATE})"
+            PRERELEASE="true"
+          fi
+          
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
+      
+      - name: Generate release notes
+        id: notes
+        run: |
+          CHANNEL="${{ steps.release.outputs.channel }}"
+          
+          # get commits since last release of same channel
+          if [[ "$CHANNEL" == "dev" ]]; then
+            LAST_TAG=$(git tag -l 'dev-*' --sort=-version:refname | head -n 2 | tail -n 1)
+          elif [[ "$CHANNEL" == "beta" ]]; then
+            LAST_TAG=$(git tag -l 'beta-*' --sort=-version:refname | head -n 2 | tail -n 1)
+          else
+            LAST_TAG=$(git tag -l 'stable-*' --sort=-version:refname | head -n 2 | tail -n 1)
+          fi
+          
+          if [ -n "$LAST_TAG" ]; then
+            CHANNEL_COMMITS=$(git log --oneline ${LAST_TAG}..HEAD)
+            CHANNEL_COUNT=$(git rev-list --count ${LAST_TAG}..HEAD)
+          else
+            CHANNEL_COMMITS=$(git log --oneline -20)
+            CHANNEL_COUNT=20
+          fi
+          
+          # get all commits since last stable for context
+          LAST_STABLE=$(git tag -l 'stable-*' --sort=-version:refname | head -n 1)
+          if [ -n "$LAST_STABLE" ] && [ "$CHANNEL" != "stable" ]; then
+            ALL_COMMITS=$(git log --oneline ${LAST_STABLE}..HEAD)
+            ALL_COUNT=$(git rev-list --count ${LAST_STABLE}..HEAD)
+            DIFF_URL="https://github.com/${{ github.repository }}/compare/${LAST_STABLE}...HEAD"
+          else
+            ALL_COMMITS=""
+            ALL_COUNT=0
+            if [ -n "$LAST_TAG" ]; then
+              DIFF_URL="https://github.com/${{ github.repository }}/compare/${LAST_TAG}...HEAD"
+            else
+              DIFF_URL=""
+            fi
+          fi
+          
+          cat > RELEASE_NOTES.md << 'ENDOFNOTES'
+          ## ${{ steps.release.outputs.channel }} Release
+          
+          **Commit:** `${{ github.sha }}`
+          **Short:** `$(git rev-parse --short HEAD)`
+          **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          ### Changes in this release
+          
+          ```
+          ${CHANNEL_COMMITS}
+          ```
+          
+          ENDOFNOTES
+          
+          if [ -n "$ALL_COMMITS" ] && [ "$CHANNEL" != "stable" ]; then
+            cat >> RELEASE_NOTES.md << 'ENDOFNOTES'
+          <details>
+          <summary>All changes since last stable (${ALL_COUNT} commits)</summary>
+          
+          ```
+          ${ALL_COMMITS}
+          ```
+          </details>
+          
+          ENDOFNOTES
+          fi
+          
+          if [ -n "$DIFF_URL" ]; then
+            echo "[View full diff](${DIFF_URL})" >> RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+          fi
+          
+          cat >> RELEASE_NOTES.md << 'ENDOFNOTES'
+          ### Installation
+          
+          ```bash
+          # Quick install
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh
+          
+          # Install specific channel
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- --${{ steps.release.outputs.channel }}
+          ```
+          
+          ### Files
+          
+          - `cwm-*-aarch64-apple-darwin.tar.gz` - Apple Silicon (M1/M2/M3)
+          - `cwm-*-x86_64-apple-darwin.tar.gz` - Intel Macs
+          - `*.sha256` - Checksums for verification
+          ENDOFNOTES
+      
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release_files
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.sha256" \) -exec cp {} release_files/ \;
+          ls -la release_files/
+      
+      - name: Create or update release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: ${{ steps.release.outputs.name }}
+          body_path: RELEASE_NOTES.md
+          prerelease: ${{ steps.release.outputs.prerelease }}
+          files: release_files/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Cleanup old dev releases
+        if: steps.release.outputs.channel == 'dev'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releases = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+            
+            const devReleases = releases.data
+              .filter(r => r.tag_name.startsWith('dev-'))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            
+            // keep last 3 dev builds
+            for (let i = 3; i < devReleases.length; i++) {
+              console.log(`Deleting old dev release: ${devReleases[i].tag_name}`);
+              await github.rest.repos.deleteRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: devReleases[i].id
+              });
+              
+              try {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `tags/${devReleases[i].tag_name}`
+                });
+              } catch (e) {
+                console.log(`Could not delete tag: ${e.message}`);
+              }
+            }

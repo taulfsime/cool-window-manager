@@ -35,7 +35,11 @@ impl DisplayInfo {
         lines.push(format!("  Unit Number:   {}", self.unit_number));
 
         if let Some(vendor) = self.vendor_id {
-            lines.push(format!("  Vendor ID:     0x{:04X} ({})", vendor, vendor_name(vendor)));
+            lines.push(format!(
+                "  Vendor ID:     0x{:04X} ({})",
+                vendor,
+                vendor_name(vendor)
+            ));
         }
         if let Some(model) = self.model_id {
             lines.push(format!("  Model ID:      0x{:04X}", model));
@@ -44,8 +48,14 @@ impl DisplayInfo {
             lines.push(format!("  Serial Number: {}", serial));
         }
 
-        lines.push(format!("  Built-in:      {}", if self.is_builtin { "Yes" } else { "No" }));
-        lines.push(format!("  Main Display:  {}", if self.is_main { "Yes" } else { "No" }));
+        lines.push(format!(
+            "  Built-in:      {}",
+            if self.is_builtin { "Yes" } else { "No" }
+        ));
+        lines.push(format!(
+            "  Main Display:  {}",
+            if self.is_main { "Yes" } else { "No" }
+        ));
 
         lines.join("\n")
     }
@@ -82,8 +92,8 @@ fn vendor_name(vendor_id: u32) -> &'static str {
 pub fn get_displays() -> Result<Vec<DisplayInfo>> {
     use core_graphics::display::CGDisplay;
 
-    let display_ids = CGDisplay::active_displays()
-        .map_err(|e| anyhow!("Failed to get displays: {:?}", e))?;
+    let display_ids =
+        CGDisplay::active_displays().map_err(|e| anyhow!("Failed to get displays: {:?}", e))?;
 
     let main_display_id = CGDisplay::main().id;
 
@@ -112,9 +122,17 @@ pub fn get_displays() -> Result<Vec<DisplayInfo>> {
                 y: bounds.origin.y as i32,
                 is_main: id == main_display_id,
                 display_id: id,
-                vendor_id: if vendor_id != 0 { Some(vendor_id) } else { None },
+                vendor_id: if vendor_id != 0 {
+                    Some(vendor_id)
+                } else {
+                    None
+                },
                 model_id: if model_id != 0 { Some(model_id) } else { None },
-                serial_number: if serial_number != 0 { Some(serial_number) } else { None },
+                serial_number: if serial_number != 0 {
+                    Some(serial_number)
+                } else {
+                    None
+                },
                 unit_number,
                 is_builtin,
             }
@@ -154,9 +172,9 @@ fn get_display_name(display_id: u32, vendor_id: u32, model_id: u32, is_builtin: 
 
 #[cfg(target_os = "macos")]
 fn get_nsscreen_name(display_id: u32) -> Option<String> {
-    use objc2_app_kit::NSScreen;
-    use objc2::MainThreadMarker;
     use objc2::msg_send;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSScreen;
 
     // NSScreen requires main thread
     let mtm = MainThreadMarker::new()?;
@@ -168,9 +186,7 @@ fn get_nsscreen_name(display_id: u32) -> Option<String> {
 
         if let Some(screen_number) = device_desc.objectForKey(&screen_number_key) {
             // NSScreenNumber is an NSNumber containing the CGDirectDisplayID
-            let screen_id: u32 = unsafe {
-                msg_send![&*screen_number, unsignedIntValue]
-            };
+            let screen_id: u32 = unsafe { msg_send![&*screen_number, unsignedIntValue] };
 
             if screen_id == display_id {
                 let localized_name = screen.localizedName();

@@ -95,7 +95,9 @@ pub fn find_app(query: &str, apps: &[AppInfo], fuzzy_threshold: usize) -> Option
     if let Some((app, distance)) = fuzzy_matches.first() {
         return Some(MatchResult {
             app: (*app).clone(),
-            match_type: MatchType::Fuzzy { distance: *distance },
+            match_type: MatchType::Fuzzy {
+                distance: *distance,
+            },
         });
     }
 
@@ -317,8 +319,6 @@ pub fn get_running_apps() -> Result<Vec<AppInfo>> {
     anyhow::bail!("Getting running apps is only supported on macOS")
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,7 +381,10 @@ mod tests {
         let apps = test_apps();
         let result = find_app("Slakc", &apps, 2).unwrap();
         assert_eq!(result.app.name, "Slack");
-        assert!(matches!(result.match_type, MatchType::Fuzzy { distance: _ }));
+        assert!(matches!(
+            result.match_type,
+            MatchType::Fuzzy { distance: _ }
+        ));
     }
 
     #[test]

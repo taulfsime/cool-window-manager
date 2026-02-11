@@ -112,7 +112,7 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
 
     if has_shortcuts {
         for (hotkey, action) in &shortcuts {
-            log(&format!("  {} -> {}", hotkey.to_string(), action));
+            log(&format!("  {} -> {}", hotkey, action));
         }
     }
 
@@ -122,11 +122,19 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
         let global_delay = config.settings.delay_ms;
         app_watcher::start_watching(config.app_rules.clone(), move |rule, _pid| {
             let delay = rule.delay_ms.unwrap_or(global_delay);
-            log(&format!("App '{}' launched, executing: {} (delay: {}ms)", rule.app_name, rule.action, delay));
+            log(&format!(
+                "App '{}' launched, executing: {} (delay: {}ms)",
+                rule.app_name, rule.action, delay
+            ));
             // delay to let the window appear
             std::thread::sleep(std::time::Duration::from_millis(delay));
-            if let Err(e) = execute_action_for_app(&rule.action, &rule.app_name, &config_for_watcher) {
-                log_err(&format!("Failed to execute '{}' for '{}': {}", rule.action, rule.app_name, e));
+            if let Err(e) =
+                execute_action_for_app(&rule.action, &rule.app_name, &config_for_watcher)
+            {
+                log_err(&format!(
+                    "Failed to execute '{}' for '{}': {}",
+                    rule.action, rule.app_name, e
+                ));
             }
         })?;
         log("Watching for app launches...");
@@ -144,7 +152,7 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
     // start the hotkey listener (this runs the main run loop)
     // even with no shortcuts, we need the run loop for app watcher notifications
     hotkeys::start_hotkey_listener(shortcuts, move |action, hotkey| {
-        log(&format!("Hotkey triggered: {} -> {}", hotkey.to_string(), action));
+        log(&format!("Hotkey triggered: {} -> {}", hotkey, action));
         if let Err(e) = execute_action(action, &config_for_callback) {
             log_err(&format!("Failed to execute '{}': {}", action, e));
         }
@@ -296,14 +304,16 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
             let shortcut_launch = find_shortcut_launch(config, action);
 
             let running_apps = matching::get_running_apps()?;
-            let match_result = matching::find_app(app_name, &running_apps, config.settings.fuzzy_threshold);
+            let match_result =
+                matching::find_app(app_name, &running_apps, config.settings.fuzzy_threshold);
 
             match match_result {
                 Some(result) => {
                     manager::focus_app(&result.app, false)?;
                 }
                 None => {
-                    let do_launch = should_launch(false, false, shortcut_launch, config.settings.launch);
+                    let do_launch =
+                        should_launch(false, false, shortcut_launch, config.settings.launch);
                     if do_launch {
                         manager::launch_app(app_name, false)?;
                     }
@@ -356,7 +366,10 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 100
             } else {
                 percent_str.parse().map_err(|_| {
-                    anyhow!("Invalid size '{}'. Use a number 1-100 or 'full'", percent_str)
+                    anyhow!(
+                        "Invalid size '{}'. Use a number 1-100 or 'full'",
+                        percent_str
+                    )
                 })?
             };
 
@@ -395,7 +408,11 @@ fn execute_action_for_app(action: &str, app_name: &str, config: &Config) -> Resu
 }
 
 /// Execute an action for a specific app (used by app watcher)
-fn execute_action_for_app_info(action: &str, target_app: &matching::AppInfo, config: &Config) -> Result<()> {
+fn execute_action_for_app_info(
+    action: &str,
+    target_app: &matching::AppInfo,
+    config: &Config,
+) -> Result<()> {
     let (action_type, action_arg) = if let Some(idx) = action.find(':') {
         (&action[..idx], Some(&action[idx + 1..]))
     } else {
@@ -418,12 +435,8 @@ fn execute_action_for_app_info(action: &str, target_app: &matching::AppInfo, con
 
     for attempt in 0..max_retries {
         let result = match action_type {
-            "focus" => {
-                manager::focus_app(target_app, false)
-            }
-            "maximize" => {
-                manager::maximize_app(Some(target_app), false)
-            }
+            "focus" => manager::focus_app(target_app, false),
+            "maximize" => manager::maximize_app(Some(target_app), false),
             "move_display" => {
                 let target_str = match action_arg {
                     Some(s) => s,
@@ -456,11 +469,19 @@ fn execute_action_for_app_info(action: &str, target_app: &matching::AppInfo, con
             Err(e) => {
                 let err_str = e.to_string();
                 // retry on "no windows" or "attribute unsupported" errors
-                if err_str.contains("no windows") || err_str.contains("-25204") || err_str.contains("Application has no windows") {
+                if err_str.contains("no windows")
+                    || err_str.contains("-25204")
+                    || err_str.contains("Application has no windows")
+                {
                     last_error = Some(e);
                     if attempt < max_retries - 1 {
                         let delay_ms = current_delay as u64;
-                        log(&format!("Window not ready, retrying in {}ms (attempt {}/{})", delay_ms, attempt + 1, max_retries));
+                        log(&format!(
+                            "Window not ready, retrying in {}ms (attempt {}/{})",
+                            delay_ms,
+                            attempt + 1,
+                            max_retries
+                        ));
                         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                         current_delay *= backoff;
                         continue;

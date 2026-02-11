@@ -2,33 +2,31 @@
 
 A macOS window manager with CLI and global hotkeys. Manage windows by app name with fuzzy matching.
 
-## Building
+## Installation
 
-### Prerequisites
-
-- Rust (install via [rustup](https://rustup.rs/))
-- macOS (uses Accessibility API)
-
-### Build
+### Quick Install (Recommended)
 
 ```bash
-# Debug build
-cargo build
+# Install latest stable release
+curl -fsSL https://raw.githubusercontent.com/taulfsime/cool-window-manager/main/install.sh | sh
 
-# Release build (recommended)
-cargo build --release
-
-# The binary will be at ./target/release/cwm
+# Install specific channel
+curl -fsSL https://raw.githubusercontent.com/taulfsime/cool-window-manager/main/install.sh | sh -s -- --beta
+curl -fsSL https://raw.githubusercontent.com/taulfsime/cool-window-manager/main/install.sh | sh -s -- --dev
 ```
 
-### Install
+### Build from Source
 
 ```bash
-# Copy to PATH
-cp ./target/release/cwm /usr/local/bin/
+# Prerequisites: Rust (install via rustup.rs)
+git clone https://github.com/taulfsime/cool-window-manager.git
+cd cool-window-manager
 
-# Or run directly
-./target/release/cwm --help
+# Build release binary
+cargo build --release
+
+# Install to PATH
+./target/release/cwm install
 ```
 
 ## Permissions
@@ -45,7 +43,105 @@ cwm check-permissions --prompt
 
 Then go to **System Settings > Privacy & Security > Accessibility** and enable your terminal app.
 
+## Updating
+
+cwm can automatically check for and install updates.
+
+### Manual Update
+
+```bash
+# Check for updates
+cwm update --check
+
+# Install available updates
+cwm update
+
+# Force update even if on latest
+cwm update --force
+```
+
+### Automatic Updates
+
+Configure automatic update behavior in `~/.cwm/config.json`:
+
+```bash
+# Enable automatic updates
+cwm config set settings.update.auto_update always
+
+# Set to prompt before updating (default)
+cwm config set settings.update.auto_update prompt
+
+# Disable automatic updates
+cwm config set settings.update.auto_update never
+```
+
+### Release Channels
+
+cwm has three release channels:
+
+- **stable**: Well-tested releases (default)
+- **beta**: Preview features, generally stable
+- **dev**: Latest features, may be unstable
+
+Configure which channels to follow:
+
+```bash
+# Enable beta channel (also receives stable updates)
+cwm config set settings.update.channels.beta true
+
+# Enable dev channel (receives all updates)
+cwm config set settings.update.channels.dev true
+```
+
+### Update Frequency
+
+```bash
+# Set update check frequency
+cwm config set settings.update.check_frequency daily   # Default
+cwm config set settings.update.check_frequency weekly
+cwm config set settings.update.check_frequency manual
+```
+
 ## Commands
+
+### version
+
+Display version information.
+
+```bash
+cwm version
+# Output: cwm a3f2b1c4 (stable, 2024-02-11)
+```
+
+### install
+
+Install cwm to system PATH.
+
+```bash
+cwm install                      # Interactive installation
+cwm install --path ~/.local/bin  # Specific directory
+cwm install --force              # Overwrite existing
+```
+
+### uninstall
+
+Remove cwm from system.
+
+```bash
+cwm uninstall
+cwm uninstall --path ~/.local/bin  # From specific directory
+```
+
+### update
+
+Update cwm to latest version.
+
+```bash
+cwm update                   # Update to latest
+cwm update --check           # Check only, don't install
+cwm update --force           # Force reinstall
+cwm update --prerelease      # Include beta/dev releases
+```
 
 ### focus
 
@@ -139,13 +235,6 @@ cwm list-displays --detailed     # show all identifiers
 Options:
 - `--detailed, -d` - Show detailed information including vendor ID, model ID, serial number, and unique ID
 
-The detailed view shows:
-- **Display ID** - macOS display identifier (may change on reconnect)
-- **Vendor ID** - Manufacturer ID with known vendor names (Apple, LG, Dell, etc.)
-- **Model ID** - Model identifier
-- **Serial Number** - Display serial (if available)
-- **Unique ID** - Stable identifier for the display (vendor_model_serial or vendor_model_unitN)
-
 ### config
 
 Manage configuration.
@@ -167,6 +256,12 @@ Config keys:
 - `settings.retry.count` - Number of retry attempts (default: 10)
 - `settings.retry.delay_ms` - Initial retry delay in milliseconds (default: 100)
 - `settings.retry.backoff` - Backoff multiplier for each retry (default: 1.5)
+- `settings.update.enabled` - Enable update checking (true/false)
+- `settings.update.check_frequency` - Update check frequency (daily/weekly/manual)
+- `settings.update.auto_update` - Auto-update mode (always/prompt/never)
+- `settings.update.channels.dev` - Enable dev channel (true/false)
+- `settings.update.channels.beta` - Enable beta channel (true/false)
+- `settings.update.channels.stable` - Enable stable channel (true/false)
 
 ### record-shortcut
 
@@ -195,7 +290,7 @@ Options for `install`:
 
 ## Configuration
 
-Config file location: `~/.cwm.json` (or set `CWM_CONFIG` env var)
+Config file location: `~/.cwm/config.json`
 
 Example config:
 
@@ -255,6 +350,20 @@ Example config:
       "count": 10,
       "delay_ms": 100,
       "backoff": 1.5
+    },
+    "update": {
+      "enabled": true,
+      "check_frequency": "daily",
+      "auto_update": "prompt",
+      "channels": {
+        "dev": false,
+        "beta": false,
+        "stable": true
+      },
+      "telemetry": {
+        "enabled": false,
+        "include_system_info": false
+      }
     }
   }
 }
