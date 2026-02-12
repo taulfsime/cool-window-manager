@@ -9,6 +9,8 @@ pub struct Config {
     pub app_rules: Vec<AppRule>,
     #[serde(default)]
     pub settings: Settings,
+    #[serde(default)]
+    pub spotlight: Vec<SpotlightShortcut>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +31,40 @@ pub struct AppRule {
     /// delay in milliseconds before executing the action (overrides global)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delay_ms: Option<u64>,
+}
+
+/// spotlight shortcut that appears in macOS Spotlight search
+/// uses the same action format as shortcuts: focus, maximize, move_display:next, resize:80
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpotlightShortcut {
+    /// name displayed in Spotlight (will be prefixed with "cwm: ")
+    pub name: String,
+    /// action in same format as shortcuts: focus, maximize, move_display:next, resize:80
+    pub action: String,
+    /// target application (required for focus, optional for others)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    /// launch app if not running
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch: Option<bool>,
+}
+
+impl SpotlightShortcut {
+    /// returns the full name with "cwm: " prefix
+    pub fn display_name(&self) -> String {
+        format!("cwm: {}", self.name)
+    }
+
+    /// returns a sanitized identifier for use in bundle IDs and filenames
+    pub fn identifier(&self) -> String {
+        self.name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string()
+    }
 }
 
 pub const DEFAULT_DELAY_MS: u64 = 500;
@@ -514,5 +550,99 @@ mod tests {
         ));
         assert!(config.settings.update.channels.stable);
         assert!(!config.settings.update.channels.dev);
+    }
+
+    #[test]
+    fn test_spotlight_shortcut_display_name() {
+        let shortcut = SpotlightShortcut {
+            name: "Focus Safari".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: Some(true),
+        };
+
+        assert_eq!(shortcut.display_name(), "cwm: Focus Safari");
+    }
+
+    #[test]
+    fn test_spotlight_shortcut_identifier() {
+        let shortcut = SpotlightShortcut {
+            name: "Focus Safari".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: None,
+        };
+
+        assert_eq!(shortcut.identifier(), "focus-safari");
+
+        let shortcut2 = SpotlightShortcut {
+            name: "Move to Next Display".to_string(),
+            action: "move_display:next".to_string(),
+            app: None,
+            launch: None,
+        };
+
+        assert_eq!(shortcut2.identifier(), "move-to-next-display");
+    }
+
+    #[test]
+    fn test_spotlight_shortcut_serialization() {
+        let shortcut = SpotlightShortcut {
+            name: "Focus Safari".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: Some(true),
+        };
+
+        let json = serde_json::to_string(&shortcut).unwrap();
+        let parsed: SpotlightShortcut = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.name, "Focus Safari");
+        assert_eq!(parsed.action, "focus");
+        assert_eq!(parsed.app, Some("Safari".to_string()));
+        assert_eq!(parsed.launch, Some(true));
+    }
+
+    #[test]
+    fn test_config_with_spotlight() {
+        let json = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {},
+            "spotlight": [
+                {
+                    "name": "Focus Safari",
+                    "action": "focus",
+                    "app": "Safari",
+                    "launch": true
+                },
+                {
+                    "name": "Maximize Window",
+                    "action": "maximize"
+                }
+            ]
+        }"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+
+        assert_eq!(config.spotlight.len(), 2);
+        assert_eq!(config.spotlight[0].name, "Focus Safari");
+        assert_eq!(config.spotlight[0].action, "focus");
+        assert_eq!(config.spotlight[0].app, Some("Safari".to_string()));
+        assert_eq!(config.spotlight[0].launch, Some(true));
+        assert_eq!(config.spotlight[1].name, "Maximize Window");
+        assert_eq!(config.spotlight[1].action, "maximize");
+    }
+
+    #[test]
+    fn test_config_without_spotlight_defaults_to_empty() {
+        let json = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {}
+        }"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(config.spotlight.is_empty());
     }
 }

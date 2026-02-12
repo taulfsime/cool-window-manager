@@ -7,13 +7,16 @@ use anyhow::{anyhow, Result};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::config::{self, should_launch, Config};
 use crate::window::{manager, matching};
 
 use hotkeys::Hotkey;
-use ipc::{get_pid_file_path, is_daemon_running, remove_pid_file, write_pid_file};
+use ipc::{
+    get_pid_file_path, get_socket_path, is_daemon_running, remove_pid_file, remove_socket_file,
+    write_pid_file,
+};
 pub use launchd::{install, uninstall};
 
 static DAEMON_SHOULD_STOP: AtomicBool = AtomicBool::new(false);
@@ -148,6 +151,16 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
 
     // clone config for the callback
     let config_for_callback = config.clone();
+    let config_for_socket = Arc::new(config.clone());
+
+    // start socket listener in a separate thread
+    let socket_config = Arc::clone(&config_for_socket);
+    let socket_handle = std::thread::spawn(move || {
+        if let Err(e) = start_socket_listener(socket_config) {
+            log_err(&format!("Socket listener error: {}", e));
+        }
+    });
+    log("IPC socket listening on /tmp/cwm.sock");
 
     // start the hotkey listener (this runs the main run loop)
     // even with no shortcuts, we need the run loop for app watcher notifications
@@ -160,6 +173,9 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
 
     // cleanup
     app_watcher::stop_watching();
+    stop_socket_listener();
+    let _ = socket_handle.join();
+    remove_socket_file()?;
     remove_pid_file()?;
     log("Daemon stopped.");
 
@@ -527,4 +543,77 @@ extern "C" fn handle_signal(_sig: libc::c_int) {
     DAEMON_SHOULD_STOP.store(true, Ordering::SeqCst);
     app_watcher::stop_watching();
     hotkeys::stop_hotkey_listener();
+    stop_socket_listener();
+}
+
+// socket listener state
+static SOCKET_SHOULD_STOP: AtomicBool = AtomicBool::new(false);
+
+/// Start the Unix socket listener for IPC
+#[cfg(target_os = "macos")]
+fn start_socket_listener(config: Arc<Config>) -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+
+    let socket_path = get_socket_path();
+
+    // remove stale socket file
+    let _ = std::fs::remove_file(&socket_path);
+
+    let listener =
+        UnixListener::bind(&socket_path).map_err(|e| anyhow!("Failed to bind socket: {}", e))?;
+
+    // set non-blocking so we can check for stop signal
+    listener.set_nonblocking(true)?;
+
+    SOCKET_SHOULD_STOP.store(false, Ordering::SeqCst);
+
+    while !SOCKET_SHOULD_STOP.load(Ordering::SeqCst) && !DAEMON_SHOULD_STOP.load(Ordering::SeqCst) {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                // set blocking for this connection
+                stream.set_nonblocking(false)?;
+
+                // read command
+                let mut reader = BufReader::new(&stream);
+                let mut command = String::new();
+                if reader.read_line(&mut command).is_ok() {
+                    let command = command.trim();
+                    if !command.is_empty() {
+                        log(&format!("IPC command: {}", command));
+
+                        // execute the command
+                        let response = match execute_action(command, &config) {
+                            Ok(()) => "OK".to_string(),
+                            Err(e) => format!("ERROR: {}", e),
+                        };
+
+                        // send response
+                        let _ = stream.write_all(response.as_bytes());
+                    }
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // no connection available, sleep briefly and check again
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => {
+                log_err(&format!("Socket accept error: {}", e));
+            }
+        }
+    }
+
+    // cleanup
+    let _ = std::fs::remove_file(&socket_path);
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn start_socket_listener(_config: Arc<Config>) -> Result<()> {
+    Ok(())
+}
+
+fn stop_socket_listener() {
+    SOCKET_SHOULD_STOP.store(true, Ordering::SeqCst);
 }

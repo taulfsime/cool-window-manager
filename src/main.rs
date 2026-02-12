@@ -3,6 +3,7 @@ mod config;
 mod daemon;
 mod display;
 mod installer;
+mod spotlight;
 mod version;
 mod window;
 

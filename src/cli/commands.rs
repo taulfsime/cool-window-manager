@@ -191,6 +191,12 @@ pub enum Commands {
         #[arg(long)]
         prerelease: bool,
     },
+
+    /// Manage macOS Spotlight integration
+    Spotlight {
+        #[command(subcommand)]
+        command: SpotlightCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -249,6 +255,33 @@ pub enum ConfigCommands {
     Default,
     /// Verify configuration file for errors
     Verify,
+}
+
+#[derive(Subcommand)]
+pub enum SpotlightCommands {
+    /// Install spotlight shortcuts as macOS apps
+    Install {
+        /// Install only a specific shortcut by name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Force overwrite existing shortcuts
+        #[arg(long, short)]
+        force: bool,
+    },
+    /// List installed spotlight shortcuts
+    List,
+    /// Remove installed spotlight shortcuts
+    Remove {
+        /// Remove specific shortcut by name (without "cwm: " prefix)
+        name: Option<String>,
+
+        /// Remove all cwm spotlight shortcuts
+        #[arg(long)]
+        all: bool,
+    },
+    /// Show example spotlight configuration
+    Example,
 }
 
 pub fn execute(cli: Cli) -> Result<()> {
@@ -811,5 +844,112 @@ pub fn execute(cli: Cli) -> Result<()> {
 
             Ok(())
         }
+
+        Commands::Spotlight { command } => match command {
+            SpotlightCommands::Install { name, force } => {
+                let config = config::load()?;
+
+                if config.spotlight.is_empty() {
+                    println!("No spotlight shortcuts configured.");
+                    println!("\nAdd shortcuts to your config file:");
+                    println!("  cwm spotlight example");
+                    println!("\nOr edit ~/.cwm/config.json directly.");
+                    return Ok(());
+                }
+
+                let apps_dir = crate::spotlight::get_apps_directory();
+                println!("Installing spotlight shortcuts to: {}", apps_dir.display());
+
+                if let Some(shortcut_name) = name {
+                    // install specific shortcut
+                    let shortcut = config
+                        .spotlight
+                        .iter()
+                        .find(|s| s.name.eq_ignore_ascii_case(&shortcut_name))
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "Shortcut '{}' not found in config. Available: {}",
+                                shortcut_name,
+                                config
+                                    .spotlight
+                                    .iter()
+                                    .map(|s| s.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        })?;
+
+                    let path = crate::spotlight::install_shortcut(shortcut, force)?;
+                    println!("✓ Installed: {}", path.display());
+                } else {
+                    // install all shortcuts
+                    let installed = crate::spotlight::install_all(&config.spotlight, force)?;
+
+                    if installed.is_empty() {
+                        println!("No shortcuts were installed.");
+                    } else {
+                        println!("\n✓ Installed {} shortcut(s):", installed.len());
+                        for path in &installed {
+                            if let Some(name) = path.file_name() {
+                                println!("  - {}", name.to_string_lossy());
+                            }
+                        }
+                    }
+                }
+
+                println!("\nShortcuts are now available in Spotlight.");
+                println!("Search for \"cwm: <name>\" to use them.");
+
+                Ok(())
+            }
+
+            SpotlightCommands::List => {
+                let installed = crate::spotlight::get_installed_shortcuts()?;
+
+                if installed.is_empty() {
+                    println!("No spotlight shortcuts installed.");
+                    println!("\nTo install shortcuts:");
+                    println!("  1. Add shortcuts to config: cwm spotlight example");
+                    println!("  2. Install them: cwm spotlight install");
+                } else {
+                    println!("Installed spotlight shortcuts:\n");
+                    for name in &installed {
+                        println!("  cwm: {}", name);
+                    }
+                    println!("\nTotal: {} shortcut(s)", installed.len());
+                    println!(
+                        "Location: {}",
+                        crate::spotlight::get_apps_directory().display()
+                    );
+                }
+
+                Ok(())
+            }
+
+            SpotlightCommands::Remove { name, all } => {
+                if all {
+                    let count = crate::spotlight::remove_all()?;
+                    if count == 0 {
+                        println!("No spotlight shortcuts to remove.");
+                    } else {
+                        println!("✓ Removed {} shortcut(s)", count);
+                    }
+                } else if let Some(shortcut_name) = name {
+                    crate::spotlight::remove_shortcut(&shortcut_name)?;
+                    println!("✓ Removed: cwm: {}", shortcut_name);
+                } else {
+                    return Err(anyhow!(
+                        "Specify a shortcut name or use --all to remove all shortcuts"
+                    ));
+                }
+
+                Ok(())
+            }
+
+            SpotlightCommands::Example => {
+                crate::spotlight::print_example_config();
+                Ok(())
+            }
+        },
     }
 }

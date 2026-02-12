@@ -1,8 +1,8 @@
 mod schema;
 
 pub use schema::{
-    should_launch, AppRule, AutoUpdateMode, Config, Settings, Shortcut, TelemetrySettings,
-    UpdateFrequency, UpdateSettings,
+    should_launch, AppRule, AutoUpdateMode, Config, Settings, Shortcut, SpotlightShortcut,
+    TelemetrySettings, UpdateFrequency, UpdateSettings,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -122,6 +122,26 @@ pub fn verify(path: &Path) -> Result<Vec<String>> {
         // validate action
         if let Err(e) = validate_action(&rule.action) {
             errors.push(format!("{}: {}", prefix, e));
+        }
+    }
+
+    // validate spotlight shortcuts
+    for (i, spotlight) in config.spotlight.iter().enumerate() {
+        let prefix = format!("spotlight[{}]", i);
+
+        // validate name is not empty
+        if spotlight.name.trim().is_empty() {
+            errors.push(format!("{}: name cannot be empty", prefix));
+        }
+
+        // validate action using the same validation as shortcuts
+        if let Err(e) = validate_action(&spotlight.action) {
+            errors.push(format!("{}: {}", prefix, e));
+        }
+
+        // focus requires app
+        if spotlight.action == "focus" && spotlight.app.is_none() {
+            errors.push(format!("{}: action 'focus' requires 'app' field", prefix));
         }
     }
 
@@ -316,6 +336,38 @@ pub fn default_with_examples() -> Config {
             delay_ms: Some(500),
         }],
         settings: Settings::default(),
+        spotlight: vec![
+            SpotlightShortcut {
+                name: "Focus Safari".to_string(),
+                action: "focus".to_string(),
+                app: Some("Safari".to_string()),
+                launch: Some(true),
+            },
+            SpotlightShortcut {
+                name: "Focus Slack".to_string(),
+                action: "focus".to_string(),
+                app: Some("Slack".to_string()),
+                launch: Some(true),
+            },
+            SpotlightShortcut {
+                name: "Maximize Window".to_string(),
+                action: "maximize".to_string(),
+                app: None,
+                launch: None,
+            },
+            SpotlightShortcut {
+                name: "Move to Next Display".to_string(),
+                action: "move_display:next".to_string(),
+                app: None,
+                launch: None,
+            },
+            SpotlightShortcut {
+                name: "Resize 80%".to_string(),
+                action: "resize:80".to_string(),
+                app: None,
+                launch: None,
+            },
+        ],
     }
 }
 
@@ -683,5 +735,140 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("invalid JSON"));
+    }
+
+    #[test]
+    fn test_verify_valid_spotlight() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_valid_spotlight.json");
+
+        let config = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {},
+            "spotlight": [
+                {"name": "Focus Safari", "action": "focus", "app": "Safari"},
+                {"name": "Maximize", "action": "maximize"},
+                {"name": "Resize 80", "action": "resize:80"},
+                {"name": "Move Next", "action": "move_display:next"}
+            ]
+        }"#;
+
+        std::fs::write(&path, config).unwrap();
+        let errors = verify(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn test_verify_spotlight_focus_without_app() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_spotlight_focus_no_app.json");
+
+        let config = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {},
+            "spotlight": [
+                {"name": "Focus", "action": "focus"}
+            ]
+        }"#;
+
+        std::fs::write(&path, config).unwrap();
+        let errors = verify(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("requires 'app' field"));
+    }
+
+    #[test]
+    fn test_verify_spotlight_invalid_action() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_spotlight_invalid_action.json");
+
+        let config = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {},
+            "spotlight": [
+                {"name": "Bad", "action": "invalid_action"}
+            ]
+        }"#;
+
+        std::fs::write(&path, config).unwrap();
+        let errors = verify(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("invalid action"));
+    }
+
+    #[test]
+    fn test_verify_spotlight_empty_name() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_spotlight_empty_name.json");
+
+        let config = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {},
+            "spotlight": [
+                {"name": "", "action": "maximize"}
+            ]
+        }"#;
+
+        std::fs::write(&path, config).unwrap();
+        let errors = verify(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("name cannot be empty"));
+    }
+
+    #[test]
+    fn test_verify_spotlight_invalid_resize() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_spotlight_invalid_resize.json");
+
+        let config = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {},
+            "spotlight": [
+                {"name": "Resize 0", "action": "resize:0"},
+                {"name": "Resize 101", "action": "resize:101"},
+                {"name": "Resize abc", "action": "resize:abc"}
+            ]
+        }"#;
+
+        std::fs::write(&path, config).unwrap();
+        let errors = verify(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(errors.len(), 3);
+    }
+
+    #[test]
+    fn test_verify_spotlight_invalid_move_display() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_spotlight_invalid_move.json");
+
+        let config = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {},
+            "spotlight": [
+                {"name": "Move", "action": "move_display:invalid"}
+            ]
+        }"#;
+
+        std::fs::write(&path, config).unwrap();
+        let errors = verify(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("invalid move_display target"));
     }
 }

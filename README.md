@@ -288,6 +288,22 @@ Options for `install`:
 - `--bin <PATH>` - Path to cwm binary (defaults to current executable)
 - `--log <PATH>` - Log file path for the daemon
 
+### spotlight
+
+Manage macOS Spotlight integration. Creates app bundles that appear in Spotlight search.
+
+```bash
+cwm spotlight install           # install all configured shortcuts
+cwm spotlight install --name "Focus Safari"  # install specific shortcut
+cwm spotlight install --force   # overwrite existing shortcuts
+cwm spotlight list              # list installed shortcuts
+cwm spotlight remove "Focus Safari"  # remove specific shortcut
+cwm spotlight remove --all      # remove all cwm shortcuts
+cwm spotlight example           # show example configuration
+```
+
+Shortcuts appear in Spotlight with a "cwm: " prefix. For example, search for "cwm: Focus Safari" to run the shortcut.
+
 ## Configuration
 
 Config file location: `~/.cwm/config.json`
@@ -339,6 +355,26 @@ Example config:
       "app": "Terminal",
       "action": "maximize",
       "delay_ms": 1000
+    }
+  ],
+  "spotlight": [
+    {
+      "name": "Focus Safari",
+      "action": "focus",
+      "app": "Safari",
+      "launch": true
+    },
+    {
+      "name": "Maximize Window",
+      "action": "maximize"
+    },
+    {
+      "name": "Move to Next Display",
+      "action": "move_display:next"
+    },
+    {
+      "name": "Resize 80%",
+      "action": "resize:80"
     }
   ],
   "settings": {
@@ -394,6 +430,23 @@ If the window is not ready after the initial delay, the action will be retried w
 - `settings.retry.backoff` - Backoff multiplier for each retry (default: 1.5, meaning each retry waits 1.5x longer)
 
 This is useful for automatically moving apps to specific monitors or resizing them when launched.
+
+### Spotlight shortcuts
+
+Spotlight shortcuts create macOS app bundles that appear in Spotlight search. When triggered, they execute cwm commands.
+
+- `name` - Name displayed in Spotlight (prefixed with "cwm: ")
+- `action` - Same format as shortcuts: `focus`, `maximize`, `move_display:next`, `resize:80`
+- `app` - Target app name (required for `focus`, optional for others)
+- `launch` - Launch app if not running (optional)
+
+After adding shortcuts to config, install them with:
+
+```bash
+cwm spotlight install
+```
+
+Shortcuts are installed to `~/Applications/cwm/` and indexed by Spotlight. Search for "cwm: <name>" to run them.
 
 ### Fuzzy matching
 

@@ -118,6 +118,9 @@ cool-window-mng/
     │   ├── github.rs       # GitHub API client for releases
     │   ├── update.rs       # update checking and downloading
     │   └── rollback.rs     # safe update with automatic rollback
+    ├── spotlight/
+    │   ├── mod.rs          # module exports, example config printing
+    │   └── generator.rs    # app bundle generation for Spotlight integration
     └── window/
         ├── mod.rs          # module exports
         ├── accessibility.rs # Accessibility API permission handling
@@ -138,7 +141,7 @@ Handles command-line argument parsing and command execution.
 | `mod.rs` | re-exports `run()` and `Cli` |
 | `commands.rs` | defines `Cli` struct with clap derive, `Commands` enum, and `run()` function that dispatches to appropriate handlers |
 
-Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list-apps`, `list-displays`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`
+Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list-apps`, `list-displays`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
 
 ### config/
 
@@ -153,6 +156,7 @@ Key types:
 - `Config`: root configuration object
 - `Shortcut`: hotkey binding with keys, action, app, optional overrides
 - `AppRule`: automatic action when an app launches
+- `SpotlightShortcut`: macOS Spotlight integration shortcut definition
 - `Settings`: global defaults (fuzzy_threshold, launch, animate, delay_ms, retry, update)
 - `Retry`: retry configuration (count, delay_ms, backoff)
 - `UpdateSettings`: update configuration (enabled, check_frequency, auto_update, channels, telemetry)
@@ -179,6 +183,28 @@ Standalone module for version information.
 - `Version` struct with commit hash, timestamp, channel
 - `VersionInfo` for persistent version tracking at `~/.cwm/version.json`
 - Build-time version embedding via `build.rs`
+
+### spotlight/
+
+macOS Spotlight integration via generated app bundles.
+
+| File | Responsibility |
+|------|----------------|
+| `mod.rs` | module exports, `print_example_config()`, constants |
+| `generator.rs` | `install_shortcut()`, `install_all()`, `remove_shortcut()`, `remove_all()`, `get_installed_shortcuts()`, app bundle generation |
+
+The spotlight module creates minimal `.app` bundles in `~/Applications/cwm/` that:
+- Appear in Spotlight search with "cwm: " prefix
+- Execute cwm commands via shell scripts
+- Show notifications on errors via osascript
+- Run without showing in the Dock (LSUIElement)
+
+Key functions:
+- `install_shortcut()`: creates a single app bundle from SpotlightShortcut config
+- `install_all()`: installs all configured shortcuts, triggers Spotlight reindex
+- `remove_shortcut()`: removes a single shortcut by name
+- `remove_all()`: removes all cwm spotlight shortcuts
+- `get_installed_shortcuts()`: lists installed shortcut names
 
 ### daemon/
 
@@ -420,6 +446,7 @@ Tests are located in `#[cfg(test)]` modules within:
 | `src/version.rs` | version parsing, comparison, serialization |
 | `src/installer/paths.rs` | path detection, writability checks, PATH detection |
 | `src/installer/github.rs` | release parsing, architecture detection |
+| `src/spotlight/generator.rs` | shell escaping, Info.plist generation, shell script generation |
 
 #### Integration Tests
 
@@ -515,6 +542,26 @@ The tool requires **Accessibility permissions** to function:
       "delay_ms": 1000
     }
   ],
+  "spotlight": [
+    {
+      "name": "Focus Safari",
+      "action": "focus",
+      "app": "Safari",
+      "launch": true
+    },
+    {
+      "name": "Maximize Window",
+      "action": "maximize"
+    },
+    {
+      "name": "Move to Next Display",
+      "action": "move_display:next"
+    },
+    {
+      "name": "Resize 80%",
+      "action": "resize:80"
+    }
+  ],
   "settings": {
     "fuzzy_threshold": 2,
     "launch": false,
@@ -559,6 +606,15 @@ The tool requires **Accessibility permissions** to function:
 | `app` | string | yes | application name (exact match) |
 | `action` | string | yes | action to perform on launch |
 | `delay_ms` | number | no | delay before applying rule |
+
+### Spotlight Shortcut Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | name displayed in Spotlight (prefixed with "cwm: ") |
+| `action` | string | yes | same format as shortcuts: `focus`, `maximize`, `move_display:next`, `resize:80` |
+| `app` | string | for focus | target application name (fuzzy matched) |
+| `launch` | bool | no | launch app if not running |
 
 ### Modifier Keys
 
