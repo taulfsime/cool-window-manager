@@ -101,8 +101,9 @@ cool-window-mng/
     │   ├── mod.rs          # module exports
     │   └── commands.rs     # CLI command definitions and execution
     ├── config/
-    │   ├── mod.rs          # config loading, saving, value manipulation
-    │   └── schema.rs       # Config, Shortcut, AppRule, Settings, UpdateSettings
+    │   ├── mod.rs          # config loading, saving, value manipulation, JSONC parsing
+    │   ├── schema.rs       # Config, Shortcut, AppRule, Settings, UpdateSettings
+    │   └── json_schema.rs  # JSON schema definition for editor autocompletion
     ├── daemon/
     │   ├── mod.rs          # daemon lifecycle, action execution, hotkey parsing
     │   ├── hotkeys.rs      # global hotkey recording and listening (CGEventTap)
@@ -145,15 +146,23 @@ Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list-apps`, `l
 
 ### config/
 
-Manages JSON configuration file at `~/.cwm/config.json`.
+Manages JSONC configuration file at `~/.cwm/config.json` or `~/.cwm/config.jsonc`.
 
 | File | Responsibility |
 |------|----------------|
-| `mod.rs` | `load()`, `save()`, `get_config_path()`, `ensure_cwm_dir()`, `set_value()`, `verify()` |
+| `mod.rs` | `load()`, `save()`, `get_config_path()`, `ensure_cwm_dir()`, `set_value()`, `verify()`, JSONC parsing |
 | `schema.rs` | data structures with serde derive |
+| `json_schema.rs` | JSON schema definition and `write_schema_file()` |
+
+**Config file format:**
+- Supports both `.json` and `.jsonc` extensions
+- JSONC allows single-line (`//`) and multi-line (`/* */`) comments
+- If both `config.json` and `config.jsonc` exist, an error is raised
+- Schema file auto-generated at `~/.cwm/config.schema.json`
+- Config includes `$schema` field for editor autocompletion
 
 Key types:
-- `Config`: root configuration object
+- `Config`: root configuration object with `$schema` field
 - `Shortcut`: hotkey binding with keys, action, app, optional overrides
 - `AppRule`: automatic action when an app launches
 - `SpotlightShortcut`: macOS Spotlight integration shortcut definition
@@ -182,6 +191,7 @@ Standalone module for version information.
 
 - `Version` struct with commit hash, timestamp, channel
 - `VersionInfo` for persistent version tracking at `~/.cwm/version.json`
+  - Includes `schema_version` field to track when JSON schema was last generated
 - Build-time version embedding via `build.rs`
 
 ### spotlight/
@@ -362,6 +372,7 @@ pub fn some_function() -> Result<()> {
 |-------|---------|
 | `clap` (v4) | CLI argument parsing with derive macros |
 | `serde` + `serde_json` | JSON serialization for config |
+| `json_comments` (v0.2) | JSONC parsing (strips comments from JSON) |
 | `dirs` (v5) | cross-platform home directory |
 | `strsim` (v0.11) | Levenshtein distance for fuzzy matching |
 | `anyhow` | error handling with context |
@@ -438,8 +449,9 @@ Tests are located in `#[cfg(test)]` modules within:
 
 | File | Test Coverage |
 |------|---------------|
-| `src/config/mod.rs` | config value parsing, key setting |
-| `src/config/schema.rs` | `should_launch` priority logic, update settings serialization |
+| `src/config/mod.rs` | config value parsing, key setting, JSONC parsing, multi-extension support |
+| `src/config/schema.rs` | `should_launch` priority logic, update settings serialization, `$schema` field |
+| `src/config/json_schema.rs` | schema validity, required definitions, file writing |
 | `src/display/mod.rs` | display target parsing, resolution with wraparound |
 | `src/window/matching.rs` | name matching (exact, prefix, fuzzy), title matching (exact, prefix, fuzzy) |
 | `src/daemon/hotkeys.rs` | hotkey string parsing |
@@ -519,14 +531,18 @@ The tool requires **Accessibility permissions** to function:
 
 ### File Location
 
-- Configuration: `~/.cwm/config.json`
+- Configuration: `~/.cwm/config.json` or `~/.cwm/config.jsonc`
+- Schema: `~/.cwm/config.schema.json` (auto-generated)
 - Version info: `~/.cwm/version.json`
 - Override config: set `CWM_CONFIG` environment variable
+
+**Note:** If both `config.json` and `config.jsonc` exist, an error is raised. The config supports JSONC format with single-line (`//`) and multi-line (`/* */`) comments.
 
 ### Schema
 
 ```json
 {
+  "$schema": "./config.schema.json",
   "shortcuts": [
     {
       "keys": "ctrl+alt+s",

@@ -95,6 +95,9 @@ pub struct VersionInfo {
     pub last_seen_available: Option<String>,
     pub install_date: DateTime<Utc>,
     pub install_path: PathBuf,
+    /// version when schema was last generated
+    #[serde(default)]
+    pub schema_version: Option<String>,
 }
 
 impl VersionInfo {
@@ -135,6 +138,7 @@ impl Default for VersionInfo {
             last_seen_available: None,
             install_date: Utc::now(),
             install_path: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cwm")),
+            schema_version: None,
         }
     }
 }
@@ -223,6 +227,7 @@ mod tests {
             last_seen_available: None,
             install_date: Utc::now(),
             install_path: PathBuf::from("/usr/local/bin/cwm"),
+            schema_version: Some("stable-a3f2b1c4-20240211".to_string()),
         };
 
         let json = serde_json::to_string(&info).unwrap();
@@ -231,5 +236,6 @@ mod tests {
         assert_eq!(parsed.current, info.current);
         assert_eq!(parsed.previous, info.previous);
         assert_eq!(parsed.install_path, info.install_path);
+        assert_eq!(parsed.schema_version, info.schema_version);
     }
 }

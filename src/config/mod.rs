@@ -1,5 +1,7 @@
+mod json_schema;
 mod schema;
 
+pub use json_schema::write_schema_file;
 pub use schema::{
     should_launch, AppRule, AutoUpdateMode, Config, Settings, Shortcut, SpotlightShortcut,
     TelemetrySettings, UpdateFrequency, UpdateSettings,
@@ -8,68 +10,138 @@ pub use schema::{
 use anyhow::{anyhow, Context, Result};
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::daemon::hotkeys::Hotkey;
 
 const CONFIG_ENV_VAR: &str = "CWM_CONFIG";
+const CONFIG_FILE_JSON: &str = "config.json";
+const CONFIG_FILE_JSONC: &str = "config.jsonc";
 
-pub fn get_config_path() -> PathBuf {
+/// returns the config file path, checking for both .json and .jsonc extensions
+/// returns an error if both files exist
+pub fn get_config_path() -> Result<PathBuf> {
     if let Ok(path) = env::var(CONFIG_ENV_VAR) {
-        return PathBuf::from(path);
+        return Ok(PathBuf::from(path));
     }
 
-    // new location: ~/.cwm/config.json
+    let cwm_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow!("could not find home directory"))?
+        .join(".cwm");
+
+    let json_path = cwm_dir.join(CONFIG_FILE_JSON);
+    let jsonc_path = cwm_dir.join(CONFIG_FILE_JSONC);
+
+    let json_exists = json_path.exists();
+    let jsonc_exists = jsonc_path.exists();
+
+    match (json_exists, jsonc_exists) {
+        (true, true) => Err(anyhow!(
+            "both {} and {} exist in ~/.cwm - please remove one",
+            CONFIG_FILE_JSON,
+            CONFIG_FILE_JSONC
+        )),
+        (true, false) => Ok(json_path),
+        (false, true) => Ok(jsonc_path),
+        (false, false) => Ok(json_path), // default to .json for new configs
+    }
+}
+
+/// returns the default config path without checking for conflicts
+/// used when we need a path for saving new configs
+fn get_default_config_path() -> PathBuf {
     dirs::home_dir()
-        .expect("Could not find home directory")
+        .expect("could not find home directory")
         .join(".cwm")
-        .join("config.json")
+        .join(CONFIG_FILE_JSON)
+}
+
+/// parses JSONC content (JSON with comments) into a Config
+fn parse_jsonc<R: Read>(reader: R) -> Result<Config> {
+    let stripped = json_comments::StripComments::new(reader);
+    serde_json::from_reader(stripped).context("failed to parse config")
+}
+
+/// ensures the schema file is up to date with the current version
+/// regenerates if version changed or schema doesn't exist
+fn ensure_schema_up_to_date(cwm_dir: &Path) -> Result<()> {
+    use crate::version::{Version, VersionInfo};
+
+    let schema_path = cwm_dir.join("config.schema.json");
+    let current_version = Version::current().full_version_string();
+
+    // load version info to check schema version
+    let mut version_info = VersionInfo::load().unwrap_or_default();
+
+    let needs_update = match &version_info.schema_version {
+        None => true,
+        Some(v) => v != &current_version || !schema_path.exists(),
+    };
+
+    if needs_update {
+        write_schema_file(&schema_path)?;
+        version_info.schema_version = Some(current_version);
+        // ignore save errors - schema was written successfully
+        let _ = version_info.save();
+    }
+
+    Ok(())
 }
 
 pub fn ensure_cwm_dir() -> Result<PathBuf> {
     let cwm_dir = dirs::home_dir()
-        .ok_or_else(|| anyhow!("Could not find home directory"))?
+        .ok_or_else(|| anyhow!("could not find home directory"))?
         .join(".cwm");
 
     if !cwm_dir.exists() {
         fs::create_dir_all(&cwm_dir)?;
     }
 
+    // ensure schema file is up to date
+    ensure_schema_up_to_date(&cwm_dir)?;
+
     Ok(cwm_dir)
 }
 
 pub fn load() -> Result<Config> {
-    let path = get_config_path();
+    let path = get_config_path()?;
 
     if !path.exists() {
-        // ensure directory exists
+        // ensure directory exists and schema file is written
         ensure_cwm_dir()?;
         let config = Config::default();
         save(&config)?;
         return Ok(config);
     }
 
-    let content = fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read config file: {}", path.display()))?;
+    // ensure schema is up to date even when config exists
+    if let Some(parent) = path.parent() {
+        let _ = ensure_schema_up_to_date(parent);
+    }
 
-    let config: Config = serde_json::from_str(&content)
-        .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+    let file = fs::File::open(&path)
+        .with_context(|| format!("failed to read config file: {}", path.display()))?;
+
+    let config: Config = parse_jsonc(file)
+        .with_context(|| format!("failed to parse config file: {}", path.display()))?;
 
     Ok(config)
 }
 
 pub fn save(config: &Config) -> Result<()> {
-    let path = get_config_path();
+    // try to get existing config path, fall back to default if none exists
+    let path = get_config_path().unwrap_or_else(|_| get_default_config_path());
 
     // ensure directory exists
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    let content = serde_json::to_string_pretty(config).context("Failed to serialize config")?;
+    let content = serde_json::to_string_pretty(config).context("failed to serialize config")?;
 
     fs::write(&path, content)
-        .with_context(|| format!("Failed to write config file: {}", path.display()))?;
+        .with_context(|| format!("failed to write config file: {}", path.display()))?;
 
     Ok(())
 }
@@ -82,10 +154,10 @@ pub fn verify(path: &Path) -> Result<Vec<String>> {
         return Err(anyhow!("config file not found: {}", path.display()));
     }
 
-    let content = fs::read_to_string(path)
+    let file = fs::File::open(path)
         .with_context(|| format!("failed to read config file: {}", path.display()))?;
 
-    let config: Config = match serde_json::from_str(&content) {
+    let config: Config = match parse_jsonc(file) {
         Ok(c) => c,
         Err(e) => {
             return Err(anyhow!("invalid JSON: {}", e));
@@ -291,6 +363,7 @@ pub fn set_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
 /// generates a default config with example shortcuts and rules
 pub fn default_with_examples() -> Config {
     Config {
+        schema: Some(schema::DEFAULT_SCHEMA_REF.to_string()),
         shortcuts: vec![
             Shortcut {
                 keys: "ctrl+alt+s".to_string(),
@@ -870,5 +943,98 @@ mod tests {
 
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("invalid move_display target"));
+    }
+
+    #[test]
+    fn test_parse_jsonc_with_single_line_comments() {
+        let jsonc = r#"{
+            // this is a comment
+            "shortcuts": [],
+            "app_rules": [], // inline comment
+            "settings": {}
+        }"#;
+
+        let config: Config = parse_jsonc(jsonc.as_bytes()).unwrap();
+        assert!(config.shortcuts.is_empty());
+        assert!(config.app_rules.is_empty());
+    }
+
+    #[test]
+    fn test_parse_jsonc_with_multi_line_comments() {
+        let jsonc = r#"{
+            /* 
+             * multi-line comment
+             * with multiple lines
+             */
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {}
+        }"#;
+
+        let config: Config = parse_jsonc(jsonc.as_bytes()).unwrap();
+        assert!(config.shortcuts.is_empty());
+    }
+
+    #[test]
+    fn test_parse_jsonc_with_schema_field() {
+        let jsonc = r#"{
+            "$schema": "./config.schema.json",
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {}
+        }"#;
+
+        let config: Config = parse_jsonc(jsonc.as_bytes()).unwrap();
+        assert_eq!(config.schema, Some("./config.schema.json".to_string()));
+    }
+
+    #[test]
+    fn test_parse_jsonc_preserves_schema_on_roundtrip() {
+        let jsonc = r#"{
+            "$schema": "./config.schema.json",
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {}
+        }"#;
+
+        let config: Config = parse_jsonc(jsonc.as_bytes()).unwrap();
+        let serialized = serde_json::to_string_pretty(&config).unwrap();
+        let reparsed: Config = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(reparsed.schema, Some("./config.schema.json".to_string()));
+    }
+
+    #[test]
+    fn test_verify_jsonc_with_comments() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_jsonc_comments.json");
+
+        let config = r#"{
+            // shortcuts section
+            "shortcuts": [
+                {"keys": "ctrl+alt+s", "action": "focus", "app": "Slack"}
+            ],
+            /* app rules */
+            "app_rules": [],
+            "settings": {}
+        }"#;
+
+        std::fs::write(&path, config).unwrap();
+        let errors = verify(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn test_default_config_has_schema() {
+        let config = Config::default();
+        assert_eq!(config.schema, Some("./config.schema.json".to_string()));
+    }
+
+    #[test]
+    fn test_default_with_examples_has_schema() {
+        let config = default_with_examples();
+        assert_eq!(config.schema, Some("./config.schema.json".to_string()));
     }
 }

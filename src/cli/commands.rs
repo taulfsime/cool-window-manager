@@ -575,7 +575,7 @@ pub fn execute(cli: Cli) -> Result<()> {
 
             // save config
             config::save(&config)?;
-            println!("\nSaved to {}", config::get_config_path().display());
+            println!("\nSaved to {}", config::get_config_path()?.display());
 
             Ok(())
         }
@@ -607,7 +607,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(())
             }
             ConfigCommands::Path => {
-                let path = config::get_config_path();
+                let path = config::get_config_path()?;
                 println!("{}", path.display());
                 Ok(())
             }
@@ -632,7 +632,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(())
             }
             ConfigCommands::Verify => {
-                let path = config::get_config_path();
+                let path = config::get_config_path()?;
                 let errors = config::verify(&path)?;
 
                 if errors.is_empty() {

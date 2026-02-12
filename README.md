@@ -306,12 +306,22 @@ Shortcuts appear in Spotlight with a "cwm: " prefix. For example, search for "cw
 
 ## Configuration
 
-Config file location: `~/.cwm/config.json`
+Config file location: `~/.cwm/config.json` or `~/.cwm/config.jsonc`
+
+The config file supports JSONC format (JSON with Comments):
+- Single-line comments: `// comment`
+- Multi-line comments: `/* comment */`
+
+If both `config.json` and `config.jsonc` exist, an error is raised.
+
+A JSON schema is auto-generated at `~/.cwm/config.schema.json` for editor autocompletion and validation. The config includes a `$schema` field that references this schema.
 
 Example config:
 
 ```json
 {
+  "$schema": "./config.schema.json",
+  // global hotkey shortcuts
   "shortcuts": [
     {
       "keys": "ctrl+alt+s",

@@ -1,8 +1,16 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub const DEFAULT_SCHEMA_REF: &str = "./config.schema.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(
+        rename = "$schema",
+        default = "default_schema",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub schema: Option<String>,
     #[serde(default)]
     pub shortcuts: Vec<Shortcut>,
     #[serde(default)]
@@ -11,6 +19,22 @@ pub struct Config {
     pub settings: Settings,
     #[serde(default)]
     pub spotlight: Vec<SpotlightShortcut>,
+}
+
+fn default_schema() -> Option<String> {
+    Some(DEFAULT_SCHEMA_REF.to_string())
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            schema: Some(DEFAULT_SCHEMA_REF.to_string()),
+            shortcuts: Vec::new(),
+            app_rules: Vec::new(),
+            settings: Settings::default(),
+            spotlight: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,6 +320,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
+        assert_eq!(config.schema, Some(DEFAULT_SCHEMA_REF.to_string()));
         assert!(config.shortcuts.is_empty());
         assert!(config.app_rules.is_empty());
         assert_eq!(config.settings.fuzzy_threshold, 2);
@@ -321,6 +346,7 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let parsed: Config = serde_json::from_str(&json).unwrap();
 
+        assert_eq!(parsed.schema, Some(DEFAULT_SCHEMA_REF.to_string()));
         assert_eq!(parsed.shortcuts.len(), 1);
         assert_eq!(parsed.shortcuts[0].keys, "ctrl+alt+s");
         assert_eq!(parsed.shortcuts[0].launch, Some(true));

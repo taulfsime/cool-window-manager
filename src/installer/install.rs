@@ -72,6 +72,7 @@ pub fn install_binary(target_dir: &Path, force: bool, use_sudo: bool) -> Result<
         last_seen_available: None,
         install_date: chrono::Utc::now(),
         install_path: target_path.clone(),
+        schema_version: None,
     };
     version_info.save()?;
 
