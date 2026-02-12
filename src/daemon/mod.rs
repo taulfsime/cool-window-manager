@@ -107,12 +107,6 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
     let has_shortcuts = !shortcuts.is_empty();
     let has_app_rules = !config.app_rules.is_empty();
 
-    if !has_shortcuts && !has_app_rules {
-        log("No shortcuts or app rules to listen for");
-        remove_pid_file()?;
-        return Ok(());
-    }
-
     if has_shortcuts {
         for (hotkey, action) in &shortcuts {
             log(&format!("  {} -> {}", hotkey, action));
@@ -145,8 +139,10 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
 
     if has_shortcuts {
         log("Listening for hotkeys... (Ctrl+C to stop)");
-    } else {
+    } else if has_app_rules {
         log("Watching for app launches... (Ctrl+C to stop)");
+    } else {
+        log("Listening for IPC commands... (Ctrl+C to stop)");
     }
 
     // clone config for the callback
