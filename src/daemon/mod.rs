@@ -362,7 +362,12 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 None
             };
 
-            manager::move_to_display(target_app.as_ref(), &display_target, false)?;
+            manager::move_to_display_with_aliases(
+                target_app.as_ref(),
+                &display_target,
+                false,
+                &config.display_aliases,
+            )?;
         }
         "resize" => {
             let size_str = action_arg.ok_or_else(|| anyhow!("resize requires size"))?;

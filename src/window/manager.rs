@@ -575,7 +575,16 @@ pub fn move_to_display(
     target: &crate::display::DisplayTarget,
     verbose: bool,
 ) -> Result<()> {
-    use crate::display::{get_displays, resolve_target_display};
+    move_to_display_with_aliases(app, target, verbose, &Default::default())
+}
+
+pub fn move_to_display_with_aliases(
+    app: Option<&AppInfo>,
+    target: &crate::display::DisplayTarget,
+    verbose: bool,
+    display_aliases: &std::collections::HashMap<String, Vec<String>>,
+) -> Result<()> {
+    use crate::display::{get_displays, resolve_target_display_with_aliases};
     use core_foundation::base::CFTypeRef;
 
     if !accessibility::is_trusted() {
@@ -614,7 +623,12 @@ pub fn move_to_display(
     }
 
     // resolve target display
-    let target_display = resolve_target_display(current_display_index, target, &displays)?;
+    let target_display = resolve_target_display_with_aliases(
+        current_display_index,
+        target,
+        &displays,
+        display_aliases,
+    )?;
 
     if verbose {
         println!("Target display: {}", target_display.describe());

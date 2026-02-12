@@ -58,9 +58,10 @@ fn get_default_config_path() -> PathBuf {
 }
 
 /// parses JSONC content (JSON with comments) into a Config
-fn parse_jsonc<R: Read>(reader: R) -> Result<Config> {
-    let stripped = json_comments::StripComments::new(reader);
-    serde_json::from_reader(stripped).context("failed to parse config")
+fn parse_jsonc<R: Read>(mut reader: R) -> Result<Config> {
+    let mut contents = String::new();
+    reader.read_to_string(&mut contents)?;
+    json5::from_str(&contents).context("failed to parse config")
 }
 
 /// ensures the schema file is up to date with the current version
@@ -217,6 +218,16 @@ pub fn verify(path: &Path) -> Result<Vec<String>> {
         }
     }
 
+    // validate display_aliases keys
+    for alias_name in config.display_aliases.keys() {
+        if !is_valid_alias_name(alias_name) {
+            errors.push(format!(
+                "display_aliases: invalid alias name '{}' (must start with letter/underscore, contain only alphanumeric/underscore)",
+                alias_name
+            ));
+        }
+    }
+
     Ok(errors)
 }
 
@@ -230,13 +241,18 @@ fn validate_action(action: &str) -> Result<(), String> {
     if let Some(arg) = action.strip_prefix("move_display:") {
         if arg.is_empty() {
             return Err(
-                "action 'move_display' requires a target (next, prev, or number)".to_string(),
+                "action 'move_display' requires a target (next, prev, number, or alias name)"
+                    .to_string(),
             );
         }
-        // validate target
-        if arg != "next" && arg != "prev" && arg.parse::<u32>().is_err() {
+        // validate target: next, prev, numeric index, or alias name
+        if arg != "next"
+            && arg != "prev"
+            && arg.parse::<u32>().is_err()
+            && !is_valid_alias_name(arg)
+        {
             return Err(format!(
-                "invalid move_display target '{}': use 'next', 'prev', or a number",
+                "invalid move_display target '{}': use 'next', 'prev', a number, or an alias name",
                 arg
             ));
         }
@@ -268,6 +284,19 @@ fn validate_action(action: &str) -> Result<(), String> {
         "invalid action '{}': valid actions are focus, maximize, move_display:<target>, resize:<size>",
         action
     ))
+}
+
+fn is_valid_alias_name(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+
+    let first_char = s.chars().next().unwrap();
+    if !first_char.is_alphabetic() && first_char != '_' {
+        return false;
+    }
+
+    s.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 pub fn set_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
@@ -441,6 +470,7 @@ pub fn default_with_examples() -> Config {
                 launch: None,
             },
         ],
+        display_aliases: std::collections::HashMap::new(),
     }
 }
 
@@ -597,7 +627,8 @@ mod tests {
     fn test_validate_action_invalid() {
         assert!(validate_action("unknown").is_err());
         assert!(validate_action("move_display:").is_err());
-        assert!(validate_action("move_display:invalid").is_err());
+        assert!(validate_action("move_display:-invalid").is_err());
+        assert!(validate_action("move_display:123invalid").is_err());
         assert!(validate_action("resize:").is_err());
         assert!(validate_action("resize:0").is_err());
         assert!(validate_action("resize:101").is_err());
@@ -727,7 +758,7 @@ mod tests {
         let config = r#"{
             "shortcuts": [
                 {"keys": "ctrl+alt+1", "action": "move_display:"},
-                {"keys": "ctrl+alt+2", "action": "move_display:invalid"}
+                {"keys": "ctrl+alt+2", "action": "move_display:-invalid"}
             ],
             "app_rules": [],
             "settings": {}
@@ -933,7 +964,7 @@ mod tests {
             "app_rules": [],
             "settings": {},
             "spotlight": [
-                {"name": "Move", "action": "move_display:invalid"}
+                {"name": "Move", "action": "move_display:-invalid"}
             ]
         }"#;
 
@@ -943,6 +974,31 @@ mod tests {
 
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("invalid move_display target"));
+    }
+
+    #[test]
+    fn test_verify_invalid_display_alias_name() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_invalid_alias.json");
+
+        let config = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {},
+            "display_aliases": {
+                "valid_alias": ["1E6D_5B11_12345"],
+                "123invalid": ["10AC_D0B3_67890"],
+                "-also-invalid": ["ABCD_1234_56789"]
+            }
+        }"#;
+
+        std::fs::write(&path, config).unwrap();
+        let errors = verify(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(errors.len(), 2);
+        assert!(errors.iter().any(|e| e.contains("123invalid")));
+        assert!(errors.iter().any(|e| e.contains("-also-invalid")));
     }
 
     #[test]
@@ -973,6 +1029,23 @@ mod tests {
 
         let config: Config = parse_jsonc(jsonc.as_bytes()).unwrap();
         assert!(config.shortcuts.is_empty());
+    }
+
+    #[test]
+    fn test_parse_jsonc_with_trailing_commas() {
+        let jsonc = r#"{
+            "shortcuts": [
+                {"keys": "ctrl+alt+s", "action": "focus", "app": "Slack",},
+            ],
+            "app_rules": [],
+            "settings": {
+                "launch": true,
+            },
+        }"#;
+
+        let config: Config = parse_jsonc(jsonc.as_bytes()).unwrap();
+        assert_eq!(config.shortcuts.len(), 1);
+        assert!(config.settings.launch);
     }
 
     #[test]

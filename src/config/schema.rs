@@ -1,7 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub const DEFAULT_SCHEMA_REF: &str = "./config.schema.json";
+
+pub type DisplayAliases = HashMap<String, Vec<String>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -19,6 +22,8 @@ pub struct Config {
     pub settings: Settings,
     #[serde(default)]
     pub spotlight: Vec<SpotlightShortcut>,
+    #[serde(default)]
+    pub display_aliases: DisplayAliases,
 }
 
 fn default_schema() -> Option<String> {
@@ -33,6 +38,7 @@ impl Default for Config {
             app_rules: Vec::new(),
             settings: Settings::default(),
             spotlight: Vec::new(),
+            display_aliases: DisplayAliases::new(),
         }
     }
 }

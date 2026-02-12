@@ -372,7 +372,7 @@ pub fn some_function() -> Result<()> {
 |-------|---------|
 | `clap` (v4) | CLI argument parsing with derive macros |
 | `serde` + `serde_json` | JSON serialization for config |
-| `json_comments` (v0.2) | JSONC parsing (strips comments from JSON) |
+| `json5` (v0.4) | JSONC parsing (comments, trailing commas) |
 | `dirs` (v5) | cross-platform home directory |
 | `strsim` (v0.11) | Levenshtein distance for fuzzy matching |
 | `anyhow` | error handling with context |
@@ -543,12 +543,24 @@ The tool requires **Accessibility permissions** to function:
 ```json
 {
   "$schema": "./config.schema.json",
+  "display_aliases": {
+    "office": ["10AC_D0B3_67890"],
+    "home": ["1E6D_5B11_12345", "10AC_D0B3_67890"]
+  },
   "shortcuts": [
     {
       "keys": "ctrl+alt+s",
       "action": "focus",
       "app": "Slack",
       "launch": true
+    },
+    {
+      "keys": "ctrl+alt+e",
+      "action": "move_display:external"
+    },
+    {
+      "keys": "ctrl+alt+o",
+      "action": "move_display:office"
     }
   ],
   "app_rules": [
@@ -606,12 +618,51 @@ The tool requires **Accessibility permissions** to function:
 }
 ```
 
+### Display Aliases
+
+Map display names to unique hardware IDs for multi-location setups (home/office).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `display_aliases` | object | Maps alias names to arrays of unique display IDs |
+
+**System Aliases** (automatically available, no config needed):
+- `builtin` - Built-in display (e.g., MacBook screen)
+- `external` - Any external monitor
+- `main` - Primary display
+- `secondary` - Secondary display
+
+**User-Defined Aliases** - Create custom names for specific monitors:
+
+```json
+{
+  "display_aliases": {
+    "office_main": ["10AC_D0B3_67890"],
+    "home_external": ["1E6D_5B11_12345", "10AC_D0B3_67890"]
+  }
+}
+```
+
+Find unique display IDs:
+```bash
+cwm list-displays --detailed
+# Shows: Display 1: LG Display (1920x1080) [unique_id: 1E6D_5B11_12345]
+```
+
+Use in actions:
+```json
+{
+  "action": "move_display:external",
+  "action": "move_display:office_main"
+}
+```
+
 ### Shortcut Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `keys` | string | yes | hotkey combination (e.g., `"ctrl+alt+s"`) |
-| `action` | string | yes | one of: `focus`, `maximize`, `resize`, `move-display` |
+| `action` | string | yes | one of: `focus`, `maximize`, `resize`, `move_display:<target>` |
 | `app` | string | no | application name (fuzzy matched) |
 | `launch` | bool | no | override global launch behavior |
 

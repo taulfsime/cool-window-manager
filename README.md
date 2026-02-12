@@ -185,15 +185,57 @@ Move a window to another display.
 cwm move-display next            # move to next display
 cwm move-display prev            # move to previous display
 cwm move-display 0               # move to display index 0
+cwm move-display external        # move to display alias "external"
 cwm move-display next --app "Terminal"
 ```
 
 Options:
-- `<TARGET>` - Display target: `next`, `prev`, or index (0-based)
+- `<TARGET>` - Display target: `next`, `prev`, index (0-based), or alias name
 - `--app, -a <NAME>` - Target app name (optional)
 - `--launch` - Launch app if not running
 - `--no-launch` - Never launch app
 - `--verbose, -v` - Show details
+
+#### Display Aliases
+
+Use display aliases to reference monitors by name instead of index. This is useful when you have different monitor setups at home and office.
+
+**System Aliases** (automatically available):
+- `builtin` - Built-in display (e.g., MacBook screen)
+- `external` - Any external monitor
+- `main` - Primary display
+- `secondary` - Secondary display
+
+**User-Defined Aliases** - Map custom names to specific monitors in config:
+
+```json
+{
+  "display_aliases": {
+    "office_main": ["10AC_D0B3_67890"],
+    "home_external": ["1E6D_5B11_12345", "10AC_D0B3_67890"]
+  },
+  "shortcuts": [
+    {
+      "keys": "ctrl+alt+e",
+      "action": "move_display:external"
+    },
+    {
+      "keys": "ctrl+alt+o",
+      "action": "move_display:office_main"
+    }
+  ]
+}
+```
+
+Find your display's unique ID:
+
+```bash
+cwm list-displays --detailed
+# Shows: Display 1: LG Display (1920x1080) [unique_id: 1E6D_5B11_12345]
+
+cwm list-aliases
+# Shows all available aliases and their current resolution
+```
 
 ### resize
 
@@ -234,6 +276,20 @@ cwm list-displays --detailed     # show all identifiers
 
 Options:
 - `--detailed, -d` - Show detailed information including vendor ID, model ID, serial number, and unique ID
+
+### list-aliases
+
+List all available display aliases (system and user-defined).
+
+```bash
+cwm list-aliases
+```
+
+Shows:
+- System aliases (builtin, external, main, secondary) and their current resolution
+- User-defined aliases from config with their mapped display IDs
+- ✓ indicator for aliases that resolve in current setup
+- Helpful info for aliases that don't match any connected display
 
 ### config
 

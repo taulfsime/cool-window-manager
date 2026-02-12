@@ -58,7 +58,7 @@ pub enum Commands {
 
     /// Move a window to another display
     MoveDisplay {
-        /// Target display: "next", "prev", or display index (0-based)
+        /// Target display: "next", "prev", display index (0-based), or alias name
         target: String,
 
         /// Target app name (fuzzy matched), uses focused window if not specified
@@ -144,6 +144,9 @@ pub enum Commands {
 
     /// List running applications
     ListApps,
+
+    /// List display aliases (system and user-defined)
+    ListAliases,
 
     /// Check accessibility permissions
     CheckPermissions {
@@ -422,7 +425,12 @@ pub fn execute(cli: Cli) -> Result<()> {
                 None
             };
 
-            manager::move_to_display(target_app.as_ref(), &display_target, verbose)?;
+            manager::move_to_display_with_aliases(
+                target_app.as_ref(),
+                &display_target,
+                verbose,
+                &config.display_aliases,
+            )?;
             Ok(())
         }
 
@@ -673,6 +681,67 @@ pub fn execute(cli: Cli) -> Result<()> {
                 }
             }
             println!("\nTotal: {} applications", apps.len());
+            Ok(())
+        }
+
+        Commands::ListAliases => {
+            let config = config::load()?;
+            let displays = display::get_displays()?;
+
+            // system aliases
+            let system_aliases = [
+                ("builtin", "Built-in display"),
+                ("external", "External display"),
+                ("main", "Primary display"),
+                ("secondary", "Secondary display"),
+            ];
+
+            println!("System Aliases:");
+            for (alias_name, description) in &system_aliases {
+                if let Ok(display) =
+                    display::resolve_alias(alias_name, &config.display_aliases, &displays)
+                {
+                    println!(
+                        "  {:<20} → Display {}: {} [{}]",
+                        alias_name,
+                        display.index,
+                        display.name,
+                        display.unique_id()
+                    );
+                } else {
+                    println!(
+                        "  {:<20} → Not found in current setup ({})",
+                        alias_name, description
+                    );
+                }
+            }
+
+            // user-defined aliases
+            if !config.display_aliases.is_empty() {
+                println!("\nUser-Defined Aliases:");
+                for (alias_name, mappings) in &config.display_aliases {
+                    if let Ok(display) =
+                        display::resolve_alias(alias_name, &config.display_aliases, &displays)
+                    {
+                        println!(
+                            "  {:<20} → Display {}: {} [{}] ✓",
+                            alias_name,
+                            display.index,
+                            display.name,
+                            display.unique_id()
+                        );
+                    } else {
+                        println!(
+                            "  {:<20} → Not found (mapped: {})",
+                            alias_name,
+                            mappings.join(", ")
+                        );
+                    }
+                }
+            } else {
+                println!("\nNo user-defined aliases configured.");
+            }
+
             Ok(())
         }
 

@@ -36,12 +36,30 @@ pub const JSON_SCHEMA: &str = r##"{
       },
       "default": []
     },
-    "settings": {
-      "$ref": "#/$defs/Settings",
-      "description": "Global settings"
-    }
-  },
-  "$defs": {
+     "settings": {
+       "$ref": "#/$defs/Settings",
+       "description": "Global settings"
+     },
+     "display_aliases": {
+       "type": "object",
+       "description": "Map display aliases to unique IDs for multi-location setups",
+       "additionalProperties": {
+         "type": "array",
+         "items": {
+           "type": "string",
+           "description": "Unique display ID (vendor_model_serial) or display name"
+         }
+       },
+       "default": {},
+       "examples": [
+         {
+           "office": ["10AC_D0B3_67890"],
+           "home": ["1E6D_5B11_12345", "10AC_D0B3_67890"]
+         }
+       ]
+     }
+   },
+   "$defs": {
     "Shortcut": {
       "type": "object",
       "description": "A global hotkey shortcut binding",
@@ -123,29 +141,29 @@ pub const JSON_SCHEMA: &str = r##"{
         "required": ["app"]
       }
     },
-    "Action": {
-      "type": "string",
-      "description": "Window action to perform",
-      "oneOf": [
-        {
-          "const": "focus",
-          "description": "Focus the application window (requires app field)"
-        },
-        {
-          "const": "maximize",
-          "description": "Maximize the current or specified window"
-        },
-        {
-          "pattern": "^move_display:(next|prev|[0-9]+)$",
-          "description": "Move window to another display. Use next, prev, or a display number (1-based)."
-        },
-        {
-          "pattern": "^resize:(100|[1-9][0-9]?|full)$",
-          "description": "Resize window to a percentage of the screen (1-100) or full. Window is centered."
-        }
-      ],
-      "examples": ["focus", "maximize", "move_display:next", "move_display:prev", "move_display:1", "resize:80", "resize:full"]
-    },
+     "Action": {
+       "type": "string",
+       "description": "Window action to perform",
+       "oneOf": [
+         {
+           "const": "focus",
+           "description": "Focus the application window (requires app field)"
+         },
+         {
+           "const": "maximize",
+           "description": "Maximize the current or specified window"
+         },
+         {
+           "pattern": "^move_display:(next|prev|[0-9]+|[a-zA-Z_][a-zA-Z0-9_]*)$",
+           "description": "Move window to another display. Use next, prev, a display number, or an alias name (builtin, external, main, secondary, or custom)."
+         },
+         {
+           "pattern": "^resize:(100|[1-9][0-9]?|full)$",
+           "description": "Resize window to a percentage of the screen (1-100) or full. Window is centered."
+         }
+       ],
+       "examples": ["focus", "maximize", "move_display:next", "move_display:prev", "move_display:0", "move_display:external", "move_display:office_main", "resize:80", "resize:full"]
+     },
     "Settings": {
       "type": "object",
       "description": "Global settings",
