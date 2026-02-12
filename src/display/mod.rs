@@ -88,7 +88,6 @@ fn vendor_name(vendor_id: u32) -> &'static str {
 }
 
 /// Get list of all displays
-#[cfg(target_os = "macos")]
 pub fn get_displays() -> Result<Vec<DisplayInfo>> {
     use core_graphics::display::CGDisplay;
 
@@ -150,7 +149,6 @@ pub fn get_displays() -> Result<Vec<DisplayInfo>> {
     Ok(displays)
 }
 
-#[cfg(target_os = "macos")]
 fn get_display_name(display_id: u32, vendor_id: u32, model_id: u32, is_builtin: bool) -> String {
     // try to get the localized name from IOKit via NSScreen
     if let Some(name) = get_nsscreen_name(display_id) {
@@ -170,7 +168,6 @@ fn get_display_name(display_id: u32, vendor_id: u32, model_id: u32, is_builtin: 
     }
 }
 
-#[cfg(target_os = "macos")]
 fn get_nsscreen_name(display_id: u32) -> Option<String> {
     use objc2::msg_send;
     use objc2::MainThreadMarker;
@@ -196,11 +193,6 @@ fn get_nsscreen_name(display_id: u32) -> Option<String> {
     }
 
     None
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn get_displays() -> Result<Vec<DisplayInfo>> {
-    Err(anyhow!("Display enumeration is only supported on macOS"))
 }
 
 /// Parse display target from string

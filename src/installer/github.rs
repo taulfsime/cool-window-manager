@@ -304,51 +304,30 @@ impl GitHubClient {
 }
 
 fn detect_architecture() -> &'static str {
-    // detect current architecture based on OS
-    #[cfg(target_os = "macos")]
+    #[cfg(target_arch = "x86_64")]
+    let arch = "x86_64-apple-darwin";
+
+    #[cfg(target_arch = "aarch64")]
+    let arch = "aarch64-apple-darwin";
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let arch = "unknown";
+
+    // check for Rosetta emulation
+    use std::process::Command;
+
+    if let Ok(output) = Command::new("sysctl")
+        .args(["-n", "sysctl.proc_translated"])
+        .output()
     {
-        #[cfg(target_arch = "x86_64")]
-        let arch = "x86_64-apple-darwin";
-
-        #[cfg(target_arch = "aarch64")]
-        let arch = "aarch64-apple-darwin";
-
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        let arch = "unknown";
-
-        // check for Rosetta emulation
-        use std::process::Command;
-
-        if let Ok(output) = Command::new("sysctl")
-            .args(["-n", "sysctl.proc_translated"])
-            .output()
-        {
-            if output.stdout == b"1\n" {
-                // running under Rosetta, but we compiled for arm64
-                // so we should still use arm64 binaries
-                return arch;
-            }
+        if output.stdout == b"1\n" {
+            // running under Rosetta, but we compiled for arm64
+            // so we should still use arm64 binaries
+            return arch;
         }
-
-        arch
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        #[cfg(target_arch = "x86_64")]
-        return "x86_64-unknown-linux-gnu";
-
-        #[cfg(target_arch = "aarch64")]
-        return "aarch64-unknown-linux-gnu";
-
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        return "unknown";
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        "unknown"
-    }
+    arch
 }
 
 #[cfg(test)]
@@ -450,17 +429,11 @@ mod tests {
     fn test_detect_architecture() {
         let arch = detect_architecture();
 
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        #[cfg(target_arch = "aarch64")]
         assert_eq!(arch, "aarch64-apple-darwin");
 
-        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        #[cfg(target_arch = "x86_64")]
         assert_eq!(arch, "x86_64-apple-darwin");
-
-        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-        assert_eq!(arch, "x86_64-unknown-linux-gnu");
-
-        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-        assert_eq!(arch, "aarch64-unknown-linux-gnu");
     }
 
     #[test]

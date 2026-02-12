@@ -230,12 +230,8 @@ pub fn perform_update(release: ReleaseInfo, _force: bool) -> Result<()> {
     // replace current binary
     println!("Installing update...");
 
-    // on macOS, we need to remove the old binary first
-    #[cfg(target_os = "macos")]
-    {
-        fs::remove_file(&current_exe)?;
-    }
-
+    // remove the old binary first before renaming
+    fs::remove_file(&current_exe)?;
     fs::rename(&new_binary, &current_exe)?;
 
     // set permissions

@@ -3,17 +3,12 @@ use anyhow::{anyhow, Result};
 use super::accessibility;
 use super::matching::AppInfo;
 
-#[cfg(target_os = "macos")]
 use core_foundation::base::TCFType;
-#[cfg(target_os = "macos")]
 use core_foundation::string::CFString;
-#[cfg(target_os = "macos")]
 use core_graphics::display::CGDisplay;
 
-#[cfg(target_os = "macos")]
 type AXUIElementRef = *mut std::ffi::c_void;
 
-#[cfg(target_os = "macos")]
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
@@ -29,11 +24,9 @@ extern "C" {
     ) -> i32;
 }
 
-#[cfg(target_os = "macos")]
 const K_AX_ERROR_SUCCESS: i32 = 0;
 
 /// Focus an application by bringing it to the foreground
-#[cfg(target_os = "macos")]
 #[allow(deprecated)]
 pub fn focus_app(app: &AppInfo, verbose: bool) -> Result<()> {
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
@@ -72,13 +65,7 @@ pub fn focus_app(app: &AppInfo, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn focus_app(_app: &AppInfo, _verbose: bool) -> Result<()> {
-    Err(anyhow!("Focus is only supported on macOS"))
-}
-
 /// Get the frontmost window of an application
-#[cfg(target_os = "macos")]
 unsafe fn get_frontmost_window(pid: i32) -> Result<AXUIElementRef> {
     use core_foundation::base::CFTypeRef;
 
@@ -147,7 +134,6 @@ unsafe fn get_frontmost_window(pid: i32) -> Result<AXUIElementRef> {
     Ok(window)
 }
 
-#[cfg(target_os = "macos")]
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFArrayGetCount(array: core_foundation::array::CFArrayRef) -> isize;
@@ -158,7 +144,6 @@ extern "C" {
 }
 
 /// Get the focused window (from the frontmost application)
-#[cfg(target_os = "macos")]
 unsafe fn get_focused_window() -> Result<(AXUIElementRef, i32)> {
     use objc2_app_kit::NSWorkspace;
 
@@ -181,7 +166,6 @@ unsafe fn get_focused_window() -> Result<(AXUIElementRef, i32)> {
 }
 
 /// Set window position
-#[cfg(target_os = "macos")]
 unsafe fn set_window_position(window: AXUIElementRef, x: f64, y: f64) -> Result<()> {
     use core_foundation::base::CFTypeRef;
 
@@ -234,7 +218,6 @@ unsafe fn set_window_position(window: AXUIElementRef, x: f64, y: f64) -> Result<
 }
 
 /// Set window size
-#[cfg(target_os = "macos")]
 unsafe fn set_window_size(window: AXUIElementRef, width: f64, height: f64) -> Result<()> {
     use core_foundation::base::CFTypeRef;
 
@@ -266,22 +249,17 @@ unsafe fn set_window_size(window: AXUIElementRef, width: f64, height: f64) -> Re
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
 type AXValueRef = *mut std::ffi::c_void;
 
-#[cfg(target_os = "macos")]
 const K_AX_VALUE_TYPE_CG_POINT: u32 = 1;
-#[cfg(target_os = "macos")]
 const K_AX_VALUE_TYPE_CG_SIZE: u32 = 2;
 
-#[cfg(target_os = "macos")]
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXValueCreate(value_type: u32, value: *const std::ffi::c_void) -> AXValueRef;
 }
 
 /// Get the display bounds, accounting for menu bar
-#[cfg(target_os = "macos")]
 fn get_usable_display_bounds() -> (f64, f64, f64, f64) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSScreen;
@@ -328,7 +306,6 @@ fn get_usable_display_bounds() -> (f64, f64, f64, f64) {
 }
 
 /// Maximize an app's window to fill the screen
-#[cfg(target_os = "macos")]
 pub fn maximize_app(app: Option<&AppInfo>, verbose: bool) -> Result<()> {
     use core_foundation::base::CFTypeRef;
 
@@ -379,13 +356,7 @@ pub fn maximize_app(app: Option<&AppInfo>, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn maximize_app(_app: Option<&AppInfo>, _verbose: bool) -> Result<()> {
-    Err(anyhow!("Maximize is only supported on macOS"))
-}
-
 /// Launch an application by name
-#[cfg(target_os = "macos")]
 pub fn launch_app(app_name: &str, verbose: bool) -> Result<()> {
     use std::process::Command;
 
@@ -406,13 +377,7 @@ pub fn launch_app(app_name: &str, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn launch_app(_app_name: &str, _verbose: bool) -> Result<()> {
-    Err(anyhow!("Launch is only supported on macOS"))
-}
-
 /// Get current window position
-#[cfg(target_os = "macos")]
 unsafe fn get_window_position(window: AXUIElementRef) -> Result<(f64, f64)> {
     use core_foundation::base::CFTypeRef;
 
@@ -446,7 +411,6 @@ unsafe fn get_window_position(window: AXUIElementRef) -> Result<(f64, f64)> {
 }
 
 /// Get current window size
-#[cfg(target_os = "macos")]
 unsafe fn get_window_size(window: AXUIElementRef) -> Result<(f64, f64)> {
     use core_foundation::base::CFTypeRef;
 
@@ -476,7 +440,6 @@ unsafe fn get_window_size(window: AXUIElementRef) -> Result<(f64, f64)> {
     Ok((size.width, size.height))
 }
 
-#[cfg(target_os = "macos")]
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXValueGetValue(
@@ -487,7 +450,6 @@ extern "C" {
 }
 
 /// Find which display a point is on
-#[cfg(target_os = "macos")]
 fn find_display_for_point(x: f64, y: f64, displays: &[crate::display::DisplayInfo]) -> usize {
     for display in displays {
         let dx = display.x as f64;
@@ -504,7 +466,6 @@ fn find_display_for_point(x: f64, y: f64, displays: &[crate::display::DisplayInf
 }
 
 /// Get usable bounds for a specific display (excluding menu bar and dock)
-#[cfg(target_os = "macos")]
 fn get_usable_bounds_for_display(
     display: &crate::display::DisplayInfo,
 ) -> Result<(f64, f64, f64, f64)> {
@@ -569,7 +530,6 @@ fn get_usable_bounds_for_display(
 }
 
 /// Move a window to another display
-#[cfg(target_os = "macos")]
 pub fn move_to_display(
     app: Option<&AppInfo>,
     target: &crate::display::DisplayTarget,
@@ -689,17 +649,7 @@ pub fn move_to_display_with_aliases(
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn move_to_display(
-    _app: Option<&AppInfo>,
-    _target: &crate::display::DisplayTarget,
-    _verbose: bool,
-) -> Result<()> {
-    Err(anyhow!("Move to display is only supported on macOS"))
-}
-
 /// Resize an app's window to a percentage of the screen (centered)
-#[cfg(target_os = "macos")]
 pub fn resize_app(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Result<()> {
     use core_foundation::base::CFTypeRef;
 
@@ -764,9 +714,4 @@ pub fn resize_app(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Result<
     }
 
     Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn resize_app(_app: Option<&AppInfo>, _percent: u32, _verbose: bool) -> Result<()> {
-    Err(anyhow!("Resize is only supported on macOS"))
 }

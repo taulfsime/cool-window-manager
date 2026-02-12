@@ -54,7 +54,7 @@ The project has two modes of operation:
 
 ### Platform
 
-macOS only. The codebase uses `#[cfg(target_os = "macos")]` guards with stub fallbacks for non-macOS compilation, but full functionality requires macOS.
+macOS only. The codebase requires macOS and will not compile on other platforms.
 
 ---
 
@@ -78,22 +78,12 @@ cool-window-mng/
 │   └── list-releases.sh    # helper script to list all releases
 ├── tests/
 │   ├── integration.rs      # integration test entry point
-│   ├── integration_tests/
-│   │   ├── common.rs       # shared test utilities
-│   │   ├── test_install.rs # install test scenarios
-│   │   ├── test_update.rs  # update test scenarios
-│   │   ├── test_rollback.rs # rollback test scenarios
-│   │   └── test_channels.rs # channel switching tests
-│   ├── docker/
-│   │   ├── Dockerfile.mock-server    # mock GitHub API server
-│   │   ├── Dockerfile.test-runner    # test execution container
-│   │   ├── docker-compose.yml        # local development
-│   │   └── docker-compose.ci.yml     # CI environment
-│   ├── mock_server/
-│   │   ├── package.json    # mock server dependencies
-│   │   └── server.js       # mock GitHub API implementation (Node.js/Express)
-│   └── scripts/
-│       └── run-docker-tests.sh # local test runner
+│   └── integration_tests/
+│       ├── common.rs       # shared test utilities
+│       ├── test_install.rs # install test scenarios
+│       ├── test_update.rs  # update test scenarios
+│       ├── test_rollback.rs # rollback test scenarios
+│       └── test_channels.rs # channel switching tests
 └── src/
     ├── main.rs             # entry point, update check, delegates to cli::run()
     ├── version.rs          # version management (Version, VersionInfo)
@@ -346,22 +336,6 @@ The codebase uses `objc2` crate family for Objective-C interop:
 - Notification observers must be properly removed on cleanup
 - Some APIs return nullable pointers that must be checked
 
-### Platform Guards
-
-Non-macOS compilation is supported via stub implementations:
-
-```rust
-#[cfg(target_os = "macos")]
-pub fn some_function() -> Result<()> {
-    // real implementation
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn some_function() -> Result<()> {
-    anyhow::bail!("not supported on this platform")
-}
-```
-
 ---
 
 ## Dependencies
@@ -436,11 +410,8 @@ The build.rs script automatically embeds:
 ### Test
 
 ```bash
-# unit tests
+# run all tests (unit + integration)
 cargo test
-
-# integration tests (requires Docker)
-./tests/scripts/run-docker-tests.sh
 ```
 
 #### Unit Tests
@@ -449,7 +420,7 @@ Tests are located in `#[cfg(test)]` modules within:
 
 | File | Test Coverage |
 |------|---------------|
-| `src/config/mod.rs` | config value parsing, key setting, JSONC parsing, multi-extension support |
+| `src/config/mod.rs` | config value parsing, key setting, JSONC parsing, multi-extension support, config path override |
 | `src/config/schema.rs` | `should_launch` priority logic, update settings serialization, `$schema` field |
 | `src/config/json_schema.rs` | schema validity, required definitions, file writing |
 | `src/display/mod.rs` | display target parsing, resolution with wraparound |
@@ -462,26 +433,7 @@ Tests are located in `#[cfg(test)]` modules within:
 
 #### Integration Tests
 
-Docker-based integration tests for install, update, and rollback features:
-
-```bash
-# run all integration tests
-./tests/scripts/run-docker-tests.sh
-
-# run specific test
-./tests/scripts/run-docker-tests.sh --test test_rollback_on_binary_test_failure
-
-# debug mode (interactive shell)
-./tests/scripts/run-docker-tests.sh --debug
-
-# keep containers running after tests
-./tests/scripts/run-docker-tests.sh --no-cleanup
-
-# force rebuild Docker images
-./tests/scripts/run-docker-tests.sh --rebuild
-```
-
-Integration test files:
+Integration tests for install, update, and rollback features:
 
 | File | Test Coverage |
 |------|---------------|
@@ -490,10 +442,7 @@ Integration test files:
 | `tests/integration_tests/test_rollback.rs` | backup creation, test failure rollback, checksum mismatch, corrupt download |
 | `tests/integration_tests/test_channels.rs` | dev/beta/stable channels, channel priority, upgrade paths |
 
-The integration tests use a mock GitHub API server that simulates:
-- Release listings with multiple channels (dev, beta, stable)
-- Binary downloads with checksum verification
-- Error scenarios (rate limiting, corrupt downloads, checksum mismatch)
+Note: Some integration tests require a mock GitHub API server and are skipped when not available.
 
 ### Run
 

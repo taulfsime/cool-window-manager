@@ -163,7 +163,6 @@ pub fn find_app(query: &str, apps: &[AppInfo], fuzzy_threshold: usize) -> Option
 }
 
 /// Get window titles for an application using Accessibility API
-#[cfg(target_os = "macos")]
 fn get_window_titles(pid: i32) -> Vec<String> {
     use core_foundation::base::{CFTypeRef, TCFType};
     use core_foundation::string::CFString;
@@ -256,7 +255,6 @@ fn get_window_titles(pid: i32) -> Vec<String> {
 }
 
 /// Get list of running applications
-#[cfg(target_os = "macos")]
 pub fn get_running_apps() -> Result<Vec<AppInfo>> {
     use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
     use std::collections::HashMap;
@@ -312,11 +310,6 @@ pub fn get_running_apps() -> Result<Vec<AppInfo>> {
     }
 
     Ok(apps)
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn get_running_apps() -> Result<Vec<AppInfo>> {
-    anyhow::bail!("Getting running apps is only supported on macOS")
 }
 
 #[cfg(test)]

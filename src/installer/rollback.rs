@@ -105,12 +105,9 @@ pub fn report_update_failure(
         report.insert("cpu_count".to_string(), num_cpus::get().to_string());
 
         // memory info
-        #[cfg(target_os = "macos")]
-        {
-            if let Ok(mem) = get_memory_info() {
-                report.insert("memory_total".to_string(), mem.0.to_string());
-                report.insert("memory_available".to_string(), mem.1.to_string());
-            }
+        if let Ok(mem) = get_memory_info() {
+            report.insert("memory_total".to_string(), mem.0.to_string());
+            report.insert("memory_available".to_string(), mem.1.to_string());
         }
     }
 
@@ -127,22 +124,13 @@ pub fn report_update_failure(
 
 #[allow(dead_code)]
 fn get_macos_version() -> Result<String> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
+    use std::process::Command;
 
-        let output = Command::new("sw_vers").arg("-productVersion").output()?;
+    let output = Command::new("sw_vers").arg("-productVersion").output()?;
 
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok("unknown".to_string())
-    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-#[cfg(target_os = "macos")]
 #[allow(dead_code)]
 fn get_memory_info() -> Result<(u64, u64)> {
     use std::process::Command;

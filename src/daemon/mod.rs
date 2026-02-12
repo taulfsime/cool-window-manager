@@ -180,47 +180,41 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
 
 /// Start the daemon in the background (daemonized)
 pub fn start(log_path: Option<String>) -> Result<()> {
+    use std::process::Command;
+
     if is_daemon_running() {
         return Err(anyhow!("Daemon is already running"));
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
+    let exe = std::env::current_exe()?;
 
-        let exe = std::env::current_exe()?;
+    let mut cmd = Command::new(&exe);
+    cmd.arg("daemon").arg("run-foreground");
 
-        let mut cmd = Command::new(&exe);
-        cmd.arg("daemon").arg("run-foreground");
-
-        if let Some(ref path) = log_path {
-            cmd.arg("--log").arg(path);
-        }
-
-        let child = cmd
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()?;
-
-        println!("Daemon started with PID {}", child.id());
-        if let Some(path) = log_path {
-            println!("Logging to: {}", path);
-        }
-        println!("Use 'cwm daemon status' to check status");
-        println!("Use 'cwm daemon stop' to stop");
+    if let Some(ref path) = log_path {
+        cmd.arg("--log").arg(path);
     }
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        return Err(anyhow!("Daemon is only supported on macOS"));
+    let child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    println!("Daemon started with PID {}", child.id());
+    if let Some(path) = log_path {
+        println!("Logging to: {}", path);
     }
+    println!("Use 'cwm daemon status' to check status");
+    println!("Use 'cwm daemon stop' to stop");
 
     Ok(())
 }
 
 /// Stop the running daemon
 pub fn stop() -> Result<()> {
+    use std::process::Command;
+
     if !is_daemon_running() {
         return Err(anyhow!("Daemon is not running"));
     }
@@ -229,34 +223,24 @@ pub fn stop() -> Result<()> {
     let pid_str = std::fs::read_to_string(&pid_path)?;
     let pid: i32 = pid_str.trim().parse()?;
 
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
+    let status = Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status()?;
 
-        let status = Command::new("kill")
-            .arg("-TERM")
-            .arg(pid.to_string())
-            .status()?;
+    if status.success() {
+        println!("Sent stop signal to daemon (PID {})", pid);
 
-        if status.success() {
-            println!("Sent stop signal to daemon (PID {})", pid);
+        std::thread::sleep(std::time::Duration::from_millis(500));
 
-            std::thread::sleep(std::time::Duration::from_millis(500));
-
-            if !is_daemon_running() {
-                println!("Daemon stopped");
-                let _ = remove_pid_file();
-            } else {
-                println!("Daemon may still be stopping...");
-            }
+        if !is_daemon_running() {
+            println!("Daemon stopped");
+            let _ = remove_pid_file();
         } else {
-            return Err(anyhow!("Failed to send stop signal to daemon"));
+            println!("Daemon may still be stopping...");
         }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        return Err(anyhow!("Daemon is only supported on macOS"));
+    } else {
+        return Err(anyhow!("Failed to send stop signal to daemon"));
     }
 
     Ok(())
@@ -529,17 +513,13 @@ fn find_shortcut_launch(config: &Config, action: &str) -> Option<bool> {
 }
 
 fn setup_signal_handlers() -> Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        unsafe {
-            libc::signal(libc::SIGTERM, handle_signal as *const () as usize);
-            libc::signal(libc::SIGINT, handle_signal as *const () as usize);
-        }
+    unsafe {
+        libc::signal(libc::SIGTERM, handle_signal as *const () as usize);
+        libc::signal(libc::SIGINT, handle_signal as *const () as usize);
     }
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
 extern "C" fn handle_signal(_sig: libc::c_int) {
     DAEMON_SHOULD_STOP.store(true, Ordering::SeqCst);
     app_watcher::stop_watching();
@@ -551,7 +531,6 @@ extern "C" fn handle_signal(_sig: libc::c_int) {
 static SOCKET_SHOULD_STOP: AtomicBool = AtomicBool::new(false);
 
 /// Start the Unix socket listener for IPC
-#[cfg(target_os = "macos")]
 fn start_socket_listener(config: Arc<Config>) -> Result<()> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixListener;
@@ -607,11 +586,6 @@ fn start_socket_listener(config: Arc<Config>) -> Result<()> {
     // cleanup
     let _ = std::fs::remove_file(&socket_path);
 
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn start_socket_listener(_config: Arc<Config>) -> Result<()> {
     Ok(())
 }
 

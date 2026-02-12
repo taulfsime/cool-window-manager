@@ -177,7 +177,6 @@ fn is_modifier_key(keycode: i64) -> bool {
     matches!(keycode, 55..=63)
 }
 
-#[cfg(target_os = "macos")]
 #[allow(static_mut_refs)]
 mod macos {
     use super::*;
@@ -742,19 +741,12 @@ mod macos {
 }
 
 /// Record a single keypress and return the hotkey string
-#[cfg(target_os = "macos")]
 pub fn record_hotkey() -> Result<String> {
     let hotkey = macos::record_hotkey_impl()?;
     Ok(hotkey.to_string())
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn record_hotkey() -> Result<String> {
-    Err(anyhow!("Hotkey recording is only supported on macOS"))
-}
-
 /// Start listening for global hotkeys and call the callback when one is pressed
-#[cfg(target_os = "macos")]
 pub fn start_hotkey_listener<F>(shortcuts: Vec<(Hotkey, String)>, callback: F) -> Result<()>
 where
     F: Fn(&str, &Hotkey) + Send + 'static,
@@ -762,22 +754,10 @@ where
     macos::start_listener_impl(shortcuts, callback)
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn start_hotkey_listener<F>(_shortcuts: Vec<(Hotkey, String)>, _callback: F) -> Result<()>
-where
-    F: Fn(&str, &Hotkey) + Send + 'static,
-{
-    Err(anyhow!("Hotkey listening is only supported on macOS"))
-}
-
 /// Stop the hotkey listener
-#[cfg(target_os = "macos")]
 pub fn stop_hotkey_listener() {
     macos::stop_listener_impl();
 }
-
-#[cfg(not(target_os = "macos"))]
-pub fn stop_hotkey_listener() {}
 
 #[cfg(test)]
 mod tests {

@@ -63,7 +63,6 @@ pub fn remove_socket_file() -> Result<()> {
 /// Send a command to the daemon via Unix socket
 /// Returns Ok(response) if successful, Err if daemon not running or command failed
 #[allow(dead_code)]
-#[cfg(target_os = "macos")]
 pub fn send_command(command: &str) -> Result<String> {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
@@ -94,10 +93,4 @@ pub fn send_command(command: &str) -> Result<String> {
     stream.read_to_string(&mut response)?;
 
     Ok(response)
-}
-
-#[allow(dead_code)]
-#[cfg(not(target_os = "macos"))]
-pub fn send_command(_command: &str) -> Result<String> {
-    anyhow::bail!("IPC is only supported on macOS")
 }

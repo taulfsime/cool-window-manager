@@ -9,7 +9,6 @@ pub struct MatchedRule {
     pub app_name: String,
 }
 
-#[cfg(target_os = "macos")]
 mod macos {
     use super::*;
     use std::ffi::c_void;
@@ -221,16 +220,4 @@ mod macos {
     }
 }
 
-#[cfg(target_os = "macos")]
 pub use macos::{start_watching, stop_watching};
-
-#[cfg(not(target_os = "macos"))]
-pub fn start_watching(
-    _rules: Vec<AppRule>,
-    _callback: impl Fn(MatchedRule, i32) + Send + 'static,
-) -> Result<()> {
-    Err(anyhow::anyhow!("App watching is only supported on macOS"))
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn stop_watching() {}

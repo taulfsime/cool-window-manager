@@ -1,10 +1,7 @@
 use anyhow::Result;
-
-#[cfg(target_os = "macos")]
 use core_foundation::base::TCFType;
 
 /// Check if the application has accessibility permissions
-#[cfg(target_os = "macos")]
 pub fn is_trusted() -> bool {
     use core_foundation::boolean::CFBoolean;
     use core_foundation::dictionary::CFDictionary;
@@ -20,13 +17,7 @@ pub fn is_trusted() -> bool {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn is_trusted() -> bool {
-    false
-}
-
 /// Check permissions and prompt user to grant if not trusted
-#[cfg(target_os = "macos")]
 pub fn check_and_prompt() -> bool {
     use core_foundation::boolean::CFBoolean;
     use core_foundation::dictionary::CFDictionary;
@@ -40,12 +31,6 @@ pub fn check_and_prompt() -> bool {
 
         AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef())
     }
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn check_and_prompt() -> bool {
-    eprintln!("Accessibility permissions are only available on macOS");
-    false
 }
 
 pub fn print_permission_status() -> Result<()> {
@@ -66,7 +51,6 @@ pub fn print_permission_status() -> Result<()> {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrustedWithOptions(options: core_foundation::dictionary::CFDictionaryRef)
