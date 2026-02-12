@@ -360,6 +360,24 @@ cwm spotlight example           # show example configuration
 
 Shortcuts appear in Spotlight with a "cwm: " prefix. For example, search for "cwm: Focus Safari" to run the shortcut.
 
+## Global Options
+
+These options can be used with any command:
+
+- `--config <PATH>` - Use a custom config file instead of the default location
+
+```bash
+cwm --config /path/to/test-config.json focus --app Safari
+cwm --config ~/custom.json config show
+```
+
+Config path priority:
+1. `--config` flag (highest)
+2. `CWM_CONFIG` environment variable
+3. Default `~/.cwm/config.json`
+
+When using `--config`, the specified file must exist (no auto-creation).
+
 ## Configuration
 
 Config file location: `~/.cwm/config.json` or `~/.cwm/config.jsonc`

@@ -22,6 +22,19 @@ const CONFIG_FILE_JSONC: &str = "config.jsonc";
 /// returns the config file path, checking for both .json and .jsonc extensions
 /// returns an error if both files exist
 pub fn get_config_path() -> Result<PathBuf> {
+    get_config_path_with_override(None)
+}
+
+/// returns config path with optional override
+/// priority: override > CWM_CONFIG env var > default ~/.cwm/config.json
+pub fn get_config_path_with_override(override_path: Option<&Path>) -> Result<PathBuf> {
+    if let Some(path) = override_path {
+        if !path.exists() {
+            return Err(anyhow!("config file not found: {}", path.display()));
+        }
+        return Ok(path.to_path_buf());
+    }
+
     if let Ok(path) = env::var(CONFIG_ENV_VAR) {
         return Ok(PathBuf::from(path));
     }
@@ -106,19 +119,29 @@ pub fn ensure_cwm_dir() -> Result<PathBuf> {
 }
 
 pub fn load() -> Result<Config> {
-    let path = get_config_path()?;
+    load_with_override(None)
+}
+
+/// loads config with optional path override
+/// if override is specified and file doesn't exist, returns an error
+/// if no override, falls back to default behavior (create if missing)
+pub fn load_with_override(override_path: Option<&Path>) -> Result<Config> {
+    let path = get_config_path_with_override(override_path)?;
 
     if !path.exists() {
-        // ensure directory exists and schema file is written
+        // if override was specified, get_config_path_with_override already errored
+        // so we only get here for default paths - create default config
         ensure_cwm_dir()?;
         let config = Config::default();
         save(&config)?;
         return Ok(config);
     }
 
-    // ensure schema is up to date even when config exists
-    if let Some(parent) = path.parent() {
-        let _ = ensure_schema_up_to_date(parent);
+    // ensure schema is up to date even when config exists (only for default paths)
+    if override_path.is_none() {
+        if let Some(parent) = path.parent() {
+            let _ = ensure_schema_up_to_date(parent);
+        }
     }
 
     let file = fs::File::open(&path)
@@ -131,8 +154,17 @@ pub fn load() -> Result<Config> {
 }
 
 pub fn save(config: &Config) -> Result<()> {
-    // try to get existing config path, fall back to default if none exists
-    let path = get_config_path().unwrap_or_else(|_| get_default_config_path());
+    save_with_override(config, None)
+}
+
+/// saves config to the specified path or default location
+pub fn save_with_override(config: &Config, override_path: Option<&Path>) -> Result<()> {
+    let path = if let Some(p) = override_path {
+        p.to_path_buf()
+    } else {
+        // try to get existing config path, fall back to default if none exists
+        get_config_path().unwrap_or_else(|_| get_default_config_path())
+    };
 
     // ensure directory exists
     if let Some(parent) = path.parent() {
@@ -1109,5 +1141,217 @@ mod tests {
     fn test_default_with_examples_has_schema() {
         let config = default_with_examples();
         assert_eq!(config.schema, Some("./config.schema.json".to_string()));
+    }
+
+    // tests for config path override functionality
+
+    #[test]
+    fn test_get_config_path_with_override_uses_override_when_provided() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_override_path.json");
+
+        // create the file so it exists
+        std::fs::write(&path, "{}").unwrap();
+
+        let result = get_config_path_with_override(Some(&path));
+        std::fs::remove_file(&path).ok();
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), path);
+    }
+
+    #[test]
+    fn test_get_config_path_with_override_errors_when_file_missing() {
+        let path = PathBuf::from("/nonexistent/path/config.json");
+
+        let result = get_config_path_with_override(Some(&path));
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("config file not found"));
+        assert!(err.contains("/nonexistent/path/config.json"));
+    }
+
+    #[test]
+    fn test_get_config_path_with_override_falls_back_to_default_when_none() {
+        // when no override is provided, should use default behavior
+        let result = get_config_path_with_override(None);
+
+        // should succeed (either returns existing path or default path)
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        // path should end with config.json or config.jsonc
+        let filename = path.file_name().unwrap().to_str().unwrap();
+        assert!(
+            filename == "config.json" || filename == "config.jsonc",
+            "expected config.json or config.jsonc, got {}",
+            filename
+        );
+    }
+
+    #[test]
+    fn test_load_with_override_loads_custom_config() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_load_override.json");
+
+        let config_content = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {
+                "fuzzy_threshold": 42
+            }
+        }"#;
+
+        std::fs::write(&path, config_content).unwrap();
+
+        let result = load_with_override(Some(&path));
+        std::fs::remove_file(&path).ok();
+
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert_eq!(config.settings.fuzzy_threshold, 42);
+    }
+
+    #[test]
+    fn test_load_with_override_errors_when_file_missing() {
+        let path = PathBuf::from("/nonexistent/path/config.json");
+
+        let result = load_with_override(Some(&path));
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("config file not found"));
+    }
+
+    #[test]
+    fn test_load_with_override_errors_on_invalid_json() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_load_invalid.json");
+
+        std::fs::write(&path, "{ invalid json }").unwrap();
+
+        let result = load_with_override(Some(&path));
+        std::fs::remove_file(&path).ok();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("failed to parse config"));
+    }
+
+    #[test]
+    fn test_load_with_override_supports_jsonc() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_load_jsonc.json");
+
+        let config_content = r#"{
+            // comment
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {
+                "launch": true, // trailing comma
+            }
+        }"#;
+
+        std::fs::write(&path, config_content).unwrap();
+
+        let result = load_with_override(Some(&path));
+        std::fs::remove_file(&path).ok();
+
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert!(config.settings.launch);
+    }
+
+    #[test]
+    fn test_save_with_override_saves_to_custom_path() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_save_override.json");
+
+        let mut config = Config::default();
+        config.settings.fuzzy_threshold = 99;
+
+        let result = save_with_override(&config, Some(&path));
+
+        assert!(result.is_ok());
+        assert!(path.exists());
+
+        // verify content
+        let content = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert!(content.contains("\"fuzzy_threshold\": 99"));
+    }
+
+    #[test]
+    fn test_save_with_override_creates_parent_directories() {
+        let dir = std::env::temp_dir();
+        let nested_dir = dir.join("cwm_test_nested_dir");
+        let path = nested_dir.join("config.json");
+
+        // ensure directory doesn't exist
+        if nested_dir.exists() {
+            std::fs::remove_dir_all(&nested_dir).ok();
+        }
+
+        let config = Config::default();
+        let result = save_with_override(&config, Some(&path));
+
+        // cleanup
+        std::fs::remove_dir_all(&nested_dir).ok();
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_save_with_override_overwrites_existing_file() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_save_overwrite.json");
+
+        // write initial content
+        std::fs::write(&path, "old content").unwrap();
+
+        let mut config = Config::default();
+        config.settings.fuzzy_threshold = 77;
+
+        let result = save_with_override(&config, Some(&path));
+
+        assert!(result.is_ok());
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert!(content.contains("\"fuzzy_threshold\": 77"));
+        assert!(!content.contains("old content"));
+    }
+
+    #[test]
+    fn test_load_and_save_roundtrip_with_override() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("cwm_test_roundtrip.json");
+
+        // create initial config
+        let mut original = Config::default();
+        original.settings.fuzzy_threshold = 123;
+        original.settings.launch = true;
+        original.shortcuts.push(Shortcut {
+            keys: "ctrl+alt+t".to_string(),
+            action: "focus".to_string(),
+            app: Some("Terminal".to_string()),
+            launch: Some(true),
+        });
+
+        // save it
+        save_with_override(&original, Some(&path)).unwrap();
+
+        // load it back
+        let loaded = load_with_override(Some(&path)).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        // verify
+        assert_eq!(loaded.settings.fuzzy_threshold, 123);
+        assert!(loaded.settings.launch);
+        assert_eq!(loaded.shortcuts.len(), 1);
+        assert_eq!(loaded.shortcuts[0].keys, "ctrl+alt+t");
+        assert_eq!(loaded.shortcuts[0].app, Some("Terminal".to_string()));
     }
 }

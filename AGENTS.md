@@ -150,7 +150,7 @@ Manages JSONC configuration file at `~/.cwm/config.json` or `~/.cwm/config.jsonc
 
 | File | Responsibility |
 |------|----------------|
-| `mod.rs` | `load()`, `save()`, `get_config_path()`, `ensure_cwm_dir()`, `set_value()`, `verify()`, JSONC parsing |
+| `mod.rs` | `load()`, `save()`, `get_config_path()`, `ensure_cwm_dir()`, `set_value()`, `verify()`, JSONC parsing, `*_with_override()` variants for custom config paths |
 | `schema.rs` | data structures with serde derive |
 | `json_schema.rs` | JSON schema definition and `write_schema_file()` |
 
@@ -534,9 +534,12 @@ The tool requires **Accessibility permissions** to function:
 - Configuration: `~/.cwm/config.json` or `~/.cwm/config.jsonc`
 - Schema: `~/.cwm/config.schema.json` (auto-generated)
 - Version info: `~/.cwm/version.json`
-- Override config: set `CWM_CONFIG` environment variable
+- Override config path (priority order):
+  1. `--config <path>` CLI flag (highest priority)
+  2. `CWM_CONFIG` environment variable
+  3. Default `~/.cwm/config.json`
 
-**Note:** If both `config.json` and `config.jsonc` exist, an error is raised. The config supports JSONC format with single-line (`//`) and multi-line (`/* */`) comments.
+**Note:** If both `config.json` and `config.jsonc` exist, an error is raised. The config supports JSONC format with single-line (`//`) and multi-line (`/* */`) comments. When using `--config`, the specified file must exist (no auto-creation).
 
 ### Schema
 

@@ -12,6 +12,10 @@ use crate::window::{accessibility, manager, matching};
 #[command(about = "A macOS window manager with CLI and global hotkeys")]
 #[command(version)]
 pub struct Cli {
+    /// Path to config file (overrides CWM_CONFIG env var and default location)
+    #[arg(long, global = true)]
+    pub config: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -288,6 +292,8 @@ pub enum SpotlightCommands {
 }
 
 pub fn execute(cli: Cli) -> Result<()> {
+    let config_path = cli.config.as_deref();
+
     match cli.command {
         Commands::Focus {
             app,
@@ -295,7 +301,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             no_launch,
             verbose,
         } => {
-            let config = config::load()?;
+            let config = config::load_with_override(config_path)?;
             let running_apps = matching::get_running_apps()?;
 
             let match_result =
@@ -343,7 +349,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             no_launch,
             verbose,
         } => {
-            let config = config::load()?;
+            let config = config::load_with_override(config_path)?;
 
             let target_app = if let Some(app_name) = app {
                 let running_apps = matching::get_running_apps()?;
@@ -390,7 +396,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             no_launch,
             verbose,
         } => {
-            let config = config::load()?;
+            let config = config::load_with_override(config_path)?;
             let display_target = display::DisplayTarget::parse(&target)?;
 
             let target_app = if let Some(app_name) = app {
@@ -441,7 +447,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             no_launch,
             verbose,
         } => {
-            let config = config::load()?;
+            let config = config::load_with_override(config_path)?;
 
             // parse size: "full" or a number 1-100
             let percent: u32 = if size.eq_ignore_ascii_case("full") {
@@ -549,7 +555,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             println!("\nShortcut to add:\n{}", json);
 
             // load config and check for duplicates
-            let mut config = config::load()?;
+            let mut config = config::load_with_override(config_path)?;
             let existing = config
                 .shortcuts
                 .iter()
@@ -582,8 +588,11 @@ pub fn execute(cli: Cli) -> Result<()> {
             }
 
             // save config
-            config::save(&config)?;
-            println!("\nSaved to {}", config::get_config_path()?.display());
+            config::save_with_override(&config, config_path)?;
+            println!(
+                "\nSaved to {}",
+                config::get_config_path_with_override(config_path)?.display()
+            );
 
             Ok(())
         }
@@ -608,27 +617,27 @@ pub fn execute(cli: Cli) -> Result<()> {
 
         Commands::Config { command } => match command {
             ConfigCommands::Show => {
-                let config = config::load()?;
+                let config = config::load_with_override(config_path)?;
                 let json =
                     serde_json::to_string_pretty(&config).context("Failed to serialize config")?;
                 println!("{}", json);
                 Ok(())
             }
             ConfigCommands::Path => {
-                let path = config::get_config_path()?;
+                let path = config::get_config_path_with_override(config_path)?;
                 println!("{}", path.display());
                 Ok(())
             }
             ConfigCommands::Set { key, value } => {
-                let mut config = config::load()?;
+                let mut config = config::load_with_override(config_path)?;
                 config::set_value(&mut config, &key, &value)?;
-                config::save(&config)?;
+                config::save_with_override(&config, config_path)?;
                 println!("Set {} = {}", key, value);
                 Ok(())
             }
             ConfigCommands::Reset => {
                 let config = Config::default();
-                config::save(&config)?;
+                config::save_with_override(&config, config_path)?;
                 println!("Configuration reset to defaults");
                 Ok(())
             }
@@ -640,7 +649,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(())
             }
             ConfigCommands::Verify => {
-                let path = config::get_config_path()?;
+                let path = config::get_config_path_with_override(config_path)?;
                 let errors = config::verify(&path)?;
 
                 if errors.is_empty() {
@@ -685,7 +694,7 @@ pub fn execute(cli: Cli) -> Result<()> {
         }
 
         Commands::ListAliases => {
-            let config = config::load()?;
+            let config = config::load_with_override(config_path)?;
             let displays = display::get_displays()?;
 
             // system aliases
@@ -851,11 +860,10 @@ pub fn execute(cli: Cli) -> Result<()> {
             force,
             prerelease,
         } => {
-            use crate::config;
             use crate::installer::{check_for_updates, perform_update};
             use crate::version::Version;
 
-            let mut config = config::load()?;
+            let mut config = config::load_with_override(config_path)?;
 
             // enable prerelease channels if requested
             if prerelease {
@@ -899,7 +907,7 @@ pub fn execute(cli: Cli) -> Result<()> {
 
                         // update last check time
                         config.settings.update.last_check = Some(chrono::Utc::now());
-                        config::save(&config)?;
+                        config::save_with_override(&config, config_path)?;
                     }
                 }
                 None => {
@@ -907,7 +915,7 @@ pub fn execute(cli: Cli) -> Result<()> {
 
                     // update last check time
                     config.settings.update.last_check = Some(chrono::Utc::now());
-                    config::save(&config)?;
+                    config::save_with_override(&config, config_path)?;
                 }
             }
 
@@ -916,7 +924,7 @@ pub fn execute(cli: Cli) -> Result<()> {
 
         Commands::Spotlight { command } => match command {
             SpotlightCommands::Install { name, force } => {
-                let config = config::load()?;
+                let config = config::load_with_override(config_path)?;
 
                 if config.spotlight.is_empty() {
                     println!("No spotlight shortcuts configured.");
