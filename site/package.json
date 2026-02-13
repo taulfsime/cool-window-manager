@@ -1,0 +1,9 @@
+{
+  "name": "cwm-site",
+  "version": "1.0.0",
+  "description": "cwm landing page",
+  "private": true,
+  "scripts": {
+    "dev": "npx serve -p 3000"
+  }
+}

@@ -76,6 +76,18 @@ cool-window-mng/
 │   ├── release-beta.sh     # helper script to create beta releases
 │   ├── release-stable.sh   # helper script to create stable releases
 │   └── list-releases.sh    # helper script to list all releases
+├── site/                   # landing page (GitHub Pages at cwm.taulfsime.com)
+│   ├── index.html          # main page with terminal + preview
+│   ├── CNAME               # custom domain configuration
+│   ├── css/
+│   │   └── style.css       # red theme terminal styling
+│   ├── js/
+│   │   ├── terminal.js     # terminal emulator core
+│   │   ├── commands.js     # command handlers
+│   │   ├── preview.js      # mock desktop animations
+│   │   └── demo.js         # auto-demo sequence
+│   └── assets/
+│       └── favicon.svg     # site favicon
 ├── tests/
 │   ├── integration.rs      # integration test entry point
 │   └── integration_tests/
@@ -243,6 +255,43 @@ Core window manipulation using macOS Accessibility API.
 | `accessibility.rs` | `check_accessibility_permissions()`, `prompt_accessibility_permissions()` |
 | `manager.rs` | `focus_app()`, `maximize_app()`, `move_to_display()`, `resize_app()`, `launch_app()` |
 | `matching.rs` | `find_app()`, `get_running_apps()`, `get_window_titles()`, `AppInfo`, `MatchType` enum, Levenshtein distance calculation |
+
+### site/
+
+Landing page hosted on GitHub Pages at [cwm.taulfsime.com](https://cwm.taulfsime.com).
+
+| File | Responsibility |
+|------|----------------|
+| `index.html` | main HTML structure with terminal and preview panes |
+| `CNAME` | custom domain configuration for GitHub Pages |
+| `package.json` | npm scripts for local development |
+| `css/style.css` | red theme, terminal styling, responsive layout, animations |
+| `js/terminal.js` | terminal emulator (input handling, history, output rendering, sounds) |
+| `js/commands.js` | command registry and handlers (help, install, cwm subcommands) |
+| `js/preview.js` | mock desktop with animated windows, multi-display support |
+| `js/demo.js` | auto-demo sequence that runs on page load |
+| `assets/favicon.svg` | red terminal icon |
+
+**Features:**
+- Interactive terminal emulator with command history and tab completion
+- Mock macOS desktop preview showing window manipulations in real-time
+- Auto-demo on page load showcasing focus, maximize, move-display, resize
+- Dynamic display management (2-4 displays with adaptive grid layout)
+- Red color theme with syntax highlighting
+- Optional keyboard sound effects
+- Fully responsive (stacked layout on mobile)
+- No build step required (vanilla HTML/CSS/JS)
+
+**Local development:**
+```bash
+cd site
+npm run dev  # starts server at http://localhost:3000
+```
+
+**Deployment:**
+- Automatic via GitHub Actions on push to main
+- Deploys `site/` folder to GitHub Pages
+- Custom domain configured via `CNAME` file
 
 ---
 

@@ -2,6 +2,8 @@
 
 A macOS window manager with CLI and global hotkeys. Manage windows by app name with fuzzy matching.
 
+**Website:** [cwm.taulfsime.com](https://cwm.taulfsime.com) - Interactive demo and documentation
+
 ## Installation
 
 ### Quick Install (Recommended)
@@ -552,6 +554,17 @@ Examples:
 - `"Goo"` → Google Chrome (name prefix)
 - `"New Tab"` → Google Chrome (title exact)
 - `"GitHub - taulfsime"` → Safari (title prefix)
+
+## Website
+
+The project has an interactive landing page at [cwm.taulfsime.com](https://cwm.taulfsime.com) featuring:
+
+- **Interactive terminal** - Try cwm commands in your browser
+- **Live preview** - Watch animated window manipulations as you type
+- **Auto-demo** - See cwm in action immediately on page load
+- **Multi-display simulation** - Add up to 4 virtual displays
+
+The site is built with vanilla HTML/CSS/JS (no build step) and deployed automatically via GitHub Pages.
 
 ## License
 
