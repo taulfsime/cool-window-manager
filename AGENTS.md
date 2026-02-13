@@ -75,7 +75,8 @@ cool-window-mng/
 ├── scripts/
 │   ├── release-beta.sh     # helper script to create beta releases
 │   ├── release-stable.sh   # helper script to create stable releases
-│   └── list-releases.sh    # helper script to list all releases
+│   ├── list-releases.sh    # helper script to list all releases
+│   └── coverage.sh         # generate test coverage report
 ├── docs/                   # landing page (GitHub Pages at cwm.taulfsime.com)
 │   ├── index.html          # main page with terminal + preview
 │   ├── CNAME               # custom domain configuration
