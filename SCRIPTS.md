@@ -7,6 +7,7 @@ Useful scripts, one-liners, and integration patterns for window management autom
 - [Output Formats](#output-formats)
 - [JSON-RPC Format](#json-rpc-format)
 - [Exit Codes](#exit-codes)
+- [IPC Socket](#ipc-socket)
 - [One-Liners](#one-liners)
 - [fzf Integration](#fzf-integration)
 - [Shell Functions](#shell-functions)
@@ -169,6 +170,616 @@ When using `--json`, errors follow JSON-RPC 2.0 format:
 ```bash
 cwm focus --app NonExistent --json
 # {"jsonrpc":"2.0","error":{"code":-32002,"message":"no matching app found, tried: NonExistent","data":{"suggestions":["Safari","Chrome"...]}},"id":null}
+```
+
+---
+
+## IPC Socket
+
+When the daemon is running, cwm exposes a Unix socket at `~/.cwm/cwm.sock` for inter-process communication. This allows external tools to control cwm without spawning new processes.
+
+### Socket Location
+
+```bash
+# default location
+~/.cwm/cwm.sock
+
+# check if daemon is running and socket exists
+ls -la ~/.cwm/cwm.sock
+```
+
+### Protocol
+
+The IPC supports two input formats:
+
+1. **JSON** (recommended) - Standard JSON-RPC 2.0 style, consistent with CLI `--json` output
+2. **Plain text** - Minimal format for simple scripting
+
+The `"jsonrpc": "2.0"` field is optional in JSON requests - you can omit it for brevity.
+
+The response format matches the input format:
+- JSON input → JSON-RPC 2.0 response
+- Plain text input → Plain text response (`OK` or `ERROR: message`)
+
+### JSON Format (Recommended)
+
+Uses JSON-RPC 2.0 style, consistent with cwm's CLI `--json` output. The `"jsonrpc": "2.0"` field is optional.
+
+**Request (full):**
+```json
+{"jsonrpc": "2.0", "method": "focus", "params": {"app": "Safari"}, "id": 1}
+```
+
+**Request (minimal - jsonrpc field omitted):**
+```json
+{"method": "focus", "params": {"app": "Safari"}, "id": 1}
+```
+
+**Success Response:**
+```json
+{"jsonrpc": "2.0", "result": {"message": "Focused Safari", "app": "Safari"}, "id": "1"}
+```
+
+**Error Response:**
+```json
+{"jsonrpc": "2.0", "error": {"code": -32002, "message": "App not found"}, "id": "1"}
+```
+
+**Notification (no response):**
+```json
+{"method": "focus", "params": {"app": "Safari"}}
+```
+
+When `id` is omitted, the request is treated as a notification and no response is sent.
+
+### Available Methods
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| `ping` | none | Health check, returns "pong" |
+| `status` | none | Daemon status (pid, shortcuts count, etc.) |
+| `focus` | `app` | Focus an application window |
+| `maximize` | `app` (optional) | Maximize window |
+| `resize` | `to` (required), `app` (optional) | Resize window |
+| `move_display` | `target`, `app` (optional) | Move window to display |
+| `list_apps` | none | List running applications |
+| `list_displays` | none | List available displays |
+| `action` | `action` | Execute raw action string |
+
+### Shell Examples (JSON)
+
+```bash
+# ping with id (expects response)
+echo '{"jsonrpc":"2.0","method":"ping","id":1}' | nc -U ~/.cwm/cwm.sock
+# {"jsonrpc":"2.0","result":"pong","id":"1"}
+
+# focus an app
+echo '{"jsonrpc":"2.0","method":"focus","params":{"app":"Safari"},"id":1}' | nc -U ~/.cwm/cwm.sock
+# {"jsonrpc":"2.0","result":{"message":"Focused Safari","app":"Safari"},"id":"1"}
+
+# notification (no response expected)
+echo '{"jsonrpc":"2.0","method":"focus","params":{"app":"Safari"}}' | nc -U ~/.cwm/cwm.sock
+# (no output - fire and forget)
+
+# get daemon status
+echo '{"jsonrpc":"2.0","method":"status","id":1}' | nc -U ~/.cwm/cwm.sock | jq .
+
+# maximize current window
+echo '{"jsonrpc":"2.0","method":"maximize","id":1}' | nc -U ~/.cwm/cwm.sock
+
+# resize to 80%
+echo '{"jsonrpc":"2.0","method":"resize","params":{"to":"80"},"id":1}' | nc -U ~/.cwm/cwm.sock
+
+# move to next display
+echo '{"jsonrpc":"2.0","method":"move_display","params":{"target":"next"},"id":1}' | nc -U ~/.cwm/cwm.sock
+
+# list running apps
+echo '{"jsonrpc":"2.0","method":"list_apps","id":1}' | nc -U ~/.cwm/cwm.sock | jq '.result.apps[].name'
+
+# list displays
+echo '{"jsonrpc":"2.0","method":"list_displays","id":1}' | nc -U ~/.cwm/cwm.sock | jq '.result.displays'
+
+# with string id
+echo '{"jsonrpc":"2.0","method":"ping","id":"my-request-123"}' | nc -U ~/.cwm/cwm.sock
+# {"jsonrpc":"2.0","result":"pong","id":"my-request-123"}
+```
+
+### Python Example
+
+```python
+#!/usr/bin/env python3
+import json
+import os
+import socket
+
+SOCKET_PATH = os.path.expanduser("~/.cwm/cwm.sock")
+
+def send_jsonrpc(method: str, params: dict = None, id: str = "1") -> dict:
+    """Send a JSON-RPC 2.0 request to the cwm daemon."""
+    request = {
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params or {},
+        "id": id
+    }
+    
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.connect(SOCKET_PATH)
+        sock.sendall(json.dumps(request).encode() + b"\n")
+        sock.shutdown(socket.SHUT_WR)
+        
+        response = b""
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+        
+        return json.loads(response.decode())
+
+def send_notification(method: str, params: dict = None):
+    """Send a JSON-RPC 2.0 notification (no response expected)."""
+    request = {
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params or {}
+    }
+    
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.connect(SOCKET_PATH)
+        sock.sendall(json.dumps(request).encode() + b"\n")
+        sock.shutdown(socket.SHUT_WR)
+
+# examples
+print(send_jsonrpc("ping"))
+# {'jsonrpc': '2.0', 'result': 'pong', 'id': '1'}
+
+print(send_jsonrpc("status"))
+# {'jsonrpc': '2.0', 'result': {'running': True, 'pid': 12345, ...}, 'id': '1'}
+
+print(send_jsonrpc("focus", {"app": "Safari"}))
+# {'jsonrpc': '2.0', 'result': {'message': 'Focused Safari', 'app': 'Safari'}, 'id': '1'}
+
+# fire and forget (notification)
+send_notification("focus", {"app": "Safari"})
+
+# list apps
+response = send_jsonrpc("list_apps")
+if "result" in response:
+    for app in response["result"]["apps"]:
+        print(f"{app['name']} (PID: {app['pid']})")
+
+# error handling
+response = send_jsonrpc("focus", {"app": "NonExistent"})
+if "error" in response:
+    print(f"Error {response['error']['code']}: {response['error']['message']}")
+```
+
+### Node.js Example
+
+```javascript
+const net = require('net');
+const path = require('path');
+const os = require('os');
+
+const SOCKET_PATH = path.join(os.homedir(), '.cwm', 'cwm.sock');
+
+function sendJsonRpc(method, params = {}, id = '1') {
+  return new Promise((resolve, reject) => {
+    const client = net.createConnection(SOCKET_PATH, () => {
+      const request = JSON.stringify({
+        jsonrpc: '2.0',
+        method,
+        params,
+        id
+      }) + '\n';
+      client.write(request);
+      client.end();
+    });
+
+    let data = '';
+    client.on('data', chunk => { data += chunk; });
+    client.on('end', () => {
+      try {
+        resolve(JSON.parse(data));
+      } catch (e) {
+        reject(new Error(`Invalid response: ${data}`));
+      }
+    });
+    client.on('error', reject);
+  });
+}
+
+function sendNotification(method, params = {}) {
+  return new Promise((resolve, reject) => {
+    const client = net.createConnection(SOCKET_PATH, () => {
+      const request = JSON.stringify({
+        jsonrpc: '2.0',
+        method,
+        params
+        // no id = notification
+      }) + '\n';
+      client.write(request);
+      client.end();
+      resolve();
+    });
+    client.on('error', reject);
+  });
+}
+
+// examples
+async function main() {
+  console.log(await sendJsonRpc('ping'));
+  // { jsonrpc: '2.0', result: 'pong', id: '1' }
+
+  console.log(await sendJsonRpc('status'));
+  // { jsonrpc: '2.0', result: { running: true, pid: 12345, ... }, id: '1' }
+
+  console.log(await sendJsonRpc('focus', { app: 'Safari' }));
+  // { jsonrpc: '2.0', result: { message: 'Focused Safari', app: 'Safari' }, id: '1' }
+
+  // fire and forget
+  await sendNotification('focus', { app: 'Safari' });
+
+  // error handling
+  const response = await sendJsonRpc('focus', { app: 'NonExistent' });
+  if (response.error) {
+    console.error(`Error ${response.error.code}: ${response.error.message}`);
+  }
+}
+
+main().catch(console.error);
+```
+
+### Ruby Example
+
+```ruby
+#!/usr/bin/env ruby
+require 'socket'
+require 'json'
+
+SOCKET_PATH = File.expand_path('~/.cwm/cwm.sock')
+
+def send_jsonrpc(method, params = {}, id = '1')
+  request = {
+    jsonrpc: '2.0',
+    method: method,
+    params: params,
+    id: id
+  }
+  
+  UNIXSocket.open(SOCKET_PATH) do |sock|
+    sock.puts(request.to_json)
+    sock.close_write
+    JSON.parse(sock.read)
+  end
+end
+
+def send_notification(method, params = {})
+  request = {
+    jsonrpc: '2.0',
+    method: method,
+    params: params
+  }
+  
+  UNIXSocket.open(SOCKET_PATH) do |sock|
+    sock.puts(request.to_json)
+    sock.close_write
+  end
+end
+
+# examples
+puts send_jsonrpc('ping')
+# {"jsonrpc"=>"2.0", "result"=>"pong", "id"=>"1"}
+
+puts send_jsonrpc('focus', { app: 'Safari' })
+# {"jsonrpc"=>"2.0", "result"=>{"message"=>"Focused Safari", "app"=>"Safari"}, "id"=>"1"}
+
+# fire and forget
+send_notification('focus', { app: 'Safari' })
+
+# list apps
+response = send_jsonrpc('list_apps')
+response['result']['apps'].each do |app|
+  puts "#{app['name']} (PID: #{app['pid']})"
+end
+```
+
+### Go Example
+
+```go
+package main
+
+import (
+    "bufio"
+    "encoding/json"
+    "fmt"
+    "net"
+    "os"
+    "path/filepath"
+)
+
+type JsonRpcRequest struct {
+    Jsonrpc string            `json:"jsonrpc"`
+    Method  string            `json:"method"`
+    Params  map[string]string `json:"params,omitempty"`
+    Id      interface{}       `json:"id,omitempty"`
+}
+
+type JsonRpcResponse struct {
+    Jsonrpc string          `json:"jsonrpc"`
+    Result  json.RawMessage `json:"result,omitempty"`
+    Error   *RpcError       `json:"error,omitempty"`
+    Id      interface{}     `json:"id"`
+}
+
+type RpcError struct {
+    Code    int    `json:"code"`
+    Message string `json:"message"`
+}
+
+func sendJsonRpc(method string, params map[string]string, id string) (*JsonRpcResponse, error) {
+    socketPath := filepath.Join(os.Getenv("HOME"), ".cwm", "cwm.sock")
+    
+    conn, err := net.Dial("unix", socketPath)
+    if err != nil {
+        return nil, err
+    }
+    defer conn.Close()
+
+    request := JsonRpcRequest{
+        Jsonrpc: "2.0",
+        Method:  method,
+        Params:  params,
+        Id:      id,
+    }
+    
+    encoder := json.NewEncoder(conn)
+    if err := encoder.Encode(request); err != nil {
+        return nil, err
+    }
+
+    reader := bufio.NewReader(conn)
+    line, err := reader.ReadBytes('\n')
+    if err != nil {
+        return nil, err
+    }
+
+    var response JsonRpcResponse
+    if err := json.Unmarshal(line, &response); err != nil {
+        return nil, err
+    }
+
+    return &response, nil
+}
+
+func main() {
+    // ping
+    resp, _ := sendJsonRpc("ping", nil, "1")
+    fmt.Printf("Ping: %s\n", resp.Result)
+
+    // focus app
+    resp, _ = sendJsonRpc("focus", map[string]string{"app": "Safari"}, "1")
+    if resp.Error != nil {
+        fmt.Printf("Error %d: %s\n", resp.Error.Code, resp.Error.Message)
+    } else {
+        fmt.Printf("Focus: %s\n", resp.Result)
+    }
+
+    // list apps
+    resp, _ = sendJsonRpc("list_apps", nil, "1")
+    fmt.Printf("Apps: %s\n", resp.Result)
+}
+```
+
+### Rust Example
+
+```rust
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+
+#[derive(Serialize)]
+struct JsonRpcRequest {
+    jsonrpc: &'static str,
+    method: String,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    params: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct JsonRpcResponse {
+    jsonrpc: String,
+    result: Option<serde_json::Value>,
+    error: Option<RpcError>,
+    id: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct RpcError {
+    code: i32,
+    message: String,
+}
+
+fn send_jsonrpc(
+    method: &str,
+    params: HashMap<String, String>,
+    id: Option<&str>,
+) -> Result<JsonRpcResponse, Box<dyn std::error::Error>> {
+    let socket_path = dirs::home_dir()
+        .unwrap()
+        .join(".cwm")
+        .join("cwm.sock");
+
+    let mut stream = UnixStream::connect(socket_path)?;
+    
+    let request = JsonRpcRequest {
+        jsonrpc: "2.0",
+        method: method.to_string(),
+        params,
+        id: id.map(String::from),
+    };
+    
+    let json = serde_json::to_string(&request)?;
+    stream.write_all(json.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.shutdown(std::net::Shutdown::Write)?;
+
+    let mut reader = BufReader::new(&stream);
+    let mut response_line = String::new();
+    reader.read_line(&mut response_line)?;
+
+    Ok(serde_json::from_str(&response_line)?)
+}
+
+fn main() {
+    // ping
+    let resp = send_jsonrpc("ping", HashMap::new(), Some("1")).unwrap();
+    println!("Ping: {:?}", resp.result);
+
+    // focus app
+    let mut params = HashMap::new();
+    params.insert("app".to_string(), "Safari".to_string());
+    let resp = send_jsonrpc("focus", params, Some("1")).unwrap();
+    
+    if let Some(error) = resp.error {
+        println!("Error {}: {}", error.code, error.message);
+    } else {
+        println!("Focus: {:?}", resp.result);
+    }
+}
+```
+
+### Hammerspoon Integration
+
+```lua
+-- ~/.hammerspoon/init.lua
+
+local socket = require("hs.socket")
+local json = require("hs.json")
+
+local cwmSocket = os.getenv("HOME") .. "/.cwm/cwm.sock"
+local requestId = 0
+
+local function cwmSend(method, params, callback)
+  requestId = requestId + 1
+  local request = json.encode({
+    jsonrpc = "2.0",
+    method = method,
+    params = params or {},
+    id = tostring(requestId)
+  }) .. "\n"
+  
+  local client = socket.new()
+  client:connect(cwmSocket, function()
+    client:write(request)
+    client:read("\n", function(data)
+      if callback then
+        local response = json.decode(data)
+        callback(response)
+      end
+      client:disconnect()
+    end)
+  end)
+end
+
+-- fire and forget (notification)
+local function cwmNotify(method, params)
+  local request = json.encode({
+    jsonrpc = "2.0",
+    method = method,
+    params = params or {}
+  }) .. "\n"
+  
+  local client = socket.new()
+  client:connect(cwmSocket, function()
+    client:write(request)
+    client:disconnect()
+  end)
+end
+
+-- focus app via IPC (faster than spawning cwm process)
+hs.hotkey.bind({"cmd", "alt"}, "s", function()
+  cwmSend("focus", { app = "Safari" }, function(resp)
+    if resp.error then
+      hs.alert.show("Error: " .. resp.error.message)
+    end
+  end)
+end)
+
+-- maximize via IPC (fire and forget)
+hs.hotkey.bind({"cmd", "alt"}, "m", function()
+  cwmNotify("maximize")
+end)
+
+-- get running apps
+hs.hotkey.bind({"cmd", "alt"}, "l", function()
+  cwmSend("list_apps", nil, function(resp)
+    if resp.result then
+      local names = {}
+      for _, app in ipairs(resp.result.apps) do
+        table.insert(names, app.name)
+      end
+      hs.alert.show(table.concat(names, "\n"))
+    end
+  end)
+end)
+```
+
+### Error Handling
+
+JSON-RPC errors include a code and message:
+
+```bash
+response=$(echo '{"jsonrpc":"2.0","method":"focus","params":{"app":"NonExistent"},"id":1}' | nc -U ~/.cwm/cwm.sock)
+
+# check for error
+if echo "$response" | jq -e '.error' > /dev/null 2>&1; then
+  code=$(echo "$response" | jq -r '.error.code')
+  message=$(echo "$response" | jq -r '.error.message')
+  echo "Error $code: $message"
+else
+  echo "Success: $(echo "$response" | jq -r '.result')"
+fi
+```
+
+### Error Codes
+
+| Exit Code | JSON-RPC Code | Meaning |
+|-----------|---------------|---------|
+| 1 | -32001 | General error |
+| 2 | -32002 | App not found |
+| 3 | -32003 | Permission denied |
+| 4 | -32004 | Invalid arguments |
+| 6 | -32006 | Window not found |
+| 7 | -32007 | Display not found |
+
+### Plain Text Protocol
+
+For simple scripting, plain text commands are also supported:
+
+```bash
+# plain text input -> plain text output
+echo "ping" | nc -U ~/.cwm/cwm.sock
+# OK
+
+echo "focus:Safari" | nc -U ~/.cwm/cwm.sock
+# OK
+
+echo "focus:NonExistent" | nc -U ~/.cwm/cwm.sock
+# ERROR: App not found
+
+echo "maximize" | nc -U ~/.cwm/cwm.sock
+# OK
+
+echo "resize:80" | nc -U ~/.cwm/cwm.sock
+# OK
+
+echo "move_display:next" | nc -U ~/.cwm/cwm.sock
+# OK
 ```
 
 ---

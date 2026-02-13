@@ -152,9 +152,9 @@ cool-window-mng/
     │   ├── schema.rs       # Config, Shortcut, AppRule, Settings, UpdateSettings
     │   └── json_schema.rs  # JSON schema definition for editor autocompletion
     ├── daemon/
-    │   ├── mod.rs          # daemon lifecycle, action execution, hotkey parsing
+    │   ├── mod.rs          # daemon lifecycle, action execution, hotkey parsing, IPC handling
     │   ├── hotkeys.rs      # global hotkey recording and listening (CGEventTap)
-    │   ├── ipc.rs          # PID file management at /tmp/cwm.pid
+    │   ├── ipc.rs          # PID file management, Unix socket IPC at ~/.cwm/cwm.sock
     │   ├── launchd.rs      # macOS launchd plist for auto-start
     │   └── app_watcher.rs  # NSWorkspace notifications for app launches
     ├── display/
@@ -301,16 +301,43 @@ Background process that listens for hotkeys and app launches.
 
 | File | Responsibility |
 |------|----------------|
-| `mod.rs` | `start_daemon()`, `stop_daemon()`, `daemon_status()`, action execution, modifier/key parsing |
+| `mod.rs` | `start_daemon()`, `stop_daemon()`, `daemon_status()`, action execution, modifier/key parsing, IPC request handling |
 | `hotkeys.rs` | `record_shortcut()`, `listen_for_hotkeys()` using CGEventTap |
-| `ipc.rs` | `write_pid_file()`, `read_pid_file()`, `remove_pid_file()` |
+| `ipc.rs` | PID file management, Unix socket IPC (`IpcRequest`, `IpcResponse`, `send_request()`, `send_command()`) |
 | `launchd.rs` | `install_launchd()`, `uninstall_launchd()` for auto-start |
 | `app_watcher.rs` | `AppWatcher` struct, NSWorkspace notification observer |
 
 The daemon uses:
 - PID file at `/tmp/cwm.pid` for single-instance enforcement
+- Unix socket at `~/.cwm/cwm.sock` for IPC
 - Signal handlers (SIGTERM, SIGINT) for graceful shutdown
 - Tokio async runtime for concurrent hotkey and app watching
+
+**IPC Protocol:**
+
+The daemon exposes a Unix socket for inter-process communication, allowing external tools to control cwm without spawning new processes.
+
+- Socket location: `~/.cwm/cwm.sock`
+- Protocol: JSON-RPC 2.0 style (consistent with CLI `--json` output)
+- Available methods: `ping`, `status`, `focus`, `maximize`, `resize`, `move_display`, `list_apps`, `list_displays`, `action`
+
+**Supported input formats:**
+1. **JSON** (recommended): `{"method": "focus", "params": {"app": "Safari"}, "id": 1}` (the `"jsonrpc": "2.0"` field is optional)
+2. **Plain text**: `focus:Safari`
+
+**Response format matches input:**
+- JSON input → JSON-RPC 2.0 response: `{"jsonrpc": "2.0", "result": {...}, "id": "1"}`
+- Plain text input → Plain text response: `OK` or `ERROR: message`
+
+**Notifications:** JSON requests without `id` are treated as notifications (no response sent).
+
+Key types in `ipc.rs`:
+- `IpcRequest`: Parsed request with method, params, format, and optional id
+- `InputFormat`: Enum for `Json` or `Text`
+- `format_success_response()`: Format success response based on input format
+- `format_error_response()`: Format error response with JSON-RPC error codes
+- `send_jsonrpc()`: Send JSON-RPC 2.0 request to daemon
+- `send_text_command()`: Send plain text command to daemon
 
 ### display/
 

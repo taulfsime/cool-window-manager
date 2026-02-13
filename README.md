@@ -431,6 +431,39 @@ Options for `install`:
 - `--bin <PATH>` - Path to cwm binary (defaults to current executable)
 - `--log <PATH>` - Log file path for the daemon
 
+#### IPC Socket
+
+When running, the daemon exposes a Unix socket at `~/.cwm/cwm.sock` for inter-process communication. This allows external tools to control cwm without spawning new processes.
+
+The IPC uses JSON-RPC 2.0 style format, consistent with the CLI `--json` output. The `"jsonrpc": "2.0"` field is optional:
+
+```bash
+# ping the daemon (minimal JSON - jsonrpc field optional)
+echo '{"method":"ping","id":1}' | nc -U ~/.cwm/cwm.sock
+# {"jsonrpc":"2.0","result":"pong","id":"1"}
+
+# focus an app
+echo '{"method":"focus","params":{"app":"Safari"},"id":1}' | nc -U ~/.cwm/cwm.sock
+# {"jsonrpc":"2.0","result":{"message":"Focused Safari","app":"Safari"},"id":"1"}
+
+# notification (no response, fire and forget - omit id)
+echo '{"method":"focus","params":{"app":"Safari"}}' | nc -U ~/.cwm/cwm.sock
+
+# get daemon status
+echo '{"method":"status","id":1}' | nc -U ~/.cwm/cwm.sock | jq .
+
+# list running apps
+echo '{"method":"list_apps","id":1}' | nc -U ~/.cwm/cwm.sock | jq '.result.apps[].name'
+
+# plain text protocol (for simple scripting)
+echo "focus:Safari" | nc -U ~/.cwm/cwm.sock
+# OK
+```
+
+Available methods: `ping`, `status`, `focus`, `maximize`, `resize`, `move_display`, `list_apps`, `list_displays`, `action`.
+
+For detailed IPC documentation and examples in Python, Node.js, Ruby, Go, Rust, and Hammerspoon, see [SCRIPTS.md](SCRIPTS.md#ipc-socket).
+
 ### spotlight
 
 Manage macOS Spotlight integration. Creates app bundles that appear in Spotlight search.

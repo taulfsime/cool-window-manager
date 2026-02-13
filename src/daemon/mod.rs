@@ -14,10 +14,13 @@ use crate::window::{manager, matching};
 
 use hotkeys::Hotkey;
 use ipc::{
-    get_pid_file_path, get_socket_path, is_daemon_running, remove_pid_file, remove_socket_file,
-    write_pid_file,
+    format_error, format_error_response, format_success_response, get_pid_file_path,
+    get_socket_path, is_daemon_running, remove_pid_file, remove_socket_file, write_pid_file,
+    IpcRequest,
 };
 pub use launchd::{install, uninstall};
+
+use crate::cli::exit_codes;
 
 static DAEMON_SHOULD_STOP: AtomicBool = AtomicBool::new(false);
 static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
@@ -156,7 +159,10 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
             log_err(&format!("Socket listener error: {}", e));
         }
     });
-    log("IPC socket listening on /tmp/cwm.sock");
+    log(&format!(
+        "IPC socket listening on {}",
+        get_socket_path().display()
+    ));
 
     // start the hotkey listener (this runs the main run loop)
     // even with no shortcuts, we need the run loop for app watcher notifications
@@ -526,6 +532,11 @@ fn start_socket_listener(config: Arc<Config>) -> Result<()> {
 
     let socket_path = get_socket_path();
 
+    // ensure parent directory exists
+    if let Some(parent) = socket_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
     // remove stale socket file
     let _ = std::fs::remove_file(&socket_path);
 
@@ -545,20 +556,16 @@ fn start_socket_listener(config: Arc<Config>) -> Result<()> {
 
                 // read command
                 let mut reader = BufReader::new(&stream);
-                let mut command = String::new();
-                if reader.read_line(&mut command).is_ok() {
-                    let command = command.trim();
-                    if !command.is_empty() {
-                        log(&format!("IPC command: {}", command));
-
-                        // execute the command
-                        let response = match execute_action(command, &config) {
-                            Ok(()) => "OK".to_string(),
-                            Err(e) => format!("ERROR: {}", e),
-                        };
-
-                        // send response
-                        let _ = stream.write_all(response.as_bytes());
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_ok() {
+                    let line = line.trim();
+                    if !line.is_empty() {
+                        // parse request and handle it
+                        if let Some(response) = handle_ipc_message(line, &config) {
+                            let _ = stream.write_all(response.as_bytes());
+                            let _ = stream.write_all(b"\n");
+                        }
+                        // if None, it was a notification - no response needed
                     }
                 }
             }
@@ -576,6 +583,165 @@ fn start_socket_listener(config: Arc<Config>) -> Result<()> {
     let _ = std::fs::remove_file(&socket_path);
 
     Ok(())
+}
+
+/// Handle an IPC message and return the response string (or None for notifications)
+fn handle_ipc_message(line: &str, config: &Config) -> Option<String> {
+    // parse the request (auto-detects format)
+    let request = match IpcRequest::parse(line) {
+        Ok(req) => req,
+        Err(e) => {
+            // can't parse - create a minimal text request for error response
+            let fake_req = IpcRequest::parse("error").unwrap();
+            return format_error(&fake_req, &format!("Invalid request: {}", e));
+        }
+    };
+
+    log(&format!(
+        "IPC request: {} {:?} (format: {:?})",
+        request.method, request.params, request.format
+    ));
+
+    // handle the request and get result
+    let result = handle_ipc_request(&request, config);
+
+    // format response based on input format
+    match result {
+        Ok(value) => format_success_response(&request, value),
+        Err((code, msg)) => format_error_response(&request, code, &msg),
+    }
+}
+
+/// Handle a parsed IPC request
+/// Returns Ok(json_value) on success, Err((code, message)) on error
+fn handle_ipc_request(
+    request: &IpcRequest,
+    config: &Config,
+) -> Result<serde_json::Value, (i32, String)> {
+    match request.method.as_str() {
+        "ping" => Ok(serde_json::json!("pong")),
+
+        "status" => Ok(serde_json::json!({
+            "running": true,
+            "pid": std::process::id(),
+            "shortcuts": config.shortcuts.len(),
+            "app_rules": config.app_rules.len(),
+            "socket": get_socket_path().display().to_string(),
+        })),
+
+        "focus" => {
+            let app = request.params.get("app").ok_or_else(|| {
+                (
+                    exit_codes::INVALID_ARGS,
+                    "focus requires 'app' parameter".to_string(),
+                )
+            })?;
+
+            let action = format!("focus:{}", app);
+            execute_action(&action, config)
+                .map(|()| serde_json::json!({"message": format!("Focused {}", app), "app": app}))
+                .map_err(|e| (exit_codes::APP_NOT_FOUND, e.to_string()))
+        }
+
+        "maximize" => {
+            let action = match request.params.get("app") {
+                Some(app) => format!("maximize:{}", app),
+                None => "maximize".to_string(),
+            };
+            execute_action(&action, config)
+                .map(|()| serde_json::json!({"message": "Window maximized"}))
+                .map_err(|e| (exit_codes::WINDOW_NOT_FOUND, e.to_string()))
+        }
+
+        "resize" => {
+            let to = request.params.get("to").ok_or_else(|| {
+                (
+                    exit_codes::INVALID_ARGS,
+                    "resize requires 'to' parameter".to_string(),
+                )
+            })?;
+
+            let action = match request.params.get("app") {
+                Some(app) => format!("resize:{}:{}", to, app),
+                None => format!("resize:{}", to),
+            };
+            execute_action(&action, config)
+                .map(|()| serde_json::json!({"message": format!("Window resized to {}", to), "to": to}))
+                .map_err(|e| (exit_codes::WINDOW_NOT_FOUND, e.to_string()))
+        }
+
+        "move_display" => {
+            let target = request.params.get("target").ok_or_else(|| {
+                (
+                    exit_codes::INVALID_ARGS,
+                    "move_display requires 'target' parameter".to_string(),
+                )
+            })?;
+
+            let action = match request.params.get("app") {
+                Some(app) => format!("move_display:{}:{}", target, app),
+                None => format!("move_display:{}", target),
+            };
+            execute_action(&action, config)
+                .map(|()| serde_json::json!({"message": format!("Window moved to display {}", target), "target": target}))
+                .map_err(|e| (exit_codes::DISPLAY_NOT_FOUND, e.to_string()))
+        }
+
+        "list_apps" => matching::get_running_apps()
+            .map(|apps| {
+                let app_list: Vec<serde_json::Value> = apps
+                    .iter()
+                    .map(|app| {
+                        serde_json::json!({
+                            "name": app.name,
+                            "pid": app.pid,
+                            "bundle_id": app.bundle_id,
+                            "titles": app.titles,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({ "apps": app_list })
+            })
+            .map_err(|e| (exit_codes::ERROR, e.to_string())),
+
+        "list_displays" => crate::display::get_displays()
+            .map(|displays| {
+                let display_list: Vec<serde_json::Value> = displays
+                    .iter()
+                    .map(|d| {
+                        serde_json::json!({
+                            "index": d.index,
+                            "name": d.name,
+                            "width": d.width,
+                            "height": d.height,
+                            "is_main": d.is_main,
+                            "is_builtin": d.is_builtin,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({ "displays": display_list })
+            })
+            .map_err(|e| (exit_codes::ERROR, format!("{}", e))),
+
+        "action" => {
+            // execute a raw action string (legacy format)
+            let action = request.params.get("action").ok_or_else(|| {
+                (
+                    exit_codes::INVALID_ARGS,
+                    "action requires 'action' parameter".to_string(),
+                )
+            })?;
+
+            execute_action(action, config)
+                .map(|()| serde_json::json!({"message": "Action executed"}))
+                .map_err(|e| (exit_codes::ERROR, e.to_string()))
+        }
+
+        _ => Err((
+            exit_codes::INVALID_ARGS,
+            format!("Unknown method: {}", request.method),
+        )),
+    }
 }
 
 fn stop_socket_listener() {
