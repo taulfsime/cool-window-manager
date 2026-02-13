@@ -6,4 +6,4 @@ pub mod update;
 
 pub use install::{install_binary, uninstall_binary};
 pub use paths::detect_install_paths;
-pub use update::{check_for_updates, perform_update};
+pub use update::{check_for_updates, check_for_updates_silent, perform_update};

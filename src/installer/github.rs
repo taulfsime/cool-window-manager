@@ -189,9 +189,27 @@ impl GitHubClient {
         Ok(candidates.into_iter().next())
     }
 
+    /// Find best available release based on settings
+    /// If `interactive` is true, will prompt user to install beta/dev if no stable exists
     pub fn find_best_available_release(
         &self,
         settings: &UpdateSettings,
+    ) -> Result<Option<ReleaseInfo>> {
+        self.find_best_available_release_impl(settings, true)
+    }
+
+    /// Find best available release without interactive prompts (for background checks)
+    pub fn find_best_available_release_silent(
+        &self,
+        settings: &UpdateSettings,
+    ) -> Result<Option<ReleaseInfo>> {
+        self.find_best_available_release_impl(settings, false)
+    }
+
+    fn find_best_available_release_impl(
+        &self,
+        settings: &UpdateSettings,
+        interactive: bool,
     ) -> Result<Option<ReleaseInfo>> {
         let releases = self.fetch_releases()?;
         let arch = detect_architecture();
@@ -223,19 +241,23 @@ impl GitHubClient {
             }
         }
 
-        // if user wants stable but none exists, offer beta/dev
-        if settings.channels.stable && !settings.channels.beta && !settings.channels.dev {
-            println!("No stable release available yet.");
+        // if user wants stable but none exists, offer beta/dev (only in interactive mode)
+        if interactive
+            && settings.channels.stable
+            && !settings.channels.beta
+            && !settings.channels.dev
+        {
+            eprintln!("No stable release available yet.");
 
             // try beta
             for release in &releases {
                 if let Ok(info) = ReleaseInfo::from_github_release(release, arch) {
                     if info.channel == "beta" {
-                        println!("Beta version available: {}", info.version);
-                        print!("Would you like to install the beta version? [y/N]: ");
+                        eprintln!("Beta version available: {}", info.version);
+                        eprint!("Would you like to install the beta version? [y/N]: ");
 
                         use std::io::{self, Write};
-                        io::stdout().flush()?;
+                        io::stderr().flush()?;
 
                         let mut input = String::new();
                         io::stdin().read_line(&mut input)?;
@@ -252,11 +274,11 @@ impl GitHubClient {
             for release in &releases {
                 if let Ok(info) = ReleaseInfo::from_github_release(release, arch) {
                     if info.channel == "dev" {
-                        println!("Development version available: {}", info.version);
-                        print!("Would you like to install the dev version? [y/N]: ");
+                        eprintln!("Development version available: {}", info.version);
+                        eprint!("Would you like to install the dev version? [y/N]: ");
 
                         use std::io::{self, Write};
-                        io::stdout().flush()?;
+                        io::stderr().flush()?;
 
                         let mut input = String::new();
                         io::stdin().read_line(&mut input)?;

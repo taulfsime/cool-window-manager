@@ -12,11 +12,29 @@ use clap::Parser;
 use cli::Cli;
 
 fn main() -> Result<()> {
-    // check for updates in background (non-blocking)
-    check_for_updates_if_needed();
+    // handle broken pipe gracefully (e.g., when piping to `head` or `jq` that exits early)
+    reset_sigpipe();
 
     let cli = Cli::parse();
+
+    // skip background update check when JSON output is expected
+    // (either via --json flag or when stdout is piped)
+    use std::io::IsTerminal;
+    let is_json_output = cli.json || !std::io::stdout().is_terminal();
+    if !is_json_output {
+        check_for_updates_if_needed();
+    }
+
     cli::run(cli)
+}
+
+/// reset SIGPIPE to default behavior (terminate process) instead of panicking
+/// this is the standard Unix behavior for CLI tools
+fn reset_sigpipe() {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
 }
 
 fn check_for_updates_if_needed() {
@@ -58,8 +76,8 @@ fn do_update_check() -> Result<()> {
         return Ok(());
     }
 
-    // perform check
-    if let Some(release) = installer::check_for_updates(update_settings, false)? {
+    // perform check (silent - no interactive prompts)
+    if let Some(release) = installer::check_for_updates_silent(update_settings)? {
         let current = version::Version::current();
 
         // always show notification

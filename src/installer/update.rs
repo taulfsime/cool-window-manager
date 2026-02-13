@@ -11,9 +11,22 @@ use crate::installer::github::{GitHubClient, ReleaseInfo};
 use crate::version::{Version, VersionInfo};
 
 pub fn check_for_updates(settings: &UpdateSettings, verbose: bool) -> Result<Option<ReleaseInfo>> {
+    check_for_updates_impl(settings, verbose, true)
+}
+
+/// Check for updates without any interactive prompts (for background checks)
+pub fn check_for_updates_silent(settings: &UpdateSettings) -> Result<Option<ReleaseInfo>> {
+    check_for_updates_impl(settings, false, false)
+}
+
+fn check_for_updates_impl(
+    settings: &UpdateSettings,
+    verbose: bool,
+    interactive: bool,
+) -> Result<Option<ReleaseInfo>> {
     if !settings.enabled {
         if verbose {
-            println!("Updates are disabled in configuration");
+            eprintln!("Updates are disabled in configuration");
         }
         return Ok(None);
     }
@@ -25,26 +38,30 @@ pub fn check_for_updates(settings: &UpdateSettings, verbose: bool) -> Result<Opt
     let current = Version::current();
 
     if verbose {
-        println!("Current version: {}", current.version_string());
-        println!("Checking for updates...");
+        eprintln!("Current version: {}", current.version_string());
+        eprintln!("Checking for updates...");
     }
 
     // find latest release based on settings
-    let latest = client.find_best_available_release(settings)?;
+    let latest = if interactive {
+        client.find_best_available_release(settings)?
+    } else {
+        client.find_best_available_release_silent(settings)?
+    };
 
     if let Some(ref release) = latest {
         let latest_version = release.to_version()?;
 
         if latest_version.is_newer_than(&current) {
             if verbose {
-                println!("Found newer version: {}", release.version);
+                eprintln!("Found newer version: {}", release.version);
             }
             return Ok(Some(release.clone()));
         } else if verbose {
-            println!("You are on the latest version");
+            eprintln!("You are on the latest version");
         }
     } else if verbose {
-        println!("No releases found for enabled channels");
+        eprintln!("No releases found for enabled channels");
     }
 
     Ok(None)
