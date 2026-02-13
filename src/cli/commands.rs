@@ -166,9 +166,9 @@ pub enum Commands {
 
     /// List resources (apps, displays, aliases)
     List {
-        /// Resource type to list
+        /// Resource type to list (shows available resources if omitted)
         #[arg(value_enum)]
-        resource: ListResource,
+        resource: Option<ListResource>,
 
         /// Output in JSON format (overrides global --json for this command)
         #[arg(long)]
@@ -989,6 +989,23 @@ pub fn execute(cli: Cli) -> Result<()> {
             format,
             detailed,
         } => {
+            // if no resource specified, show available resources
+            let Some(resource) = resource else {
+                println!("Available resources:");
+                println!("  apps      Running applications");
+                println!("  displays  Available displays");
+                println!("  aliases   Display aliases (system and user-defined)");
+                println!();
+                println!("Usage: cwm list <RESOURCE> [OPTIONS]");
+                println!();
+                println!("Examples:");
+                println!("  cwm list apps");
+                println!("  cwm list apps --json");
+                println!("  cwm list apps --names");
+                println!("  cwm list displays --format '{{index}}: {{name}}'");
+                return Ok(());
+            };
+
             // determine list output mode (list command has its own json flag)
             let list_mode = OutputMode::from_flags(
                 json || cli.json,
