@@ -670,15 +670,17 @@ pub fn move_to_display(
     target: &crate::display::DisplayTarget,
     verbose: bool,
 ) -> Result<()> {
-    move_to_display_with_aliases(app, target, verbose, &Default::default())
+    move_to_display_with_aliases(app, target, verbose, &Default::default())?;
+    Ok(())
 }
 
+/// Move window to display, returns (display_index, display_name) on success
 pub fn move_to_display_with_aliases(
     app: Option<&AppInfo>,
     target: &crate::display::DisplayTarget,
     verbose: bool,
     display_aliases: &std::collections::HashMap<String, Vec<String>>,
-) -> Result<()> {
+) -> Result<(usize, String)> {
     use crate::display::{get_displays, resolve_target_display_with_aliases};
     use core_foundation::base::CFTypeRef;
 
@@ -777,23 +779,24 @@ pub fn move_to_display_with_aliases(
 
     if verbose {
         println!("Done.");
-    } else {
-        println!("Window moved to display {}", target_display.index);
     }
+    // silent on success in non-verbose mode (Unix convention)
 
-    Ok(())
+    Ok((target_display.index, target_display.name.clone()))
 }
 
 /// Resize an app's window to a target size (centered)
 ///
 /// The `overflow` parameter controls whether the window can extend beyond screen bounds.
 /// If false (default), dimensions are clamped to the usable display area.
+///
+/// Returns the final (width, height) of the window.
 pub fn resize_app(
     app: Option<&AppInfo>,
     target: &ResizeTarget,
     overflow: bool,
     verbose: bool,
-) -> Result<()> {
+) -> Result<(u32, u32)> {
     use core_foundation::base::CFTypeRef;
 
     if !accessibility::is_trusted() {
@@ -802,9 +805,12 @@ pub fn resize_app(
         ));
     }
 
-    // 100% is just maximize
+    // 100% is just maximize (but we need to return size)
     if matches!(target, ResizeTarget::Percent(100)) {
-        return maximize_app(app, verbose);
+        maximize_app(app, verbose)?;
+        // get the maximized size
+        let (_, _, dw, dh) = get_usable_display_bounds();
+        return Ok((dw as u32, dh as u32));
     }
 
     let (window, pid) = unsafe {
@@ -890,7 +896,7 @@ pub fn resize_app(
     }
 
     // format output message based on target type
-    let size_desc = match target {
+    let _size_desc = match target {
         ResizeTarget::Percent(p) => format!("{}%", p),
         ResizeTarget::Pixels { width, height } => match height {
             Some(h) => format!("{}x{}px", width, h),
@@ -904,11 +910,168 @@ pub fn resize_app(
 
     if verbose {
         println!("Done.");
-    } else {
-        println!("App resized to {}", size_desc);
+    }
+    // silent on success in non-verbose mode (Unix convention)
+
+    Ok((new_w as u32, new_h as u32))
+}
+
+/// Window data for JSON output
+#[derive(serde::Serialize)]
+pub struct WindowData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Display data for JSON output
+#[derive(serde::Serialize)]
+pub struct DisplayDataInfo {
+    pub index: usize,
+    pub name: String,
+}
+
+/// Get window title from AXUIElement
+unsafe fn get_window_title(window: AXUIElementRef) -> Option<String> {
+    use core_foundation::base::CFTypeRef;
+    use core_foundation::string::CFString;
+
+    let title_attr = CFString::new("AXTitle");
+    let mut title_value: CFTypeRef = std::ptr::null();
+
+    let result =
+        AXUIElementCopyAttributeValue(window, title_attr.as_concrete_TypeRef(), &mut title_value);
+
+    if result != K_AX_ERROR_SUCCESS || title_value.is_null() {
+        return None;
     }
 
-    Ok(())
+    // convert CFString to Rust String
+    let cf_string = core_foundation::string::CFString::wrap_under_get_rule(
+        title_value as core_foundation::string::CFStringRef,
+    );
+    let title = cf_string.to_string();
+
+    core_foundation::base::CFRelease(title_value);
+
+    if title.is_empty() {
+        None
+    } else {
+        Some(title)
+    }
+}
+
+/// Get information about the currently focused window
+pub fn get_focused_window_info() -> Result<(AppInfo, WindowData, DisplayDataInfo)> {
+    use objc2_app_kit::NSWorkspace;
+
+    if !accessibility::is_trusted() {
+        return Err(anyhow!(
+            "Accessibility permissions required. Run 'cwm check-permissions' for help."
+        ));
+    }
+
+    let (window, pid) = unsafe { get_focused_window()? };
+
+    // get app info
+    let workspace = NSWorkspace::sharedWorkspace();
+    let frontmost_app = workspace.frontmostApplication();
+
+    let app_name = frontmost_app
+        .as_ref()
+        .and_then(|app| app.localizedName())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    let bundle_id = frontmost_app
+        .as_ref()
+        .and_then(|app| app.bundleIdentifier())
+        .map(|id| id.to_string());
+
+    let app = AppInfo {
+        name: app_name,
+        pid,
+        bundle_id,
+        titles: vec![],
+    };
+
+    // get window position and size
+    let (x, y) = unsafe { get_window_position(window)? };
+    let (w, h) = unsafe { get_window_size(window)? };
+    let title = unsafe { get_window_title(window) };
+
+    unsafe {
+        core_foundation::base::CFRelease(window as core_foundation::base::CFTypeRef);
+    }
+
+    let window_data = WindowData {
+        title,
+        x: x as i32,
+        y: y as i32,
+        width: w as u32,
+        height: h as u32,
+    };
+
+    // find which display the window is on
+    let displays = crate::display::get_displays()?;
+    let display_index = find_display_for_point(x + w / 2.0, y + h / 2.0, &displays);
+    let display = displays
+        .iter()
+        .find(|d| d.index == display_index)
+        .ok_or_else(|| anyhow!("Display not found"))?;
+
+    let display_data = DisplayDataInfo {
+        index: display.index,
+        name: display.name.clone(),
+    };
+
+    Ok((app, window_data, display_data))
+}
+
+/// Get information about a specific app's window
+pub fn get_window_info_for_app(app: &AppInfo) -> Result<(AppInfo, WindowData, DisplayDataInfo)> {
+    if !accessibility::is_trusted() {
+        return Err(anyhow!(
+            "Accessibility permissions required. Run 'cwm check-permissions' for help."
+        ));
+    }
+
+    let window = unsafe { get_frontmost_window(app.pid)? };
+
+    // get window position and size
+    let (x, y) = unsafe { get_window_position(window)? };
+    let (w, h) = unsafe { get_window_size(window)? };
+    let title = unsafe { get_window_title(window) };
+
+    unsafe {
+        core_foundation::base::CFRelease(window as core_foundation::base::CFTypeRef);
+    }
+
+    let window_data = WindowData {
+        title,
+        x: x as i32,
+        y: y as i32,
+        width: w as u32,
+        height: h as u32,
+    };
+
+    // find which display the window is on
+    let displays = crate::display::get_displays()?;
+    let display_index = find_display_for_point(x + w / 2.0, y + h / 2.0, &displays);
+    let display = displays
+        .iter()
+        .find(|d| d.index == display_index)
+        .ok_or_else(|| anyhow!("Display not found"))?;
+
+    let display_data = DisplayDataInfo {
+        index: display.index,
+        name: display.name.clone(),
+    };
+
+    Ok((app.clone(), window_data, display_data))
 }
 
 #[cfg(test)]

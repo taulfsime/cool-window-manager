@@ -324,6 +324,11 @@ cwm list displays --json --detailed  # full JSON (includes vendor, model, unique
 
 cwm list aliases --json          # basic JSON (name, type, resolved, display_index)
 cwm list aliases --json --detailed   # full JSON (includes display_name, mapped_ids)
+
+# Scriptable output (no jq needed)
+cwm list apps --names            # one name per line
+cwm list apps --format '{name} ({pid})'  # custom format
+cwm list displays --format '{index}: {name} ({width}x{height})'
 ```
 
 Resources:
@@ -333,7 +338,35 @@ Resources:
 
 Options:
 - `--json` - Output in JSON format
-- `--detailed, -d` - Include additional fields in JSON output (no effect on text output)
+- `--names` - Output one name per line (ideal for piping to fzf/xargs)
+- `--format <TEMPLATE>` - Custom output format using `{field}` placeholders
+- `--detailed, -d` - Include additional fields in output
+
+### get
+
+Get information about windows.
+
+```bash
+cwm get focused                  # info about focused window
+cwm get window --app Safari      # info about specific app's window
+
+# Custom format output
+cwm get focused --format '{app.name}'           # just the app name
+cwm get focused --format '{window.width}x{window.height}'  # dimensions
+cwm get window --app Safari --format '{display.name}'      # which display
+```
+
+Subcommands:
+- `focused` - Get info about the currently focused window
+- `window --app <NAME>` - Get info about a specific app's window
+
+Options:
+- `--format <TEMPLATE>` - Custom output format using `{field}` placeholders
+
+Available fields for format:
+- `app.name`, `app.pid`, `app.bundle_id`
+- `window.title`, `window.x`, `window.y`, `window.width`, `window.height`
+- `display.index`, `display.name`
 
 ### config
 
@@ -404,11 +437,77 @@ cwm spotlight example           # show example configuration
 
 Shortcuts appear in Spotlight with a "cwm: " prefix. For example, search for "cwm: Focus Safari" to run the shortcut.
 
+## Scripting
+
+cwm is designed to be easily scriptable and composable with Unix tools. JSON output uses [JSON-RPC 2.0](https://www.jsonrpc.org/specification) format for easy integration.
+
+### Output Modes
+
+| Flag | Description |
+|------|-------------|
+| (none) | Human-readable when TTY, JSON-RPC when piped |
+| `--json` / `-j` | Force JSON-RPC output |
+| `--no-json` | Force text output even when piped |
+| `--names` | One name per line (for fzf/xargs) |
+| `--format` | Custom format with `{field}` placeholders |
+| `--quiet` / `-q` | No output on success |
+
+### JSON-RPC Format
+
+```bash
+# success response
+cwm focus --app Safari --json
+# {"jsonrpc":"2.0","result":{"action":"focus","app":{"name":"Safari",...}},"id":null}
+
+# error response
+cwm focus --app NonExistent --json
+# {"jsonrpc":"2.0","error":{"code":-32002,"message":"...","data":{"suggestions":[...]}},"id":null}
+
+# parse with jq
+cwm get focused --json | jq -r '.result.app.name'
+```
+
+### Exit Codes
+
+| Code | JSON-RPC | Meaning |
+|------|----------|---------|
+| 0 | -32000 | Success |
+| 1 | -32001 | General error |
+| 2 | -32002 | App not found |
+| 3 | -32003 | Permission denied |
+| 4 | -32004 | Invalid arguments |
+| 5 | -32005 | Config error |
+| 6 | -32006 | Window not found |
+| 7 | -32007 | Display not found |
+
+### Examples
+
+```bash
+# pipe app name from stdin
+echo "Safari" | cwm focus --app -
+
+# fzf integration (no jq needed)
+cwm list apps --names | fzf | xargs cwm focus --app
+
+# check if app is running
+cwm focus --app Slack -q && echo "Slack is running"
+
+# custom format for scripting
+cwm list apps --format '{name}\t{pid}' | while IFS=$'\t' read name pid; do
+  echo "App: $name (PID: $pid)"
+done
+```
+
+For more scripts and recipes, see [SCRIPTS.md](SCRIPTS.md).
+
 ## Global Options
 
 These options can be used with any command:
 
 - `--config <PATH>` - Use a custom config file instead of the default location
+- `--json` / `-j` - Force JSON output
+- `--no-json` - Force text output even when piped
+- `--quiet` / `-q` - Suppress output on success
 
 ```bash
 cwm --config /path/to/test-config.json focus --app Safari

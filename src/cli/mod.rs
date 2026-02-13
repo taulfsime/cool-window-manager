@@ -1,4 +1,6 @@
 mod commands;
+pub mod exit_codes;
+pub mod output;
 
 pub use commands::Cli;
 

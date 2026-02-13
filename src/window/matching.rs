@@ -47,6 +47,15 @@ impl MatchResult {
             }
         }
     }
+
+    /// get the fuzzy distance if this was a fuzzy match, None otherwise
+    pub fn distance(&self) -> Option<usize> {
+        match &self.match_type {
+            MatchType::Fuzzy { distance } => Some(*distance),
+            MatchType::TitleFuzzy { distance, .. } => Some(*distance),
+            _ => None,
+        }
+    }
 }
 
 /// Find an app by name or window title using fuzzy matching

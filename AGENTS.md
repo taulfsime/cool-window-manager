@@ -133,12 +133,15 @@ cool-window-mng/
 │       ├── test_update.rs  # update test scenarios
 │       ├── test_rollback.rs # rollback test scenarios
 │       └── test_channels.rs # channel switching tests
+├── SCRIPTS.md              # scripting recipes and examples
 └── src/
     ├── main.rs             # entry point, update check, delegates to cli::run()
     ├── version.rs          # version management (Version, VersionInfo)
     ├── cli/
     │   ├── mod.rs          # module exports
-    │   └── commands.rs     # CLI command definitions and execution
+    │   ├── commands.rs     # CLI command definitions and execution
+    │   ├── exit_codes.rs   # documented exit codes for scripting
+    │   └── output.rs       # output formatting (JSON, text, format strings)
     ├── config/
     │   ├── mod.rs          # config loading, saving, value manipulation, JSONC parsing
     │   ├── schema.rs       # Config, Shortcut, AppRule, Settings, UpdateSettings
@@ -180,8 +183,10 @@ Handles command-line argument parsing and command execution.
 |------|----------------|
 | `mod.rs` | re-exports `run()` and `Cli` |
 | `commands.rs` | defines `Cli` struct with clap derive, `Commands` enum, and `run()` function that dispatches to appropriate handlers |
+| `exit_codes.rs` | exit code constants for scripting (SUCCESS, ERROR, APP_NOT_FOUND, etc.) |
+| `output.rs` | output formatting: `OutputMode` enum, JSON-RPC 2.0 response types, `format_template()` for custom format strings |
 
-Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
+Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list`, `get`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
 
 **CLI Command Reference:**
 
@@ -191,7 +196,8 @@ Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list`, `check-
 | `maximize` | `cwm maximize [--app <name>]` | Maximize window to fill screen |
 | `move-display` | `cwm move-display <target> [--app <name>]` | Move window to another display |
 | `resize` | `cwm resize --to <size> [--app <name>]` | Resize window (percent, pixels, or points) |
-| `list` | `cwm list <apps\|displays\|aliases> [--json] [--detailed]` | List resources (apps, displays, or aliases) |
+| `list` | `cwm list <apps\|displays\|aliases> [--json] [--names] [--format] [--detailed]` | List resources |
+| `get` | `cwm get <focused\|window> [--app <name>] [--format]` | Get window information |
 | `check-permissions` | `cwm check-permissions [--prompt]` | Check accessibility permissions |
 | `record-shortcut` | `cwm record-shortcut [--action <action>] [--app <name>]` | Record a keyboard shortcut |
 | `config` | `cwm config <show\|path\|set\|reset\|default\|verify>` | Manage configuration |
@@ -203,6 +209,8 @@ Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list`, `check-
 | `version` | `cwm version` | Display version information |
 
 Common flags for window commands: `--launch`, `--no-launch`, `--verbose/-v`
+
+Global flags: `--json/-j`, `--no-json`, `--quiet/-q`, `--config <path>`
 
 ### config/
 

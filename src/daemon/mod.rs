@@ -447,7 +447,7 @@ fn execute_action_for_app_info(
                     None => return Err(anyhow!("resize requires size")),
                 };
                 let resize_target = ResizeTarget::parse(size_str)?;
-                manager::resize_app(Some(target_app), &resize_target, false, false)
+                manager::resize_app(Some(target_app), &resize_target, false, false).map(|_| ())
             }
             _ => {
                 return Err(anyhow!("Unknown action: {}", action_type));
