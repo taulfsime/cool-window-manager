@@ -40,6 +40,11 @@ where
                     fs::remove_file(&current_exe).ok();
                     fs::rename(&backup_path, &current_exe).context("Failed to rollback")?;
 
+                    // restore man page from rolled-back binary
+                    if let Err(man_err) = crate::installer::install::install_man_page(false) {
+                        eprintln!("⚠️  Failed to restore man page: {}", man_err);
+                    }
+
                     Err(anyhow!("Update rolled back due to test failure: {}", e))
                 }
             }

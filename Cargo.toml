@@ -13,6 +13,9 @@ path = "src/main.rs"
 # CLI
 clap = { version = "4", features = ["derive"] }
 
+# Man page generation (used by generate-man binary)
+clap_mangen = "0.2"
+
 # Config
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -61,3 +64,9 @@ objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSEnum
 
 [build-dependencies]
 chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+clap_mangen = "0.2"
+
+[[bin]]
+name = "generate-man"
+path = "src/bin/generate-man.rs"

@@ -274,6 +274,11 @@ pub fn perform_update(release: ReleaseInfo, _force: bool) -> Result<()> {
         fs::remove_dir_all(parent).ok();
     }
 
+    // update man page (warn on failure, don't abort)
+    if let Err(e) = crate::installer::install::install_man_page(false) {
+        eprintln!("⚠️  Failed to update man page: {}", e);
+    }
+
     println!("✓ Successfully updated to {}", release.version);
     Ok(())
 }

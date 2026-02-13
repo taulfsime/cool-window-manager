@@ -31,6 +31,16 @@ cargo build --release
 ./target/release/cwm install
 ```
 
+## Documentation
+
+cwm includes a man page that is installed automatically with the binary.
+
+```bash
+man cwm
+```
+
+The man page is installed to `/usr/local/share/man/man1/cwm.1` and is updated automatically when you run `cwm update`.
+
 ## Permissions
 
 cwm requires Accessibility permissions to control windows.
