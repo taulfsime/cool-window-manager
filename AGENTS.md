@@ -76,7 +76,7 @@ cool-window-mng/
 │   ├── release-beta.sh     # helper script to create beta releases
 │   ├── release-stable.sh   # helper script to create stable releases
 │   └── list-releases.sh    # helper script to list all releases
-├── site/                   # landing page (GitHub Pages at cwm.taulfsime.com)
+├── docs/                   # landing page (GitHub Pages at cwm.taulfsime.com)
 │   ├── index.html          # main page with terminal + preview
 │   ├── CNAME               # custom domain configuration
 │   ├── css/
@@ -256,7 +256,7 @@ Core window manipulation using macOS Accessibility API.
 | `manager.rs` | `focus_app()`, `maximize_app()`, `move_to_display()`, `resize_app()`, `launch_app()` |
 | `matching.rs` | `find_app()`, `get_running_apps()`, `get_window_titles()`, `AppInfo`, `MatchType` enum, Levenshtein distance calculation |
 
-### site/
+### docs/
 
 Landing page hosted on GitHub Pages at [cwm.taulfsime.com](https://cwm.taulfsime.com).
 
@@ -284,13 +284,13 @@ Landing page hosted on GitHub Pages at [cwm.taulfsime.com](https://cwm.taulfsime
 
 **Local development:**
 ```bash
-cd site
+cd docs
 npm run dev  # starts server at http://localhost:3000
 ```
 
 **Deployment:**
 - Automatic via GitHub Actions on push to main
-- Deploys `site/` folder to GitHub Pages
+- Deploys `docs/` folder to GitHub Pages
 - Custom domain configured via `CNAME` file
 
 ---
