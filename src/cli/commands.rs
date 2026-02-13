@@ -24,11 +24,11 @@ pub struct Cli {
 pub enum Commands {
     /// Focus an application window
     Focus {
-        /// Target app name (fuzzy matched)
-        #[arg(short, long)]
-        app: String,
+        /// Target app name(s) (fuzzy matched), tries each in order until one is found
+        #[arg(short, long, required = true, action = clap::ArgAction::Append)]
+        app: Vec<String>,
 
-        /// Force launch app if not running
+        /// Force launch app if not running (launches first app in list)
         #[arg(long, conflicts_with = "no_launch")]
         launch: bool,
 
@@ -82,14 +82,19 @@ pub enum Commands {
         verbose: bool,
     },
 
-    /// Resize a window to a percentage of the screen (centered)
+    /// Resize a window to a target size (centered)
     Resize {
-        /// Percentage of screen (1-100), or "full" for 100%
-        size: String,
+        /// Target size: percentage (80, 80%, 0.8), "full", pixels (1920px, 1920x1080px), or points (800pt, 800x600pt)
+        #[arg(short = 't', long = "to")]
+        to: String,
 
         /// Target app name (fuzzy matched), uses focused window if not specified
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Allow window to extend beyond screen bounds
+        #[arg(long)]
+        overflow: bool,
 
         /// Force launch app if not running
         #[arg(long, conflicts_with = "no_launch")]
@@ -296,7 +301,7 @@ pub fn execute(cli: Cli) -> Result<()> {
 
     match cli.command {
         Commands::Focus {
-            app,
+            app: apps,
             launch,
             no_launch,
             verbose,
@@ -304,11 +309,12 @@ pub fn execute(cli: Cli) -> Result<()> {
             let config = config::load_with_override(config_path)?;
             let running_apps = matching::get_running_apps()?;
 
-            let match_result =
-                matching::find_app(&app, &running_apps, config.settings.fuzzy_threshold);
+            // try each app in order until one is found
+            for app in &apps {
+                let match_result =
+                    matching::find_app(app, &running_apps, config.settings.fuzzy_threshold);
 
-            match match_result {
-                Some(result) => {
+                if let Some(result) = match_result {
                     if verbose {
                         println!("Matched {} -> {}", app, result.describe());
                     }
@@ -316,29 +322,32 @@ pub fn execute(cli: Cli) -> Result<()> {
                     if !verbose {
                         println!("Focused: {}", result.app.name);
                     }
+                    return Ok(());
+                } else if verbose {
+                    println!("App '{}' not found, trying next...", app);
                 }
-                None => {
-                    // app not found, check if we should launch
-                    let should_launch =
-                        config::should_launch(launch, no_launch, None, config.settings.launch);
+            }
 
-                    if should_launch {
-                        if verbose {
-                            println!("App '{}' not running, launching...", app);
-                        }
-                        manager::launch_app(&app, verbose)?;
-                    } else {
-                        return Err(anyhow!(
-                            "App '{}' not found. Running apps: {}",
-                            app,
-                            running_apps
-                                .iter()
-                                .map(|a| a.name.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ));
-                    }
+            // no app found, check if we should launch the first one
+            let should_launch =
+                config::should_launch(launch, no_launch, None, config.settings.launch);
+
+            if should_launch {
+                let first_app = &apps[0];
+                if verbose {
+                    println!("No apps found, launching '{}'...", first_app);
                 }
+                manager::launch_app(first_app, verbose)?;
+            } else {
+                return Err(anyhow!(
+                    "No matching app found. Tried: {}. Running apps: {}",
+                    apps.join(", "),
+                    running_apps
+                        .iter()
+                        .map(|a| a.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
             }
             Ok(())
         }
@@ -441,25 +450,19 @@ pub fn execute(cli: Cli) -> Result<()> {
         }
 
         Commands::Resize {
-            size,
+            to,
             app,
+            overflow,
             launch,
             no_launch,
             verbose,
         } => {
+            use crate::window::ResizeTarget;
+
             let config = config::load_with_override(config_path)?;
 
-            // parse size: "full" or a number 1-100
-            let percent: u32 = if size.eq_ignore_ascii_case("full") {
-                100
-            } else {
-                size.parse()
-                    .map_err(|_| anyhow!("Invalid size '{}'. Use a number 1-100 or 'full'", size))?
-            };
-
-            if percent == 0 || percent > 100 {
-                return Err(anyhow!("Size must be between 1 and 100"));
-            }
+            // parse the resize target
+            let resize_target = ResizeTarget::parse(&to)?;
 
             let target_app = if let Some(app_name) = app {
                 let running_apps = matching::get_running_apps()?;
@@ -493,7 +496,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 None
             };
 
-            manager::resize_app(target_app.as_ref(), percent, verbose)?;
+            manager::resize_app(target_app.as_ref(), &resize_target, overflow, verbose)?;
             Ok(())
         }
 

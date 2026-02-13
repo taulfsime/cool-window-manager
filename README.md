@@ -106,6 +106,27 @@ cwm config set settings.update.check_frequency manual
 
 ## Commands
 
+### Quick Reference
+
+| Command | Description |
+|---------|-------------|
+| `cwm focus --app <name>` | Focus an application window |
+| `cwm maximize [--app <name>]` | Maximize a window to fill the screen |
+| `cwm move-display <target> [--app <name>]` | Move a window to another display |
+| `cwm resize --to <size> [--app <name>]` | Resize a window to a target size |
+| `cwm list-apps` | List running applications |
+| `cwm list-displays` | List available displays |
+| `cwm list-aliases` | List display aliases |
+| `cwm check-permissions` | Check accessibility permissions |
+| `cwm config <subcommand>` | Manage configuration |
+| `cwm daemon <subcommand>` | Manage background daemon |
+| `cwm spotlight <subcommand>` | Manage Spotlight integration |
+| `cwm record-shortcut` | Record a keyboard shortcut |
+| `cwm install` | Install cwm to system PATH |
+| `cwm uninstall` | Remove cwm from system |
+| `cwm update` | Update to latest version |
+| `cwm version` | Display version information |
+
 ### version
 
 Display version information.
@@ -150,18 +171,22 @@ cwm update --prerelease      # Include beta/dev releases
 Bring an application window to the foreground.
 
 ```bash
-cwm focus --app "Slack"
-cwm focus --app "slck"           # fuzzy matching by name
+cwm focus --app Safari
+cwm focus --app slck             # fuzzy matching by name
 cwm focus --app "New Tab"        # match by window title
 cwm focus --app "GitHub - cool"  # match by title prefix
-cwm focus --app "Chrome" --verbose
+cwm focus --app Chrome --verbose
+cwm focus --app Safari --app Chrome  # try Safari first, fallback to Chrome
+cwm focus -a Safari -a Chrome        # short form
 ```
 
 Options:
-- `--app, -a <NAME>` - Target app name or window title (required, fuzzy matched)
-- `--launch` - Launch app if not running
+- `--app, -a <NAME>` - Target app name or window title (required, repeatable, fuzzy matched)
+- `--launch` - Launch first app if none found
 - `--no-launch` - Never launch app
 - `--verbose, -v` - Show matching details
+
+When multiple `--app` flags are provided, cwm tries each in order and focuses the first one found.
 
 ### maximize
 
@@ -241,21 +266,47 @@ cwm list-aliases
 
 ### resize
 
-Resize a window to a percentage of the screen (centered).
+Resize a window to a target size (centered on screen).
 
 ```bash
-cwm resize 75                    # resize focused window to 75%
-cwm resize full                  # resize to 100% (same as maximize)
-cwm resize 80 --app "Safari"     # resize specific app to 80%
-cwm resize 50 -v                 # verbose output
+# Percentage (all equivalent)
+cwm resize --to 80               # 80% of screen
+cwm resize --to 80%              # explicit percentage
+cwm resize --to 0.8              # decimal (0.8 = 80%)
+cwm resize -t 80                 # short form
+
+# Full screen
+cwm resize --to full             # 100% (same as maximize)
+
+# Pixels
+cwm resize --to 1920px           # 1920 pixels wide (height auto)
+cwm resize --to 1920x1080px      # exact pixel dimensions
+
+# Points (macOS native units)
+cwm resize --to 800pt            # 800 points wide (height auto)
+cwm resize --to 800x600pt        # exact point dimensions
+
+# With app targeting
+cwm resize --to 80 --app Safari
+cwm resize -t 1920px -a Chrome
+
+# Allow overflow beyond screen bounds
+cwm resize --to 2500px --overflow
 ```
 
 Options:
-- `<SIZE>` - Percentage (1-100) or `full` for 100%
+- `--to, -t <SIZE>` - Target size (required). Formats:
+  - Percentage: `80`, `80%`, `0.8` (decimal)
+  - Keyword: `full` (100%)
+  - Pixels: `1920px` (width only), `1920x1080px` (exact)
+  - Points: `800pt` (width only), `800x600pt` (exact)
 - `--app, -a <NAME>` - Target app name (optional, uses focused window if omitted)
+- `--overflow` - Allow window to extend beyond screen bounds (default: clamp to screen)
 - `--launch` - Launch app if not running
 - `--no-launch` - Never launch app
 - `--verbose, -v` - Show details
+
+When using width-only pixel/point values, height is calculated to maintain the display's aspect ratio.
 
 ### list-apps
 
@@ -494,7 +545,21 @@ Example config:
 ### Shortcut format
 
 - `keys` - Key combination (e.g., `ctrl+alt+s`, `cmd+shift+return`)
-- `action` - One of: `focus`, `maximize`, `move_display:next`, `move_display:prev`, `move_display:N`, `resize:N`, `resize:full`
+- `action` - One of:
+  - `focus` - Focus an application window
+  - `maximize` - Maximize window to fill screen
+  - `move_display:next` - Move to next display
+  - `move_display:prev` - Move to previous display
+  - `move_display:<index>` - Move to display by index (0-based)
+  - `move_display:<alias>` - Move to display by alias name
+  - `resize:<size>` - Resize window. Size formats:
+    - `resize:80` - 80% of screen
+    - `resize:0.8` - 80% (decimal)
+    - `resize:full` - 100%
+    - `resize:1920px` - 1920 pixels wide
+    - `resize:1920x1080px` - exact pixel dimensions
+    - `resize:800pt` - 800 points wide
+    - `resize:800x600pt` - exact point dimensions
 - `app` - Target app name or window title (optional for maximize/move_display/resize, fuzzy matched)
 - `launch` - Override global setting (optional)
 

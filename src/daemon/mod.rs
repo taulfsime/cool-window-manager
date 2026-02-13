@@ -354,25 +354,18 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
             )?;
         }
         "resize" => {
+            use crate::window::ResizeTarget;
+
             let size_str = action_arg.ok_or_else(|| anyhow!("resize requires size"))?;
 
             // parse size:app or just size
-            let (percent_str, app_name) = if let Some(idx) = size_str.find(':') {
+            let (target_str, app_name) = if let Some(idx) = size_str.find(':') {
                 (&size_str[..idx], Some(&size_str[idx + 1..]))
             } else {
                 (size_str, None)
             };
 
-            let percent: u32 = if percent_str.eq_ignore_ascii_case("full") {
-                100
-            } else {
-                percent_str.parse().map_err(|_| {
-                    anyhow!(
-                        "Invalid size '{}'. Use a number 1-100 or 'full'",
-                        percent_str
-                    )
-                })?
-            };
+            let resize_target = ResizeTarget::parse(target_str)?;
 
             let target_app = if let Some(name) = app_name {
                 let running_apps = matching::get_running_apps()?;
@@ -382,7 +375,7 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 None
             };
 
-            manager::resize_app(target_app.as_ref(), percent, false)?;
+            manager::resize_app(target_app.as_ref(), &resize_target, false, false)?;
         }
         _ => {
             return Err(anyhow!("Unknown action: {}", action_type));
@@ -447,18 +440,14 @@ fn execute_action_for_app_info(
                 manager::move_to_display(Some(target_app), &display_target, false)
             }
             "resize" => {
+                use crate::window::ResizeTarget;
+
                 let size_str = match action_arg {
                     Some(s) => s,
                     None => return Err(anyhow!("resize requires size")),
                 };
-                let percent: u32 = if size_str.eq_ignore_ascii_case("full") {
-                    100
-                } else {
-                    size_str.parse().map_err(|_| {
-                        anyhow!("Invalid size '{}'. Use a number 1-100 or 'full'", size_str)
-                    })?
-                };
-                manager::resize_app(Some(target_app), percent, false)
+                let resize_target = ResizeTarget::parse(size_str)?;
+                manager::resize_app(Some(target_app), &resize_target, false, false)
             }
             _ => {
                 return Err(anyhow!("Unknown action: {}", action_type));

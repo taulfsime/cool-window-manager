@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use std::str::FromStr;
 
 use super::accessibility;
 use super::matching::AppInfo;
@@ -6,6 +7,140 @@ use super::matching::AppInfo;
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
 use core_graphics::display::CGDisplay;
+
+/// Target size for resize operations
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResizeTarget {
+    /// Percentage of screen (1-100)
+    Percent(u32),
+    /// Width in pixels, height optional (maintains aspect ratio if None)
+    Pixels { width: u32, height: Option<u32> },
+    /// Width in points, height optional (maintains aspect ratio if None)
+    Points { width: u32, height: Option<u32> },
+}
+
+impl ResizeTarget {
+    /// Parse a resize target string
+    ///
+    /// Supported formats:
+    /// - `80` - 80% of screen
+    /// - `80%` - 80% of screen (explicit)
+    /// - `0.8` - 80% of screen (decimal)
+    /// - `full` - 100% of screen
+    /// - `1920px` - 1920 pixels wide (height auto)
+    /// - `1920x1080px` - exact pixel dimensions
+    /// - `800pt` - 800 points wide (height auto)
+    /// - `800x600pt` - exact point dimensions
+    pub fn parse(s: &str) -> Result<Self> {
+        let s = s.trim().to_lowercase();
+
+        // handle "full" keyword
+        if s == "full" {
+            return Ok(ResizeTarget::Percent(100));
+        }
+
+        // handle pixel dimensions: 1920px or 1920x1080px
+        if s.ends_with("px") {
+            let dims = s.trim_end_matches("px");
+            return Self::parse_dimensions(dims, |w, h| ResizeTarget::Pixels {
+                width: w,
+                height: h,
+            });
+        }
+
+        // handle point dimensions: 800pt or 800x600pt
+        if s.ends_with("pt") {
+            let dims = s.trim_end_matches("pt");
+            return Self::parse_dimensions(dims, |w, h| ResizeTarget::Points {
+                width: w,
+                height: h,
+            });
+        }
+
+        // handle percentage: 80% or 80
+        let percent_str = s.trim_end_matches('%');
+
+        // check if it's a decimal (0.0 to 1.0)
+        if percent_str.contains('.') {
+            let decimal: f64 = percent_str
+                .parse()
+                .map_err(|_| anyhow!("Invalid decimal value: '{}'", percent_str))?;
+
+            if decimal <= 0.0 || decimal > 1.0 {
+                return Err(anyhow!(
+                    "Decimal value must be between 0.0 and 1.0 (exclusive of 0), got: {}",
+                    decimal
+                ));
+            }
+
+            let percent = (decimal * 100.0).round() as u32;
+            return Ok(ResizeTarget::Percent(percent.clamp(1, 100)));
+        }
+
+        // integer percentage
+        let percent: u32 = percent_str
+            .parse()
+            .map_err(|_| anyhow!("Invalid size value: '{}'. Use a number (1-100), decimal (0.1-1.0), 'full', or dimensions like '1920px'", s))?;
+
+        if percent == 0 || percent > 100 {
+            return Err(anyhow!(
+                "Percentage must be between 1 and 100, got: {}",
+                percent
+            ));
+        }
+
+        Ok(ResizeTarget::Percent(percent))
+    }
+
+    /// Parse dimension string like "1920" or "1920x1080"
+    fn parse_dimensions<F>(dims: &str, constructor: F) -> Result<Self>
+    where
+        F: FnOnce(u32, Option<u32>) -> ResizeTarget,
+    {
+        if dims.contains('x') {
+            // exact dimensions: WIDTHxHEIGHT
+            let parts: Vec<&str> = dims.split('x').collect();
+            if parts.len() != 2 {
+                return Err(anyhow!(
+                    "Invalid dimensions format: '{}'. Use WIDTHxHEIGHT (e.g., 1920x1080)",
+                    dims
+                ));
+            }
+
+            let width: u32 = parts[0]
+                .parse()
+                .map_err(|_| anyhow!("Invalid width: '{}'", parts[0]))?;
+            let height: u32 = parts[1]
+                .parse()
+                .map_err(|_| anyhow!("Invalid height: '{}'", parts[1]))?;
+
+            if width == 0 || height == 0 {
+                return Err(anyhow!("Width and height must be greater than 0"));
+            }
+
+            Ok(constructor(width, Some(height)))
+        } else {
+            // width only
+            let width: u32 = dims
+                .parse()
+                .map_err(|_| anyhow!("Invalid width: '{}'", dims))?;
+
+            if width == 0 {
+                return Err(anyhow!("Width must be greater than 0"));
+            }
+
+            Ok(constructor(width, None))
+        }
+    }
+}
+
+impl FromStr for ResizeTarget {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        ResizeTarget::parse(s)
+    }
+}
 
 type AXUIElementRef = *mut std::ffi::c_void;
 
@@ -649,8 +784,16 @@ pub fn move_to_display_with_aliases(
     Ok(())
 }
 
-/// Resize an app's window to a percentage of the screen (centered)
-pub fn resize_app(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Result<()> {
+/// Resize an app's window to a target size (centered)
+///
+/// The `overflow` parameter controls whether the window can extend beyond screen bounds.
+/// If false (default), dimensions are clamped to the usable display area.
+pub fn resize_app(
+    app: Option<&AppInfo>,
+    target: &ResizeTarget,
+    overflow: bool,
+    verbose: bool,
+) -> Result<()> {
     use core_foundation::base::CFTypeRef;
 
     if !accessibility::is_trusted() {
@@ -659,12 +802,8 @@ pub fn resize_app(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Result<
         ));
     }
 
-    if percent == 0 || percent > 100 {
-        return Err(anyhow!("Percent must be between 1 and 100"));
-    }
-
     // 100% is just maximize
-    if percent == 100 {
+    if matches!(target, ResizeTarget::Percent(100)) {
         return maximize_app(app, verbose);
     }
 
@@ -678,7 +817,7 @@ pub fn resize_app(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Result<
     };
 
     if verbose {
-        println!("Resizing window for PID {} to {}%", pid, percent);
+        println!("Resizing window for PID {} to {:?}", pid, target);
     }
 
     // get usable display bounds (excluding menu bar and dock)
@@ -688,10 +827,53 @@ pub fn resize_app(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Result<
         println!("Usable display bounds: {}x{} at ({}, {})", dw, dh, dx, dy);
     }
 
-    // calculate new size as percentage of display
-    let scale = percent as f64 / 100.0;
-    let new_w = dw * scale;
-    let new_h = dh * scale;
+    // calculate new dimensions based on target
+    let (mut new_w, mut new_h) = match target {
+        ResizeTarget::Percent(percent) => {
+            let scale = *percent as f64 / 100.0;
+            (dw * scale, dh * scale)
+        }
+        ResizeTarget::Pixels { width, height } => {
+            let w = *width as f64;
+            let h = match height {
+                Some(h) => *h as f64,
+                None => {
+                    // maintain display aspect ratio
+                    w * (dh / dw)
+                }
+            };
+            (w, h)
+        }
+        ResizeTarget::Points { width, height } => {
+            // on macOS, points are the same as pixels for our purposes
+            // (the system handles scaling for Retina displays)
+            let w = *width as f64;
+            let h = match height {
+                Some(h) => *h as f64,
+                None => {
+                    // maintain display aspect ratio
+                    w * (dh / dw)
+                }
+            };
+            (w, h)
+        }
+    };
+
+    // clamp to screen bounds unless overflow is enabled
+    if !overflow {
+        if new_w > dw {
+            if verbose {
+                println!("Clamping width from {} to {} (screen limit)", new_w, dw);
+            }
+            new_w = dw;
+        }
+        if new_h > dh {
+            if verbose {
+                println!("Clamping height from {} to {} (screen limit)", new_h, dh);
+            }
+            new_h = dh;
+        }
+    }
 
     // center the window
     let new_x = dx + (dw - new_w) / 2.0;
@@ -707,11 +889,259 @@ pub fn resize_app(app: Option<&AppInfo>, percent: u32, verbose: bool) -> Result<
         core_foundation::base::CFRelease(window as CFTypeRef);
     }
 
+    // format output message based on target type
+    let size_desc = match target {
+        ResizeTarget::Percent(p) => format!("{}%", p),
+        ResizeTarget::Pixels { width, height } => match height {
+            Some(h) => format!("{}x{}px", width, h),
+            None => format!("{}px wide", width),
+        },
+        ResizeTarget::Points { width, height } => match height {
+            Some(h) => format!("{}x{}pt", width, h),
+            None => format!("{}pt wide", width),
+        },
+    };
+
     if verbose {
         println!("Done.");
     } else {
-        println!("App resized to {}%", percent);
+        println!("App resized to {}", size_desc);
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resize_target_parse_integer_percent() {
+        assert_eq!(
+            ResizeTarget::parse("80").unwrap(),
+            ResizeTarget::Percent(80)
+        );
+        assert_eq!(ResizeTarget::parse("1").unwrap(), ResizeTarget::Percent(1));
+        assert_eq!(
+            ResizeTarget::parse("100").unwrap(),
+            ResizeTarget::Percent(100)
+        );
+        assert_eq!(
+            ResizeTarget::parse("50").unwrap(),
+            ResizeTarget::Percent(50)
+        );
+    }
+
+    #[test]
+    fn test_resize_target_parse_explicit_percent() {
+        assert_eq!(
+            ResizeTarget::parse("80%").unwrap(),
+            ResizeTarget::Percent(80)
+        );
+        assert_eq!(
+            ResizeTarget::parse("100%").unwrap(),
+            ResizeTarget::Percent(100)
+        );
+        assert_eq!(ResizeTarget::parse("1%").unwrap(), ResizeTarget::Percent(1));
+    }
+
+    #[test]
+    fn test_resize_target_parse_decimal() {
+        assert_eq!(
+            ResizeTarget::parse("0.8").unwrap(),
+            ResizeTarget::Percent(80)
+        );
+        assert_eq!(
+            ResizeTarget::parse("0.5").unwrap(),
+            ResizeTarget::Percent(50)
+        );
+        assert_eq!(
+            ResizeTarget::parse("1.0").unwrap(),
+            ResizeTarget::Percent(100)
+        );
+        assert_eq!(
+            ResizeTarget::parse("0.75").unwrap(),
+            ResizeTarget::Percent(75)
+        );
+        assert_eq!(
+            ResizeTarget::parse("0.01").unwrap(),
+            ResizeTarget::Percent(1)
+        );
+    }
+
+    #[test]
+    fn test_resize_target_parse_full() {
+        assert_eq!(
+            ResizeTarget::parse("full").unwrap(),
+            ResizeTarget::Percent(100)
+        );
+        assert_eq!(
+            ResizeTarget::parse("FULL").unwrap(),
+            ResizeTarget::Percent(100)
+        );
+        assert_eq!(
+            ResizeTarget::parse("Full").unwrap(),
+            ResizeTarget::Percent(100)
+        );
+    }
+
+    #[test]
+    fn test_resize_target_parse_pixels_width_only() {
+        assert_eq!(
+            ResizeTarget::parse("1920px").unwrap(),
+            ResizeTarget::Pixels {
+                width: 1920,
+                height: None
+            }
+        );
+        assert_eq!(
+            ResizeTarget::parse("800px").unwrap(),
+            ResizeTarget::Pixels {
+                width: 800,
+                height: None
+            }
+        );
+    }
+
+    #[test]
+    fn test_resize_target_parse_pixels_exact() {
+        assert_eq!(
+            ResizeTarget::parse("1920x1080px").unwrap(),
+            ResizeTarget::Pixels {
+                width: 1920,
+                height: Some(1080)
+            }
+        );
+        assert_eq!(
+            ResizeTarget::parse("800x600px").unwrap(),
+            ResizeTarget::Pixels {
+                width: 800,
+                height: Some(600)
+            }
+        );
+    }
+
+    #[test]
+    fn test_resize_target_parse_points_width_only() {
+        assert_eq!(
+            ResizeTarget::parse("800pt").unwrap(),
+            ResizeTarget::Points {
+                width: 800,
+                height: None
+            }
+        );
+        assert_eq!(
+            ResizeTarget::parse("1200pt").unwrap(),
+            ResizeTarget::Points {
+                width: 1200,
+                height: None
+            }
+        );
+    }
+
+    #[test]
+    fn test_resize_target_parse_points_exact() {
+        assert_eq!(
+            ResizeTarget::parse("800x600pt").unwrap(),
+            ResizeTarget::Points {
+                width: 800,
+                height: Some(600)
+            }
+        );
+        assert_eq!(
+            ResizeTarget::parse("1440x900pt").unwrap(),
+            ResizeTarget::Points {
+                width: 1440,
+                height: Some(900)
+            }
+        );
+    }
+
+    #[test]
+    fn test_resize_target_parse_case_insensitive() {
+        assert_eq!(
+            ResizeTarget::parse("1920PX").unwrap(),
+            ResizeTarget::Pixels {
+                width: 1920,
+                height: None
+            }
+        );
+        assert_eq!(
+            ResizeTarget::parse("800PT").unwrap(),
+            ResizeTarget::Points {
+                width: 800,
+                height: None
+            }
+        );
+        assert_eq!(
+            ResizeTarget::parse("1920X1080PX").unwrap(),
+            ResizeTarget::Pixels {
+                width: 1920,
+                height: Some(1080)
+            }
+        );
+    }
+
+    #[test]
+    fn test_resize_target_parse_whitespace() {
+        assert_eq!(
+            ResizeTarget::parse("  80  ").unwrap(),
+            ResizeTarget::Percent(80)
+        );
+        assert_eq!(
+            ResizeTarget::parse(" 1920px ").unwrap(),
+            ResizeTarget::Pixels {
+                width: 1920,
+                height: None
+            }
+        );
+    }
+
+    #[test]
+    fn test_resize_target_parse_invalid_percent() {
+        assert!(ResizeTarget::parse("0").is_err());
+        assert!(ResizeTarget::parse("101").is_err());
+        assert!(ResizeTarget::parse("200").is_err());
+        assert!(ResizeTarget::parse("-50").is_err());
+    }
+
+    #[test]
+    fn test_resize_target_parse_invalid_decimal() {
+        assert!(ResizeTarget::parse("0.0").is_err());
+        assert!(ResizeTarget::parse("1.5").is_err());
+        assert!(ResizeTarget::parse("-0.5").is_err());
+    }
+
+    #[test]
+    fn test_resize_target_parse_invalid_dimensions() {
+        assert!(ResizeTarget::parse("0px").is_err());
+        assert!(ResizeTarget::parse("0x0px").is_err());
+        assert!(ResizeTarget::parse("1920x0px").is_err());
+        assert!(ResizeTarget::parse("0x1080px").is_err());
+        assert!(ResizeTarget::parse("abcpx").is_err());
+        assert!(ResizeTarget::parse("1920xabcpx").is_err());
+    }
+
+    #[test]
+    fn test_resize_target_parse_invalid_format() {
+        assert!(ResizeTarget::parse("").is_err());
+        assert!(ResizeTarget::parse("abc").is_err());
+        assert!(ResizeTarget::parse("px").is_err());
+        assert!(ResizeTarget::parse("xpx").is_err());
+    }
+
+    #[test]
+    fn test_resize_target_from_str() {
+        let target: ResizeTarget = "80".parse().unwrap();
+        assert_eq!(target, ResizeTarget::Percent(80));
+
+        let target: ResizeTarget = "1920px".parse().unwrap();
+        assert_eq!(
+            target,
+            ResizeTarget::Pixels {
+                width: 1920,
+                height: None
+            }
+        );
+    }
 }

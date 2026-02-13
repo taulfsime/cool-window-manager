@@ -144,7 +144,30 @@ Handles command-line argument parsing and command execution.
 | `mod.rs` | re-exports `run()` and `Cli` |
 | `commands.rs` | defines `Cli` struct with clap derive, `Commands` enum, and `run()` function that dispatches to appropriate handlers |
 
-Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list-apps`, `list-displays`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
+Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list-apps`, `list-displays`, `list-aliases`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
+
+**CLI Command Reference:**
+
+| Command | Usage | Description |
+|---------|-------|-------------|
+| `focus` | `cwm focus --app <name> [--app <name>...]` | Focus an application window (tries each app in order) |
+| `maximize` | `cwm maximize [--app <name>]` | Maximize window to fill screen |
+| `move-display` | `cwm move-display <target> [--app <name>]` | Move window to another display |
+| `resize` | `cwm resize --to <size> [--app <name>]` | Resize window (percent, pixels, or points) |
+| `list-apps` | `cwm list-apps` | List running applications |
+| `list-displays` | `cwm list-displays [--detailed]` | List available displays |
+| `list-aliases` | `cwm list-aliases` | List display aliases |
+| `check-permissions` | `cwm check-permissions [--prompt]` | Check accessibility permissions |
+| `record-shortcut` | `cwm record-shortcut [--action <action>] [--app <name>]` | Record a keyboard shortcut |
+| `config` | `cwm config <show\|path\|set\|reset\|default\|verify>` | Manage configuration |
+| `daemon` | `cwm daemon <start\|stop\|status\|install\|uninstall>` | Manage background daemon |
+| `spotlight` | `cwm spotlight <install\|list\|remove\|example>` | Manage Spotlight integration |
+| `install` | `cwm install [--path <dir>] [--force]` | Install cwm to system PATH |
+| `uninstall` | `cwm uninstall [--path <dir>]` | Remove cwm from system |
+| `update` | `cwm update [--check] [--force] [--prerelease]` | Update to latest version |
+| `version` | `cwm version` | Display version information |
+
+Common flags for window commands: `--launch`, `--no-launch`, `--verbose/-v`
 
 ### config/
 
@@ -474,6 +497,7 @@ Tests are located in `#[cfg(test)]` modules within:
 | `src/config/json_schema.rs` | schema validity, required definitions, file writing |
 | `src/display/mod.rs` | display target parsing, resolution with wraparound |
 | `src/window/matching.rs` | name matching (exact, prefix, fuzzy), title matching (exact, prefix, fuzzy) |
+| `src/window/manager.rs` | ResizeTarget parsing (percent, decimal, pixels, points, dimensions) |
 | `src/daemon/hotkeys.rs` | hotkey string parsing |
 | `src/version.rs` | version parsing, comparison, serialization |
 | `src/installer/paths.rs` | path detection, writability checks, PATH detection |
@@ -501,8 +525,9 @@ cwm check-permissions --prompt
 
 # direct commands
 cwm focus --app Safari
+cwm focus --app Safari --app Chrome  # try Safari, fallback to Chrome
 cwm maximize
-cwm resize 80
+cwm resize --to 80
 cwm move-display next
 
 # daemon mode
