@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::config::{self, Config, Shortcut};
@@ -144,18 +145,20 @@ pub enum Commands {
         command: ConfigCommands,
     },
 
-    /// List available displays
-    ListDisplays {
-        /// Show detailed information including identifiers
+    /// List resources (apps, displays, aliases)
+    List {
+        /// Resource type to list
+        #[arg(value_enum)]
+        resource: ListResource,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+
+        /// Include additional fields in JSON output
         #[arg(short, long)]
         detailed: bool,
     },
-
-    /// List running applications
-    ListApps,
-
-    /// List display aliases (system and user-defined)
-    ListAliases,
 
     /// Check accessibility permissions
     CheckPermissions {
@@ -294,6 +297,88 @@ pub enum SpotlightCommands {
     },
     /// Show example spotlight configuration
     Example,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ListResource {
+    /// Running applications
+    Apps,
+    /// Available displays
+    Displays,
+    /// Display aliases (system and user-defined)
+    Aliases,
+}
+
+// JSON output structs for list command
+
+#[derive(Serialize)]
+struct ListResponse<T: Serialize> {
+    items: Vec<T>,
+}
+
+#[derive(Serialize)]
+struct AppSummary {
+    name: String,
+    pid: i32,
+}
+
+#[derive(Serialize)]
+struct AppDetailed {
+    name: String,
+    pid: i32,
+    bundle_id: Option<String>,
+    titles: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct DisplaySummary {
+    index: usize,
+    name: String,
+    width: u32,
+    height: u32,
+    is_main: bool,
+}
+
+#[derive(Serialize)]
+struct DisplayDetailed {
+    index: usize,
+    name: String,
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    is_main: bool,
+    is_builtin: bool,
+    display_id: u32,
+    vendor_id: Option<u32>,
+    model_id: Option<u32>,
+    serial_number: Option<u32>,
+    unit_number: u32,
+    unique_id: String,
+}
+
+#[derive(Serialize)]
+struct AliasSummary {
+    name: String,
+    #[serde(rename = "type")]
+    alias_type: String,
+    resolved: bool,
+    display_index: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct AliasDetailed {
+    name: String,
+    #[serde(rename = "type")]
+    alias_type: String,
+    resolved: bool,
+    display_index: Option<usize>,
+    display_name: Option<String>,
+    display_unique_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mapped_ids: Option<Vec<String>>,
 }
 
 pub fn execute(cli: Cli) -> Result<()> {
@@ -673,85 +758,278 @@ pub fn execute(cli: Cli) -> Result<()> {
             }
         },
 
-        Commands::ListDisplays { detailed } => {
-            display::print_displays(detailed)?;
-            Ok(())
-        }
+        Commands::List {
+            resource,
+            json,
+            detailed,
+        } => {
+            match resource {
+                ListResource::Apps => {
+                    let apps = matching::get_running_apps()?;
 
-        Commands::ListApps => {
-            let apps = matching::get_running_apps()?;
-            println!("Running applications:");
-            for app in &apps {
-                let bundle = app
-                    .bundle_id
-                    .as_ref()
-                    .map(|b| format!(" ({})", b))
-                    .unwrap_or_default();
-                println!("  {} [PID: {}]{}", app.name, app.pid, bundle);
-                for title in &app.titles {
-                    println!("    - {}", title);
-                }
-            }
-            println!("\nTotal: {} applications", apps.len());
-            Ok(())
-        }
-
-        Commands::ListAliases => {
-            let config = config::load_with_override(config_path)?;
-            let displays = display::get_displays()?;
-
-            // system aliases
-            let system_aliases = [
-                ("builtin", "Built-in display"),
-                ("external", "External display"),
-                ("main", "Primary display"),
-                ("secondary", "Secondary display"),
-            ];
-
-            println!("System Aliases:");
-            for (alias_name, description) in &system_aliases {
-                if let Ok(display) =
-                    display::resolve_alias(alias_name, &config.display_aliases, &displays)
-                {
-                    println!(
-                        "  {:<20} → Display {}: {} [{}]",
-                        alias_name,
-                        display.index,
-                        display.name,
-                        display.unique_id()
-                    );
-                } else {
-                    println!(
-                        "  {:<20} → Not found in current setup ({})",
-                        alias_name, description
-                    );
-                }
-            }
-
-            // user-defined aliases
-            if !config.display_aliases.is_empty() {
-                println!("\nUser-Defined Aliases:");
-                for (alias_name, mappings) in &config.display_aliases {
-                    if let Ok(display) =
-                        display::resolve_alias(alias_name, &config.display_aliases, &displays)
-                    {
-                        println!(
-                            "  {:<20} → Display {}: {} [{}] ✓",
-                            alias_name,
-                            display.index,
-                            display.name,
-                            display.unique_id()
-                        );
+                    if json {
+                        if detailed {
+                            let items: Vec<AppDetailed> = apps
+                                .iter()
+                                .map(|a| AppDetailed {
+                                    name: a.name.clone(),
+                                    pid: a.pid,
+                                    bundle_id: a.bundle_id.clone(),
+                                    titles: a.titles.clone(),
+                                })
+                                .collect();
+                            let response = ListResponse { items };
+                            println!(
+                                "{}",
+                                serde_json::to_string(&response)
+                                    .context("Failed to serialize apps")?
+                            );
+                        } else {
+                            let items: Vec<AppSummary> = apps
+                                .iter()
+                                .map(|a| AppSummary {
+                                    name: a.name.clone(),
+                                    pid: a.pid,
+                                })
+                                .collect();
+                            let response = ListResponse { items };
+                            println!(
+                                "{}",
+                                serde_json::to_string(&response)
+                                    .context("Failed to serialize apps")?
+                            );
+                        }
                     } else {
-                        println!(
-                            "  {:<20} → Not found (mapped: {})",
-                            alias_name,
-                            mappings.join(", ")
-                        );
+                        println!("Running applications:");
+                        for app in &apps {
+                            let bundle = app
+                                .bundle_id
+                                .as_ref()
+                                .map(|b| format!(" ({})", b))
+                                .unwrap_or_default();
+                            println!("  {} [PID: {}]{}", app.name, app.pid, bundle);
+                            for title in &app.titles {
+                                println!("    - {}", title);
+                            }
+                        }
+                        println!("\nTotal: {} applications", apps.len());
                     }
                 }
-            } else {
-                println!("\nNo user-defined aliases configured.");
+
+                ListResource::Displays => {
+                    let displays = display::get_displays()?;
+
+                    if json {
+                        if detailed {
+                            let items: Vec<DisplayDetailed> = displays
+                                .iter()
+                                .map(|d| DisplayDetailed {
+                                    index: d.index,
+                                    name: d.name.clone(),
+                                    width: d.width,
+                                    height: d.height,
+                                    x: d.x,
+                                    y: d.y,
+                                    is_main: d.is_main,
+                                    is_builtin: d.is_builtin,
+                                    display_id: d.display_id,
+                                    vendor_id: d.vendor_id,
+                                    model_id: d.model_id,
+                                    serial_number: d.serial_number,
+                                    unit_number: d.unit_number,
+                                    unique_id: d.unique_id(),
+                                })
+                                .collect();
+                            let response = ListResponse { items };
+                            println!(
+                                "{}",
+                                serde_json::to_string(&response)
+                                    .context("Failed to serialize displays")?
+                            );
+                        } else {
+                            let items: Vec<DisplaySummary> = displays
+                                .iter()
+                                .map(|d| DisplaySummary {
+                                    index: d.index,
+                                    name: d.name.clone(),
+                                    width: d.width,
+                                    height: d.height,
+                                    is_main: d.is_main,
+                                })
+                                .collect();
+                            let response = ListResponse { items };
+                            println!(
+                                "{}",
+                                serde_json::to_string(&response)
+                                    .context("Failed to serialize displays")?
+                            );
+                        }
+                    } else if displays.is_empty() {
+                        println!("No displays found");
+                    } else {
+                        println!("Available displays:");
+                        for d in &displays {
+                            println!("  {}", d.describe());
+                        }
+                    }
+                }
+
+                ListResource::Aliases => {
+                    let config = config::load_with_override(config_path)?;
+                    let displays = display::get_displays()?;
+
+                    let system_aliases = [
+                        ("builtin", "Built-in display"),
+                        ("external", "External display"),
+                        ("main", "Primary display"),
+                        ("secondary", "Secondary display"),
+                    ];
+
+                    if json {
+                        if detailed {
+                            let mut items: Vec<AliasDetailed> = Vec::new();
+
+                            // system aliases
+                            for (alias_name, description) in &system_aliases {
+                                let resolved = display::resolve_alias(
+                                    alias_name,
+                                    &config.display_aliases,
+                                    &displays,
+                                );
+                                items.push(AliasDetailed {
+                                    name: alias_name.to_string(),
+                                    alias_type: "system".to_string(),
+                                    resolved: resolved.is_ok(),
+                                    display_index: resolved.as_ref().ok().map(|d| d.index),
+                                    display_name: resolved.as_ref().ok().map(|d| d.name.clone()),
+                                    display_unique_id: resolved
+                                        .as_ref()
+                                        .ok()
+                                        .map(|d| d.unique_id()),
+                                    description: Some(description.to_string()),
+                                    mapped_ids: None,
+                                });
+                            }
+
+                            // user-defined aliases
+                            for (alias_name, mappings) in &config.display_aliases {
+                                let resolved = display::resolve_alias(
+                                    alias_name,
+                                    &config.display_aliases,
+                                    &displays,
+                                );
+                                items.push(AliasDetailed {
+                                    name: alias_name.clone(),
+                                    alias_type: "user".to_string(),
+                                    resolved: resolved.is_ok(),
+                                    display_index: resolved.as_ref().ok().map(|d| d.index),
+                                    display_name: resolved.as_ref().ok().map(|d| d.name.clone()),
+                                    display_unique_id: resolved
+                                        .as_ref()
+                                        .ok()
+                                        .map(|d| d.unique_id()),
+                                    description: None,
+                                    mapped_ids: Some(mappings.clone()),
+                                });
+                            }
+
+                            let response = ListResponse { items };
+                            println!(
+                                "{}",
+                                serde_json::to_string(&response)
+                                    .context("Failed to serialize aliases")?
+                            );
+                        } else {
+                            let mut items: Vec<AliasSummary> = Vec::new();
+
+                            // system aliases
+                            for (alias_name, _) in &system_aliases {
+                                let resolved = display::resolve_alias(
+                                    alias_name,
+                                    &config.display_aliases,
+                                    &displays,
+                                );
+                                items.push(AliasSummary {
+                                    name: alias_name.to_string(),
+                                    alias_type: "system".to_string(),
+                                    resolved: resolved.is_ok(),
+                                    display_index: resolved.as_ref().ok().map(|d| d.index),
+                                });
+                            }
+
+                            // user-defined aliases
+                            for alias_name in config.display_aliases.keys() {
+                                let resolved = display::resolve_alias(
+                                    alias_name,
+                                    &config.display_aliases,
+                                    &displays,
+                                );
+                                items.push(AliasSummary {
+                                    name: alias_name.clone(),
+                                    alias_type: "user".to_string(),
+                                    resolved: resolved.is_ok(),
+                                    display_index: resolved.as_ref().ok().map(|d| d.index),
+                                });
+                            }
+
+                            let response = ListResponse { items };
+                            println!(
+                                "{}",
+                                serde_json::to_string(&response)
+                                    .context("Failed to serialize aliases")?
+                            );
+                        }
+                    } else {
+                        println!("System Aliases:");
+                        for (alias_name, description) in &system_aliases {
+                            if let Ok(d) = display::resolve_alias(
+                                alias_name,
+                                &config.display_aliases,
+                                &displays,
+                            ) {
+                                println!(
+                                    "  {:<20} → Display {}: {} [{}]",
+                                    alias_name,
+                                    d.index,
+                                    d.name,
+                                    d.unique_id()
+                                );
+                            } else {
+                                println!(
+                                    "  {:<20} → Not found in current setup ({})",
+                                    alias_name, description
+                                );
+                            }
+                        }
+
+                        if !config.display_aliases.is_empty() {
+                            println!("\nUser-Defined Aliases:");
+                            for (alias_name, mappings) in &config.display_aliases {
+                                if let Ok(d) = display::resolve_alias(
+                                    alias_name,
+                                    &config.display_aliases,
+                                    &displays,
+                                ) {
+                                    println!(
+                                        "  {:<20} → Display {}: {} [{}] ✓",
+                                        alias_name,
+                                        d.index,
+                                        d.name,
+                                        d.unique_id()
+                                    );
+                                } else {
+                                    println!(
+                                        "  {:<20} → Not found (mapped: {})",
+                                        alias_name,
+                                        mappings.join(", ")
+                                    );
+                                }
+                            }
+                        } else {
+                            println!("\nNo user-defined aliases configured.");
+                        }
+                    }
+                }
             }
 
             Ok(())
@@ -1031,5 +1309,244 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(())
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_resource_value_enum() {
+        // verify all variants can be parsed from strings
+        assert!(matches!(
+            ListResource::from_str("apps", true),
+            Ok(ListResource::Apps)
+        ));
+        assert!(matches!(
+            ListResource::from_str("displays", true),
+            Ok(ListResource::Displays)
+        ));
+        assert!(matches!(
+            ListResource::from_str("aliases", true),
+            Ok(ListResource::Aliases)
+        ));
+
+        // case insensitive
+        assert!(matches!(
+            ListResource::from_str("APPS", true),
+            Ok(ListResource::Apps)
+        ));
+        assert!(matches!(
+            ListResource::from_str("Displays", true),
+            Ok(ListResource::Displays)
+        ));
+    }
+
+    #[test]
+    fn test_app_summary_serialization() {
+        let app = AppSummary {
+            name: "Safari".to_string(),
+            pid: 1234,
+        };
+
+        let json = serde_json::to_string(&app).unwrap();
+        assert!(json.contains("\"name\":\"Safari\""));
+        assert!(json.contains("\"pid\":1234"));
+
+        // should not contain detailed fields
+        assert!(!json.contains("bundle_id"));
+        assert!(!json.contains("titles"));
+    }
+
+    #[test]
+    fn test_app_detailed_serialization() {
+        let app = AppDetailed {
+            name: "Safari".to_string(),
+            pid: 1234,
+            bundle_id: Some("com.apple.Safari".to_string()),
+            titles: vec!["GitHub".to_string(), "Google".to_string()],
+        };
+
+        let json = serde_json::to_string(&app).unwrap();
+        assert!(json.contains("\"name\":\"Safari\""));
+        assert!(json.contains("\"pid\":1234"));
+        assert!(json.contains("\"bundle_id\":\"com.apple.Safari\""));
+        assert!(json.contains("\"titles\":[\"GitHub\",\"Google\"]"));
+    }
+
+    #[test]
+    fn test_app_detailed_serialization_null_bundle_id() {
+        let app = AppDetailed {
+            name: "Test".to_string(),
+            pid: 1,
+            bundle_id: None,
+            titles: vec![],
+        };
+
+        let json = serde_json::to_string(&app).unwrap();
+        assert!(json.contains("\"bundle_id\":null"));
+        assert!(json.contains("\"titles\":[]"));
+    }
+
+    #[test]
+    fn test_display_summary_serialization() {
+        let display = DisplaySummary {
+            index: 0,
+            name: "Built-in Display".to_string(),
+            width: 2560,
+            height: 1600,
+            is_main: true,
+        };
+
+        let json = serde_json::to_string(&display).unwrap();
+        assert!(json.contains("\"index\":0"));
+        assert!(json.contains("\"name\":\"Built-in Display\""));
+        assert!(json.contains("\"width\":2560"));
+        assert!(json.contains("\"height\":1600"));
+        assert!(json.contains("\"is_main\":true"));
+
+        // should not contain detailed fields
+        assert!(!json.contains("vendor_id"));
+        assert!(!json.contains("unique_id"));
+    }
+
+    #[test]
+    fn test_display_detailed_serialization() {
+        let display = DisplayDetailed {
+            index: 0,
+            name: "Built-in Display".to_string(),
+            width: 2560,
+            height: 1600,
+            x: 0,
+            y: 0,
+            is_main: true,
+            is_builtin: true,
+            display_id: 1,
+            vendor_id: Some(0x0610),
+            model_id: Some(0xA032),
+            serial_number: None,
+            unit_number: 0,
+            unique_id: "0610_A032_unit0".to_string(),
+        };
+
+        let json = serde_json::to_string(&display).unwrap();
+        assert!(json.contains("\"index\":0"));
+        assert!(json.contains("\"x\":0"));
+        assert!(json.contains("\"y\":0"));
+        assert!(json.contains("\"is_builtin\":true"));
+        assert!(json.contains("\"display_id\":1"));
+        assert!(json.contains("\"vendor_id\":1552")); // 0x0610 = 1552
+        assert!(json.contains("\"model_id\":41010")); // 0xA032 = 41010
+        assert!(json.contains("\"serial_number\":null"));
+        assert!(json.contains("\"unique_id\":\"0610_A032_unit0\""));
+    }
+
+    #[test]
+    fn test_alias_summary_serialization() {
+        let alias = AliasSummary {
+            name: "builtin".to_string(),
+            alias_type: "system".to_string(),
+            resolved: true,
+            display_index: Some(0),
+        };
+
+        let json = serde_json::to_string(&alias).unwrap();
+        assert!(json.contains("\"name\":\"builtin\""));
+        assert!(json.contains("\"type\":\"system\"")); // renamed via serde
+        assert!(json.contains("\"resolved\":true"));
+        assert!(json.contains("\"display_index\":0"));
+    }
+
+    #[test]
+    fn test_alias_summary_unresolved() {
+        let alias = AliasSummary {
+            name: "office".to_string(),
+            alias_type: "user".to_string(),
+            resolved: false,
+            display_index: None,
+        };
+
+        let json = serde_json::to_string(&alias).unwrap();
+        assert!(json.contains("\"resolved\":false"));
+        assert!(json.contains("\"display_index\":null"));
+    }
+
+    #[test]
+    fn test_alias_detailed_serialization() {
+        let alias = AliasDetailed {
+            name: "builtin".to_string(),
+            alias_type: "system".to_string(),
+            resolved: true,
+            display_index: Some(0),
+            display_name: Some("Built-in Display".to_string()),
+            display_unique_id: Some("0610_A032_unit0".to_string()),
+            description: Some("Built-in display".to_string()),
+            mapped_ids: None,
+        };
+
+        let json = serde_json::to_string(&alias).unwrap();
+        assert!(json.contains("\"display_name\":\"Built-in Display\""));
+        assert!(json.contains("\"display_unique_id\":\"0610_A032_unit0\""));
+        assert!(json.contains("\"description\":\"Built-in display\""));
+        // mapped_ids should be skipped when None
+        assert!(!json.contains("mapped_ids"));
+    }
+
+    #[test]
+    fn test_alias_detailed_user_with_mapped_ids() {
+        let alias = AliasDetailed {
+            name: "office".to_string(),
+            alias_type: "user".to_string(),
+            resolved: true,
+            display_index: Some(1),
+            display_name: Some("External Monitor".to_string()),
+            display_unique_id: Some("1E6D_5B11_12345".to_string()),
+            description: None,
+            mapped_ids: Some(vec![
+                "1E6D_5B11_12345".to_string(),
+                "10AC_D0B3_67890".to_string(),
+            ]),
+        };
+
+        let json = serde_json::to_string(&alias).unwrap();
+        assert!(json.contains("\"type\":\"user\""));
+        assert!(json.contains("\"mapped_ids\":[\"1E6D_5B11_12345\",\"10AC_D0B3_67890\"]"));
+        // description should be skipped when None
+        assert!(!json.contains("description"));
+    }
+
+    #[test]
+    fn test_list_response_serialization() {
+        let response = ListResponse {
+            items: vec![
+                AppSummary {
+                    name: "Safari".to_string(),
+                    pid: 1234,
+                },
+                AppSummary {
+                    name: "Chrome".to_string(),
+                    pid: 5678,
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"items\":["));
+        assert!(json.contains("\"name\":\"Safari\""));
+        assert!(json.contains("\"name\":\"Chrome\""));
+
+        // verify structure
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["items"].is_array());
+        assert_eq!(parsed["items"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_list_response_empty() {
+        let response: ListResponse<AppSummary> = ListResponse { items: vec![] };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert_eq!(json, "{\"items\":[]}");
     }
 }

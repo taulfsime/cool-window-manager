@@ -26,40 +26,6 @@ impl DisplayInfo {
         )
     }
 
-    pub fn describe_detailed(&self) -> String {
-        let mut lines = vec![format!("Display {}:", self.index)];
-        lines.push(format!("  Name:          {}", self.name));
-        lines.push(format!("  Resolution:    {}x{}", self.width, self.height));
-        lines.push(format!("  Position:      ({}, {})", self.x, self.y));
-        lines.push(format!("  Display ID:    {}", self.display_id));
-        lines.push(format!("  Unit Number:   {}", self.unit_number));
-
-        if let Some(vendor) = self.vendor_id {
-            lines.push(format!(
-                "  Vendor ID:     0x{:04X} ({})",
-                vendor,
-                vendor_name(vendor)
-            ));
-        }
-        if let Some(model) = self.model_id {
-            lines.push(format!("  Model ID:      0x{:04X}", model));
-        }
-        if let Some(serial) = self.serial_number {
-            lines.push(format!("  Serial Number: {}", serial));
-        }
-
-        lines.push(format!(
-            "  Built-in:      {}",
-            if self.is_builtin { "Yes" } else { "No" }
-        ));
-        lines.push(format!(
-            "  Main Display:  {}",
-            if self.is_main { "Yes" } else { "No" }
-        ));
-
-        lines.join("\n")
-    }
-
     /// unique identifier that persists across reboots
     /// format: vendor_model_serial (if available) or display_id
     pub fn unique_id(&self) -> String {
@@ -370,33 +336,6 @@ fn matches_system_criteria(display: &DisplayInfo, criteria: &str) -> bool {
         "secondary" => !display.is_main,
         _ => false,
     }
-}
-
-pub fn print_displays(detailed: bool) -> Result<()> {
-    let displays = get_displays()?;
-
-    if displays.is_empty() {
-        println!("No displays found");
-        return Ok(());
-    }
-
-    if detailed {
-        println!("Connected Displays:\n");
-        for (i, display) in displays.iter().enumerate() {
-            println!("{}", display.describe_detailed());
-            println!("  Unique ID:     {}", display.unique_id());
-            if i < displays.len() - 1 {
-                println!();
-            }
-        }
-    } else {
-        println!("Available displays:");
-        for display in &displays {
-            println!("  {}", display.describe());
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

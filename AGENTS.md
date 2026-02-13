@@ -2,6 +2,42 @@
 
 > context and guidance for AI coding agents working on this repository
 
+## Important: Running cwm Commands
+
+**Always use a local test config file when running cwm commands.** Never use the user's main config at `~/.cwm/config.json` as it will interfere with their personal setup.
+
+```bash
+# create a test config in the project directory (already in .gitignore)
+cat > .cwm-test-config.json << 'EOF'
+{
+  "shortcuts": [],
+  "app_rules": [],
+  "spotlight": [],
+  "display_aliases": {},
+  "settings": {
+    "fuzzy_threshold": 2,
+    "launch": false,
+    "animate": false,
+    "delay_ms": 500,
+    "update": {
+      "enabled": false
+    }
+  }
+}
+EOF
+
+# always use --config flag when running cwm
+./target/debug/cwm --config .cwm-test-config.json list apps
+./target/debug/cwm --config .cwm-test-config.json focus --app Safari
+```
+
+This prevents:
+- modifying the user's shortcuts and app rules
+- triggering update checks that print messages
+- interfering with the user's daemon configuration
+
+---
+
 ## Documentation Maintenance
 
 When making changes to this repository, always keep documentation in sync:
@@ -145,7 +181,7 @@ Handles command-line argument parsing and command execution.
 | `mod.rs` | re-exports `run()` and `Cli` |
 | `commands.rs` | defines `Cli` struct with clap derive, `Commands` enum, and `run()` function that dispatches to appropriate handlers |
 
-Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list-apps`, `list-displays`, `list-aliases`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
+Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
 
 **CLI Command Reference:**
 
@@ -155,9 +191,7 @@ Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list-apps`, `l
 | `maximize` | `cwm maximize [--app <name>]` | Maximize window to fill screen |
 | `move-display` | `cwm move-display <target> [--app <name>]` | Move window to another display |
 | `resize` | `cwm resize --to <size> [--app <name>]` | Resize window (percent, pixels, or points) |
-| `list-apps` | `cwm list-apps` | List running applications |
-| `list-displays` | `cwm list-displays [--detailed]` | List available displays |
-| `list-aliases` | `cwm list-aliases` | List display aliases |
+| `list` | `cwm list <apps\|displays\|aliases> [--json] [--detailed]` | List resources (apps, displays, or aliases) |
 | `check-permissions` | `cwm check-permissions [--prompt]` | Check accessibility permissions |
 | `record-shortcut` | `cwm record-shortcut [--action <action>] [--app <name>]` | Record a keyboard shortcut |
 | `config` | `cwm config <show\|path\|set\|reset\|default\|verify>` | Manage configuration |
@@ -493,6 +527,7 @@ Tests are located in `#[cfg(test)]` modules within:
 
 | File | Test Coverage |
 |------|---------------|
+| `src/cli/commands.rs` | ListResource enum parsing, JSON serialization structs (AppSummary, AppDetailed, DisplaySummary, DisplayDetailed, AliasSummary, AliasDetailed, ListResponse) |
 | `src/config/mod.rs` | config value parsing, key setting, JSONC parsing, multi-extension support, config path override |
 | `src/config/schema.rs` | `should_launch` priority logic, update settings serialization, `$schema` field |
 | `src/config/json_schema.rs` | schema validity, required definitions, file writing |
@@ -507,11 +542,12 @@ Tests are located in `#[cfg(test)]` modules within:
 
 #### Integration Tests
 
-Integration tests for install, update, and rollback features:
+Integration tests for install, update, rollback, and list features:
 
 | File | Test Coverage |
 |------|---------------|
 | `tests/integration_tests/test_install.rs` | fresh install, directory creation, permissions, force overwrite |
+| `tests/integration_tests/test_list.rs` | list apps/displays/aliases, text and JSON output, --detailed flag, error handling |
 | `tests/integration_tests/test_update.rs` | version checking, download, checksum verification, binary replacement |
 | `tests/integration_tests/test_rollback.rs` | backup creation, test failure rollback, checksum mismatch, corrupt download |
 | `tests/integration_tests/test_channels.rs` | dev/beta/stable channels, channel priority, upgrade paths |

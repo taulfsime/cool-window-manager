@@ -114,9 +114,7 @@ cwm config set settings.update.check_frequency manual
 | `cwm maximize [--app <name>]` | Maximize a window to fill the screen |
 | `cwm move-display <target> [--app <name>]` | Move a window to another display |
 | `cwm resize --to <size> [--app <name>]` | Resize a window to a target size |
-| `cwm list-apps` | List running applications |
-| `cwm list-displays` | List available displays |
-| `cwm list-aliases` | List display aliases |
+| `cwm list <resource>` | List resources (apps, displays, aliases) |
 | `cwm check-permissions` | Check accessibility permissions |
 | `cwm config <subcommand>` | Manage configuration |
 | `cwm daemon <subcommand>` | Manage background daemon |
@@ -257,10 +255,10 @@ Use display aliases to reference monitors by name instead of index. This is usef
 Find your display's unique ID:
 
 ```bash
-cwm list-displays --detailed
-# Shows: Display 1: LG Display (1920x1080) [unique_id: 1E6D_5B11_12345]
+cwm list displays --json --detailed
+# Returns JSON with unique_id field for each display
 
-cwm list-aliases
+cwm list aliases
 # Shows all available aliases and their current resolution
 ```
 
@@ -308,41 +306,34 @@ Options:
 
 When using width-only pixel/point values, height is calculated to maintain the display's aspect ratio.
 
-### list-apps
+### list
 
-List all running applications with their window titles.
-
-```bash
-cwm list-apps
-```
-
-Output includes app name, PID, bundle ID, and all window titles for each app.
-
-### list-displays
-
-List available displays with their identifiers.
+List resources (apps, displays, or aliases).
 
 ```bash
-cwm list-displays                # simple view
-cwm list-displays --detailed     # show all identifiers
+cwm list apps                    # list running applications
+cwm list displays                # list available displays
+cwm list aliases                 # list display aliases
+
+# JSON output
+cwm list apps --json             # basic JSON (name, pid)
+cwm list apps --json --detailed  # full JSON (includes bundle_id, titles)
+
+cwm list displays --json         # basic JSON (index, name, resolution, is_main)
+cwm list displays --json --detailed  # full JSON (includes vendor, model, unique_id)
+
+cwm list aliases --json          # basic JSON (name, type, resolved, display_index)
+cwm list aliases --json --detailed   # full JSON (includes display_name, mapped_ids)
 ```
+
+Resources:
+- `apps` - Running applications with their window titles
+- `displays` - Available displays with resolution and position
+- `aliases` - Display aliases (system: builtin, external, main, secondary; and user-defined)
 
 Options:
-- `--detailed, -d` - Show detailed information including vendor ID, model ID, serial number, and unique ID
-
-### list-aliases
-
-List all available display aliases (system and user-defined).
-
-```bash
-cwm list-aliases
-```
-
-Shows:
-- System aliases (builtin, external, main, secondary) and their current resolution
-- User-defined aliases from config with their mapped display IDs
-- ✓ indicator for aliases that resolve in current setup
-- Helpful info for aliases that don't match any connected display
+- `--json` - Output in JSON format
+- `--detailed, -d` - Include additional fields in JSON output (no effect on text output)
 
 ### config
 

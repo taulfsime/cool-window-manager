@@ -11,6 +11,9 @@ mod test_channels;
 #[path = "integration_tests/test_install.rs"]
 mod test_install;
 
+#[path = "integration_tests/test_list.rs"]
+mod test_list;
+
 #[path = "integration_tests/test_rollback.rs"]
 mod test_rollback;
 
