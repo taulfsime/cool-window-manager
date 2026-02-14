@@ -17,8 +17,14 @@ error() { printf "${RED}$1${NC}\n"; }
 COMMIT=$(git rev-parse --short HEAD)
 TAG="beta-${COMMIT}"
 
+# calculate CalVer from commit timestamp
+TIMESTAMP=$(git log -1 --format=%ct)
+CALVER=$(date -r "${TIMESTAMP}" +%Y.%-m.%-d 2>/dev/null || date -d "@${TIMESTAMP}" +%Y.%-m.%-d)
+SEMVER="${CALVER}+beta.${COMMIT}"
+
 echo "Creating beta release for commit ${COMMIT}"
 echo "Tag: ${TAG}"
+echo "Version: ${SEMVER}"
 echo ""
 
 # check if tag already exists

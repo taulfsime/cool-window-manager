@@ -13,6 +13,8 @@ pub struct Version {
     pub channel: String,
     pub build_date: DateTime<Utc>,
     pub dirty: bool,
+    /// CalVer semantic version: YYYY.M.D+channel.commit or YYYY.M.D+commit
+    pub semver: String,
 }
 
 impl Version {
@@ -28,17 +30,17 @@ impl Version {
             channel: env!("RELEASE_CHANNEL").to_string(),
             build_date: env!("BUILD_DATE").parse().unwrap_or_else(|_| Utc::now()),
             dirty: env!("GIT_DIRTY") == "true",
+            semver: env!("SEMVER").to_string(),
         }
     }
 
     pub fn version_string(&self) -> String {
-        // format B: hash (channel, date)
+        // format: semver (date) with optional dirty marker
         let dirty_marker = if self.dirty { " *" } else { "" };
         format!(
-            "{}{} ({}, {})",
-            self.short_commit,
+            "{}{} ({})",
+            self.semver,
             dirty_marker,
-            self.channel,
             self.timestamp.format("%Y-%m-%d")
         )
     }
@@ -67,6 +69,18 @@ impl Version {
         )?
         .with_timezone(&Utc);
 
+        // generate CalVer semver from parsed data
+        let calver = format!(
+            "{}.{}.{}",
+            timestamp.format("%Y"),
+            timestamp.format("%-m"),
+            timestamp.format("%-d")
+        );
+        let semver = match channel.as_str() {
+            "stable" => format!("{}+{}", calver, short_commit),
+            _ => format!("{}+{}.{}", calver, channel, short_commit),
+        };
+
         Ok(Self {
             channel,
             commit,
@@ -74,6 +88,7 @@ impl Version {
             timestamp,
             build_date: Utc::now(), // not stored in string
             dirty: false,
+            semver,
         })
     }
 
@@ -161,11 +176,25 @@ mod tests {
         let version = Version::current();
         let version_str = version.version_string();
 
-        // format: "hash (channel, date)" or "hash * (channel, date)" if dirty
+        // format: "semver (date)" or "semver * (date)" if dirty
+        // semver contains commit hash in build metadata
         assert!(version_str.contains(&version.short_commit));
-        assert!(version_str.contains(&version.channel));
         assert!(version_str.contains("("));
         assert!(version_str.contains(")"));
+        // should contain CalVer date pattern (YYYY.M.D)
+        assert!(version_str.contains("."));
+    }
+
+    #[test]
+    fn test_version_semver() {
+        let version = Version::current();
+
+        // semver should be in CalVer format: YYYY.M.D+channel.commit or YYYY.M.D+commit
+        assert!(version.semver.contains("+"));
+        assert!(version.semver.contains(&version.short_commit));
+        // should contain year
+        let year = chrono::Utc::now().format("%Y").to_string();
+        assert!(version.semver.contains(&year) || version.semver.starts_with("20"));
     }
 
     #[test]
@@ -176,6 +205,8 @@ mod tests {
         assert_eq!(version.commit, "a3f2b1c4");
         assert_eq!(version.short_commit, "a3f2b1c4");
         assert_eq!(version.timestamp.format("%Y%m%d").to_string(), "20240211");
+        // stable semver: YYYY.M.D+commit (no channel prefix)
+        assert_eq!(version.semver, "2024.2.11+a3f2b1c4");
     }
 
     #[test]
@@ -184,6 +215,8 @@ mod tests {
 
         assert_eq!(version.channel, "beta");
         assert_eq!(version.commit, "12345678");
+        // beta semver: YYYY.M.D+beta.commit
+        assert_eq!(version.semver, "2024.3.15+beta.12345678");
     }
 
     #[test]
@@ -192,6 +225,8 @@ mod tests {
 
         assert_eq!(version.channel, "dev");
         assert_eq!(version.commit, "abcdef12");
+        // dev semver: YYYY.M.D+dev.commit
+        assert_eq!(version.semver, "2024.1.1+dev.abcdef12");
     }
 
     #[test]

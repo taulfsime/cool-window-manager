@@ -45,6 +45,7 @@ pub fn execute_version(_ctx: &ExecutionContext) -> Result<ActionResult, ActionEr
     Ok(ActionResult::simple(
         "version",
         serde_json::json!({
+            "semver": version.semver,
             "commit": version.short_commit,
             "channel": version.channel,
             "timestamp": version.timestamp.to_rfc3339(),

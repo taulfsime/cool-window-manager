@@ -129,7 +129,11 @@ pub fn execute(cmd: Command, ctx: &ExecutionContext) -> Result<ActionResult, Act
             ctx,
         ),
         Command::Uninstall { path } => handlers::install::execute_uninstall(path, ctx),
-        Command::Update { check: true, .. } => handlers::install::execute_update_check(ctx),
+        Command::Update {
+            check: true,
+            prerelease,
+            ..
+        } => handlers::install::execute_update_check(prerelease, ctx),
         Command::Update {
             force, prerelease, ..
         } => handlers::install::execute_update(force, prerelease, ctx),

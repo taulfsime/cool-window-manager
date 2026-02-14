@@ -6,7 +6,14 @@ A macOS window manager with CLI and global hotkeys. Manage windows by app name w
 
 ## Installation
 
-### Quick Install (Recommended)
+### Homebrew (Recommended)
+
+```bash
+brew tap taulfsime/cwm https://github.com/taulfsime/cool-window-manager
+brew install cwm
+```
+
+### Quick Install Script
 
 ```bash
 # Install latest stable release

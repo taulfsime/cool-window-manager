@@ -14,6 +14,15 @@ pub fn check_for_updates(settings: &UpdateSettings, verbose: bool) -> Result<Opt
     check_for_updates_impl(settings, verbose, true)
 }
 
+/// Check for updates with explicit control over verbose and interactive modes
+pub fn check_for_updates_with_settings(
+    settings: &UpdateSettings,
+    verbose: bool,
+    interactive: bool,
+) -> Result<Option<ReleaseInfo>> {
+    check_for_updates_impl(settings, verbose, interactive)
+}
+
 /// Check for updates without any interactive prompts (for background checks)
 pub fn check_for_updates_silent(settings: &UpdateSettings) -> Result<Option<ReleaseInfo>> {
     check_for_updates_impl(settings, false, false)

@@ -6,6 +6,7 @@ use clap_mangen::Man;
 use cwm::cli::Cli;
 
 fn main() -> std::io::Result<()> {
+    // command already has CalVer version from #[command(version = env!("SEMVER"))]
     let cmd = Cli::command();
     let man = Man::new(cmd);
 

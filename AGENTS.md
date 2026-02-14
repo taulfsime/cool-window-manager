@@ -115,6 +115,8 @@ cool-window-mng/
 │   ├── coverage.sh         # generate test coverage report
 │   ├── manual-test.sh      # interactive manual testing guide
 │   └── spotlight_stub.c    # C source for Spotlight app stub executable
+├── homebrew/
+│   └── cwm.rb              # Homebrew formula (auto-updated by CI on stable releases)
 ├── docs/                   # landing page (GitHub Pages at cwm.taulfsime.com)
 │   ├── index.html          # main page with terminal + preview
 │   ├── CNAME               # custom domain configuration
@@ -352,10 +354,25 @@ Shell completion installation:
 
 Standalone module for version information.
 
-- `Version` struct with commit hash, timestamp, channel
+- `Version` struct with commit hash, timestamp, channel, and CalVer semver
 - `VersionInfo` for persistent version tracking at `~/.cwm/version.json`
   - Includes `schema_version` field to track when JSON schema was last generated
 - Build-time version embedding via `build.rs`
+
+**CalVer Versioning:**
+
+cwm uses Calendar Versioning (CalVer) with the format `YYYY.M.D+{metadata}`:
+
+| Channel | Format | Example |
+|---------|--------|---------|
+| Stable | `YYYY.M.D+{commit}` | `2026.2.14+a3f2b1c4` |
+| Beta | `YYYY.M.D+beta.{commit}` | `2026.2.14+beta.a3f2b1c4` |
+| Dev | `YYYY.M.D+dev.{commit}` | `2026.2.14+dev.a3f2b1c4` |
+
+- Date is derived from the commit timestamp (not build time)
+- Commit hash ensures uniqueness for multiple releases per day
+- Build metadata (after `+`) is ignored for version precedence per semver spec
+- Version comparison still uses timestamp internally for reliability
 
 ### spotlight/
 

@@ -14,7 +14,7 @@ use super::output::{self, OutputMode};
 #[derive(Parser)]
 #[command(name = "cwm")]
 #[command(about = "A macOS window manager with CLI and global hotkeys")]
-#[command(version)]
+#[command(version = env!("SEMVER"))]
 pub struct Cli {
     /// Path to config file (overrides CWM_CONFIG env var and default location)
     #[arg(long, global = true)]

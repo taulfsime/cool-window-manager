@@ -142,13 +142,13 @@ fn test_man_page_documents_resize() {
 }
 
 #[test]
-fn test_man_page_documents_move_display() {
+fn test_man_page_documents_move() {
     let content = read_man_page();
     require_man_page!(content);
 
     assert!(
-        content.contains("move-display") || content.contains("move\\-display"),
-        "man page should document move-display command"
+        content.contains("cwm-move") || content.contains("cwm\\-move"),
+        "man page should document move command"
     );
 }
 

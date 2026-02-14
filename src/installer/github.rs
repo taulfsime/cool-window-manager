@@ -63,11 +63,13 @@ impl ReleaseInfo {
         }
 
         // find asset for this architecture
-        let asset_name_pattern = format!("cwm-{}-{}", channel, arch);
+        // asset name format: cwm-{channel}-{commit}-{date}-{arch}.tar.gz
+        let asset_prefix = format!("cwm-{}-", channel);
+        let asset_suffix = format!("-{}.tar.gz", arch);
         let asset = release
             .assets
             .iter()
-            .find(|a| a.name.contains(&asset_name_pattern) && a.name.ends_with(".tar.gz"))
+            .find(|a| a.name.starts_with(&asset_prefix) && a.name.ends_with(&asset_suffix))
             .ok_or_else(|| anyhow!("No asset found for architecture: {}", arch))?;
 
         // find checksum file
@@ -329,8 +331,10 @@ mod tests {
     use chrono::Utc;
 
     fn create_test_release(tag: &str, channel: &str, arch: &str) -> GitHubRelease {
-        // asset name must match pattern: cwm-{channel}-{arch}*.tar.gz
-        let asset_name = format!("cwm-{}-{}-20240211.tar.gz", channel, arch);
+        // asset name format: cwm-{channel}-{commit}-{date}-{arch}.tar.gz
+        // extract commit from tag (e.g., "stable-a3f2b1c4" -> "a3f2b1c4")
+        let commit = tag.split('-').nth(1).unwrap_or("12345678");
+        let asset_name = format!("cwm-{}-{}-20240211-{}.tar.gz", channel, commit, arch);
         GitHubRelease {
             tag_name: tag.to_string(),
             name: format!("Release {}", tag),

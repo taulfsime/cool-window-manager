@@ -17,8 +17,14 @@ error() { printf "${RED}$1${NC}\n"; }
 COMMIT=$(git rev-parse --short HEAD)
 TAG="stable-${COMMIT}"
 
+# calculate CalVer from commit timestamp
+TIMESTAMP=$(git log -1 --format=%ct)
+CALVER=$(date -r "${TIMESTAMP}" +%Y.%-m.%-d 2>/dev/null || date -d "@${TIMESTAMP}" +%Y.%-m.%-d)
+SEMVER="${CALVER}+${COMMIT}"
+
 echo "Creating stable release for commit ${COMMIT}"
 echo "Tag: ${TAG}"
+echo "Version: ${SEMVER}"
 echo ""
 
 # check if tag already exists

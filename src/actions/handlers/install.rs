@@ -236,8 +236,11 @@ pub fn execute_uninstall(
 }
 
 /// update check - can be done via IPC (read-only, but network access needed)
-pub fn execute_update_check(ctx: &ExecutionContext) -> Result<ActionResult, ActionError> {
-    use crate::installer::check_for_updates;
+pub fn execute_update_check(
+    prerelease: bool,
+    ctx: &ExecutionContext,
+) -> Result<ActionResult, ActionError> {
+    use crate::installer::check_for_updates_with_settings;
 
     let current = Version::current();
 
@@ -246,6 +249,7 @@ pub fn execute_update_check(ctx: &ExecutionContext) -> Result<ActionResult, Acti
         return Ok(ActionResult::simple(
             "update_check",
             serde_json::json!({
+                "semver": current.semver,
                 "current_version": current.full_version_string(),
                 "channel": current.channel,
                 "commit": current.short_commit,
@@ -253,8 +257,15 @@ pub fn execute_update_check(ctx: &ExecutionContext) -> Result<ActionResult, Acti
         ));
     }
 
-    // CLI can do full network check
-    match check_for_updates(&ctx.config.settings.update, true) {
+    // apply prerelease flag to settings
+    let mut settings = ctx.config.settings.update.clone();
+    if prerelease {
+        settings.channels.beta = true;
+        settings.channels.dev = true;
+    }
+
+    // CLI check - verbose but non-interactive (no prompts for --check)
+    match check_for_updates_with_settings(&settings, true, false) {
         Ok(Some(release)) => Ok(ActionResult::simple(
             "update_check",
             serde_json::json!({

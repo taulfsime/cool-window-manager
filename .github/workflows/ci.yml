@@ -173,20 +173,27 @@ jobs:
           COMMIT=$(git rev-parse --short HEAD)
           DATE=$(date +%Y%m%d)
           
+          # calculate CalVer from commit timestamp (YYYY.M.D format)
+          TIMESTAMP=$(git log -1 --format=%ct)
+          CALVER=$(date -d "@${TIMESTAMP}" +%Y.%-m.%-d 2>/dev/null || date -r "${TIMESTAMP}" +%Y.%-m.%-d)
+          
           if [[ "${{ github.ref }}" == refs/tags/beta-* ]]; then
             CHANNEL="beta"
             TAG="${{ github.ref_name }}"
-            NAME="Beta Release ${COMMIT} (${DATE})"
+            SEMVER="${CALVER}+beta.${COMMIT}"
+            NAME="Beta Release ${SEMVER}"
             PRERELEASE="true"
           elif [[ "${{ github.ref }}" == refs/tags/stable-* ]]; then
             CHANNEL="stable"
             TAG="${{ github.ref_name }}"
-            NAME="Stable Release ${COMMIT} (${DATE})"
+            SEMVER="${CALVER}+${COMMIT}"
+            NAME="Stable Release ${SEMVER}"
             PRERELEASE="false"
           else
             CHANNEL="dev"
             TAG="dev-${COMMIT}"
-            NAME="Development Build ${COMMIT} (${DATE})"
+            SEMVER="${CALVER}+dev.${COMMIT}"
+            NAME="Development Build ${SEMVER}"
             PRERELEASE="true"
           fi
           
@@ -194,6 +201,10 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
+          echo "semver=$SEMVER" >> $GITHUB_OUTPUT
+          echo "calver=$CALVER" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
       
       - name: Generate release notes
         id: notes
@@ -233,18 +244,18 @@ jobs:
             fi
           fi
           
-          cat > RELEASE_NOTES.md << 'ENDOFNOTES'
+          cat > RELEASE_NOTES.md << ENDOFNOTES
           ## ${{ steps.release.outputs.channel }} Release
           
-          **Commit:** `${{ github.sha }}`
-          **Short:** `$(git rev-parse --short HEAD)`
+          **Version:** \`${{ steps.release.outputs.semver }}\`
+          **Commit:** \`${{ github.sha }}\`
           **Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
           
           ### Changes in this release
           
-          ```
+          \`\`\`
           ${CHANNEL_COMMITS}
-          ```
+          \`\`\`
           
           ENDOFNOTES
           
@@ -266,17 +277,36 @@ jobs:
             echo "" >> RELEASE_NOTES.md
           fi
           
-          cat >> RELEASE_NOTES.md << 'ENDOFNOTES'
+          if [[ "${{ steps.release.outputs.channel }}" == "stable" ]]; then
+            cat >> RELEASE_NOTES.md << 'ENDOFNOTES'
           ### Installation
           
           ```bash
+          # Homebrew (recommended)
+          brew tap taulfsime/cwm https://github.com/taulfsime/cool-window-manager
+          brew install cwm
+          
+          # Quick install script
+          curl -fsSL https://raw.githubusercontent.com/taulfsime/cool-window-manager/main/install.sh | sh
+          ```
+          
+          ENDOFNOTES
+          else
+            cat >> RELEASE_NOTES.md << ENDOFNOTES
+          ### Installation
+          
+          \`\`\`bash
           # Quick install
           curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh
           
           # Install specific channel
           curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- --${{ steps.release.outputs.channel }}
-          ```
+          \`\`\`
           
+          ENDOFNOTES
+          fi
+          
+          cat >> RELEASE_NOTES.md << 'ENDOFNOTES'
           ### Files
           
           - `cwm-*-aarch64-apple-darwin.tar.gz` - Apple Silicon (M1/M2/M3)
@@ -299,6 +329,40 @@ jobs:
           prerelease: ${{ steps.release.outputs.prerelease }}
           files: release_files/*
           token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Update Homebrew formula
+        if: steps.release.outputs.channel == 'stable'
+        run: |
+          COMMIT="${{ steps.release.outputs.commit }}"
+          DATE="${{ steps.release.outputs.date }}"
+          SEMVER="${{ steps.release.outputs.semver }}"
+          
+          # get checksums from release files
+          ARM64_SHA=$(cat release_files/cwm-stable-${COMMIT}-${DATE}-aarch64-apple-darwin.tar.gz.sha256 | awk '{print $1}')
+          X86_64_SHA=$(cat release_files/cwm-stable-${COMMIT}-${DATE}-x86_64-apple-darwin.tar.gz.sha256 | awk '{print $1}')
+          
+          # update homebrew formula
+          sed -i "s|version \".*\"|version \"${SEMVER}\"|" homebrew/cwm.rb
+          sed -i "s|/stable-[a-f0-9]\{8\}/|/stable-${COMMIT}/|g" homebrew/cwm.rb
+          sed -i "s|cwm-stable-[a-f0-9]\{8\}-[0-9]\{8\}-aarch64|cwm-stable-${COMMIT}-${DATE}-aarch64|g" homebrew/cwm.rb
+          sed -i "s|cwm-stable-[a-f0-9]\{8\}-[0-9]\{8\}-x86_64|cwm-stable-${COMMIT}-${DATE}-x86_64|g" homebrew/cwm.rb
+          sed -i "s|sha256 \"PLACEHOLDER_ARM64_SHA256\"|sha256 \"${ARM64_SHA}\"|" homebrew/cwm.rb
+          sed -i "s|sha256 \"PLACEHOLDER_X86_64_SHA256\"|sha256 \"${X86_64_SHA}\"|" homebrew/cwm.rb
+          # also update existing sha256 values
+          sed -i "s|sha256 \"[a-f0-9]\{64\}\" # arm64|sha256 \"${ARM64_SHA}\" # arm64|" homebrew/cwm.rb
+          sed -i "s|sha256 \"[a-f0-9]\{64\}\" # x86_64|sha256 \"${X86_64_SHA}\" # x86_64|" homebrew/cwm.rb
+          
+          echo "Updated homebrew/cwm.rb:"
+          cat homebrew/cwm.rb
+      
+      - name: Commit Homebrew formula update
+        if: steps.release.outputs.channel == 'stable'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add homebrew/cwm.rb
+          git commit -m "chore: update homebrew formula to ${{ steps.release.outputs.semver }}" || echo "No changes to commit"
+          git push origin HEAD:main
       
       - name: Cleanup old dev releases
         if: steps.release.outputs.channel == 'dev'

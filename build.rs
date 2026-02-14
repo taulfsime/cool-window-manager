@@ -1,3 +1,4 @@
+use chrono::{Datelike, TimeZone};
 use std::process::Command;
 
 fn main() {
@@ -79,6 +80,30 @@ fn main() {
     // release channel from environment or default to dev
     let channel = std::env::var("RELEASE_CHANNEL").unwrap_or_else(|_| "dev".to_string());
     println!("cargo:rustc-env=RELEASE_CHANNEL={}", channel);
+
+    // generate CalVer semantic version: YYYY.M.D+channel.commit or YYYY.M.D+commit for stable
+    let semver = generate_calver(&timestamp, &channel, &short_commit);
+    println!("cargo:rustc-env=SEMVER={}", semver);
+}
+
+/// generates CalVer version string from commit timestamp
+/// format: YYYY.M.D+channel.commit (dev/beta) or YYYY.M.D+commit (stable)
+fn generate_calver(timestamp: &str, channel: &str, short_commit: &str) -> String {
+    let ts: i64 = timestamp.parse().unwrap_or(0);
+
+    let dt = if ts > 0 {
+        chrono::Utc.timestamp_opt(ts, 0).single()
+    } else {
+        None
+    }
+    .unwrap_or_else(chrono::Utc::now);
+
+    let calver = format!("{}.{}.{}", dt.year(), dt.month(), dt.day());
+
+    match channel {
+        "stable" => format!("{}+{}", calver, short_commit),
+        _ => format!("{}+{}.{}", calver, channel, short_commit),
+    }
 }
 
 /// compiles the spotlight stub executable for embedding in the binary
