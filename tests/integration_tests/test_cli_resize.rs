@@ -311,7 +311,9 @@ fn test_resize_with_app_argument() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("not found") || stderr.contains("not running"),
+        stderr.contains("not found")
+            || stderr.contains("not running")
+            || stderr.contains("no matching"),
         "should mention app not found: {}",
         stderr
     );

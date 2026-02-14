@@ -1,4 +1,3 @@
-use anyhow::Result;
 use core_foundation::base::TCFType;
 
 /// Check if the application has accessibility permissions
@@ -30,24 +29,6 @@ pub fn check_and_prompt() -> bool {
         let options = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
 
         AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef())
-    }
-}
-
-pub fn print_permission_status() -> Result<()> {
-    if is_trusted() {
-        println!("✓ Accessibility permissions granted");
-        Ok(())
-    } else {
-        println!("✗ Accessibility permissions not granted");
-        println!();
-        println!("To grant permissions:");
-        println!("1. Open System Settings");
-        println!("2. Go to Privacy & Security > Accessibility");
-        println!("3. Enable access for this application");
-        println!();
-        println!("Run this command again to prompt for permissions:");
-        println!("  cwm check-permissions --prompt");
-        Ok(())
     }
 }
 

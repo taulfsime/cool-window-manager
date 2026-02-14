@@ -1,4 +1,5 @@
 mod commands;
+mod convert;
 pub mod exit_codes;
 pub mod output;
 

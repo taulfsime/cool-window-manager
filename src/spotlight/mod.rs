@@ -69,21 +69,6 @@ pub fn get_example_shortcuts() -> Vec<SpotlightShortcut> {
     ]
 }
 
-/// prints example spotlight configuration
-pub fn print_example_config() {
-    let examples = get_example_shortcuts();
-
-    println!("Add the following to your ~/.cwm/config.json:\n");
-    println!(r#""spotlight": "#);
-
-    let json = serde_json::to_string_pretty(&examples).expect("Failed to serialize examples");
-    println!("{}", json);
-
-    println!("\nAfter adding, run: cwm spotlight install");
-    println!("\nShortcuts will appear in Spotlight with the \"cwm: \" prefix.");
-    println!("For example, search for \"cwm: Focus Safari\" in Spotlight.");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

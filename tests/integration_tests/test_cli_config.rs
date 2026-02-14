@@ -49,10 +49,16 @@ fn create_config_with_content(
     config_path
 }
 
-/// helper to run cwm config command
+/// helper to run cwm config command (text output)
 fn run_config(args: &[&str], config_path: &std::path::Path) -> std::process::Output {
     let binary = cwm_binary_path();
-    let mut cmd_args = vec!["--config", config_path.to_str().unwrap(), "config"];
+    // use --no-json to get text output (stdout is piped in tests, which auto-enables JSON)
+    let mut cmd_args = vec![
+        "--config",
+        config_path.to_str().unwrap(),
+        "--no-json",
+        "config",
+    ];
     cmd_args.extend(args);
 
     Command::new(&binary)
@@ -60,19 +66,6 @@ fn run_config(args: &[&str], config_path: &std::path::Path) -> std::process::Out
         .env("CWM_GITHUB_API_URL", mock_server_url())
         .output()
         .expect("Failed to run cwm config")
-}
-
-/// helper to run cwm with custom config path
-fn run_cwm_with_config(args: &[&str], config_path: &std::path::Path) -> std::process::Output {
-    let binary = cwm_binary_path();
-    let mut cmd_args = vec!["--config", config_path.to_str().unwrap()];
-    cmd_args.extend(args);
-
-    Command::new(&binary)
-        .args(&cmd_args)
-        .env("CWM_GITHUB_API_URL", mock_server_url())
-        .output()
-        .expect("Failed to run cwm")
 }
 
 // ============================================================================
@@ -101,7 +94,18 @@ fn test_config_show_json_output() {
     let test_dir = create_test_dir(&unique_test_name("config_show_json"));
     let config_path = create_test_config(&test_dir);
 
-    let output = run_cwm_with_config(&["--json", "config", "show"], &config_path);
+    let binary = cwm_binary_path();
+    let output = Command::new(&binary)
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "--json",
+            "config",
+            "show",
+        ])
+        .env("CWM_GITHUB_API_URL", mock_server_url())
+        .output()
+        .expect("Failed to run cwm");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -117,9 +121,15 @@ fn test_config_show_json_output() {
     let json: serde_json::Value =
         serde_json::from_str(&stdout).expect("config show --json should produce valid JSON");
 
+    // output is JSON-RPC wrapped, extract the result
+    let result = json
+        .get("result")
+        .and_then(|r| r.get("result"))
+        .expect("should have result.result");
+
     // should have config fields
-    assert!(json.get("shortcuts").is_some(), "should have shortcuts");
-    assert!(json.get("settings").is_some(), "should have settings");
+    assert!(result.get("shortcuts").is_some(), "should have shortcuts");
+    assert!(result.get("settings").is_some(), "should have settings");
 
     cleanup_test_dir(&test_dir);
 }

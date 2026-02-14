@@ -47,15 +47,6 @@ impl MatchResult {
             }
         }
     }
-
-    /// get the fuzzy distance if this was a fuzzy match, None otherwise
-    pub fn distance(&self) -> Option<usize> {
-        match &self.match_type {
-            MatchType::Fuzzy { distance } => Some(*distance),
-            MatchType::TitleFuzzy { distance, .. } => Some(*distance),
-            _ => None,
-        }
-    }
 }
 
 /// Find an app by name or window title using fuzzy matching
@@ -585,51 +576,6 @@ mod tests {
         assert!(desc.contains("Chrome"));
         assert!(desc.contains("title fuzzy"));
         assert!(desc.contains("1"));
-    }
-
-    #[test]
-    fn test_match_result_distance_exact() {
-        let result = MatchResult {
-            app: AppInfo {
-                name: "Safari".to_string(),
-                pid: 1,
-                bundle_id: None,
-                titles: vec![],
-            },
-            match_type: MatchType::Exact,
-        };
-        assert_eq!(result.distance(), None);
-    }
-
-    #[test]
-    fn test_match_result_distance_fuzzy() {
-        let result = MatchResult {
-            app: AppInfo {
-                name: "Safari".to_string(),
-                pid: 1,
-                bundle_id: None,
-                titles: vec![],
-            },
-            match_type: MatchType::Fuzzy { distance: 3 },
-        };
-        assert_eq!(result.distance(), Some(3));
-    }
-
-    #[test]
-    fn test_match_result_distance_title_fuzzy() {
-        let result = MatchResult {
-            app: AppInfo {
-                name: "Chrome".to_string(),
-                pid: 1,
-                bundle_id: None,
-                titles: vec![],
-            },
-            match_type: MatchType::TitleFuzzy {
-                title: "Tab".to_string(),
-                distance: 2,
-            },
-        };
-        assert_eq!(result.distance(), Some(2));
     }
 
     #[test]

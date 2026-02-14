@@ -236,8 +236,6 @@ fn test_spotlight_list_with_shortcuts() {
 
     assert!(output.status.success(), "spotlight list should succeed");
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // should list the configured shortcuts
     // note: this lists installed shortcuts, not configured ones
     // so it may be empty if nothing is installed
 
@@ -295,12 +293,9 @@ fn test_spotlight_install_with_empty_config() {
 
     let output = run_spotlight(&["install"], &config_path);
 
-    // should succeed but indicate nothing to install
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
     // either succeeds with "no shortcuts" message or fails gracefully
     if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             stdout.contains("No") || stdout.contains("0") || stdout.trim().is_empty(),
             "should indicate no shortcuts to install"
@@ -321,12 +316,9 @@ fn test_spotlight_remove_nonexistent() {
 
     let output = run_spotlight(&["remove", "NonExistentShortcut"], &config_path);
 
-    // should handle gracefully
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
     // either succeeds (nothing to remove) or fails with reasonable error
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             stderr.contains("not found") || stderr.contains("does not exist"),
             "should mention shortcut not found"
@@ -401,6 +393,7 @@ fn test_spotlight_config_with_empty_name() {
         .args([
             "--config",
             config_path.to_str().unwrap(),
+            "--no-json",
             "config",
             "verify",
         ])
@@ -449,6 +442,7 @@ fn test_spotlight_config_with_invalid_action() {
         .args([
             "--config",
             config_path.to_str().unwrap(),
+            "--no-json",
             "config",
             "verify",
         ])

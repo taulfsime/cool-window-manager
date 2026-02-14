@@ -37,7 +37,8 @@ fn create_test_config(test_dir: &std::path::Path) -> std::path::PathBuf {
 
 fn run_cwm_with_config(args: &[&str], config_path: &std::path::Path) -> std::process::Output {
     let binary = cwm_binary_path();
-    let mut cmd_args = vec!["--config", config_path.to_str().unwrap()];
+    // use --no-json to get text output (stdout is piped in tests, which auto-enables JSON)
+    let mut cmd_args = vec!["--config", config_path.to_str().unwrap(), "--no-json"];
     cmd_args.extend(args);
 
     Command::new(&binary)

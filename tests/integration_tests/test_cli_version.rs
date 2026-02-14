@@ -37,7 +37,8 @@ fn create_test_config(test_dir: &std::path::Path) -> std::path::PathBuf {
 
 fn run_cwm_with_config(args: &[&str], config_path: &std::path::Path) -> std::process::Output {
     let binary = cwm_binary_path();
-    let mut cmd_args = vec!["--config", config_path.to_str().unwrap()];
+    // use --no-json to get text output (stdout is piped in tests, which auto-enables JSON)
+    let mut cmd_args = vec!["--config", config_path.to_str().unwrap(), "--no-json"];
     cmd_args.extend(args);
 
     Command::new(&binary)
@@ -83,10 +84,29 @@ fn test_version_command_with_json_flag() {
     let test_dir = create_test_dir(&unique_test_name("version_json"));
     let config_path = create_test_config(&test_dir);
 
-    // version command doesn't support JSON output, but should still work
-    let output = run_cwm_with_config(&["--json", "version"], &config_path);
-    // should succeed (JSON flag is ignored for version)
+    // version command with --json flag should produce JSON-RPC output
+    let binary = cwm_binary_path();
+    let output = Command::new(&binary)
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "--json",
+            "version",
+        ])
+        .env("CWM_GITHUB_API_URL", mock_server_url())
+        .output()
+        .expect("Failed to run cwm");
+
     assert!(output.status.success());
+
+    // verify it produces valid JSON
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
+    assert!(
+        json.is_ok(),
+        "version --json should produce valid JSON: {}",
+        stdout
+    );
 
     cleanup_test_dir(&test_dir);
 }
