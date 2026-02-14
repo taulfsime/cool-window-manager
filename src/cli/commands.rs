@@ -356,9 +356,9 @@ pub enum GetCommands {
 
     /// Get info about a specific app's window
     Window {
-        /// Target app name (fuzzy matched)
-        #[arg(short, long)]
-        app: String,
+        /// Target app name(s) (fuzzy/regex matched), tries each in order
+        #[arg(short, long, required = true, action = clap::ArgAction::Append)]
+        app: Vec<String>,
 
         /// Custom output format using {field} placeholders
         #[arg(long)]
@@ -1088,12 +1088,13 @@ pub fn execute(cli: Cli) -> Result<()> {
                     fmt,
                 ),
                 GetCommands::Window { app, format: fmt } => {
-                    let app_name = resolve_app_name(&app)?;
+                    let apps: Vec<String> = app
+                        .iter()
+                        .map(|a| resolve_app_name(a))
+                        .collect::<Result<Vec<_>>>()?;
                     (
                         Command::Get {
-                            target: GetTarget::Window {
-                                app: vec![app_name],
-                            },
+                            target: GetTarget::Window { app: apps },
                         },
                         fmt,
                     )
@@ -2504,7 +2505,33 @@ mod tests {
         match cli.command {
             Commands::Get { command } => match command {
                 GetCommands::Window { app, format } => {
-                    assert_eq!(app, "Safari");
+                    assert_eq!(app, vec!["Safari".to_string()]);
+                    assert!(format.is_none());
+                }
+                _ => panic!("Expected Window subcommand"),
+            },
+            _ => panic!("Expected Get command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_get_window_multiple_apps() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "cwm",
+            "get",
+            "window",
+            "--app",
+            "/safari/i",
+            "--app",
+            "/chrome/i",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Get { command } => match command {
+                GetCommands::Window { app, format } => {
+                    assert_eq!(app, vec!["/safari/i".to_string(), "/chrome/i".to_string()]);
                     assert!(format.is_none());
                 }
                 _ => panic!("Expected Window subcommand"),

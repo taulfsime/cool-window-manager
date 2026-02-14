@@ -129,6 +129,7 @@ const Commands = (function() {
     const features = [
       ['Focus windows by app name', 'cwm focus --app Slack'],
       ['Fuzzy matching', '"slck" matches "Slack"'],
+      ['Regex matching', '"/chrome|safari/i" matches browsers'],
       ['Match by window title', 'Focus Chrome tab by title'],
       ['Maximize windows', 'cwm maximize'],
       ['Move between displays', 'cwm move-display next'],
@@ -262,6 +263,18 @@ const Commands = (function() {
     Terminal.writeLine('');
   }
 
+  // parse regex pattern from /pattern/ or /pattern/i syntax
+  function parseRegexPattern(query) {
+    if (!query.startsWith('/')) return null;
+    
+    if (query.endsWith('/i') && query.length > 3) {
+      return { pattern: query.slice(1, -2), caseInsensitive: true };
+    } else if (query.endsWith('/') && query.length > 2) {
+      return { pattern: query.slice(1, -1), caseInsensitive: false };
+    }
+    return null;
+  }
+
   function cmdCwmFocus(args) {
     if (args.includes('--help') || args.includes('-h')) {
       Terminal.writeLine('');
@@ -270,15 +283,27 @@ const Commands = (function() {
       Terminal.writeLine('Usage: cwm focus --app <name>');
       Terminal.writeLine('');
       Terminal.writeLine('Options:');
-      Terminal.writeLine('  --app, -a <name>  Target app name (fuzzy matched)');
+      Terminal.writeLine('  --app, -a <name>  Target app name (fuzzy/regex matched)');
       Terminal.writeLine('  --launch          Launch app if not running');
       Terminal.writeLine('  --no-launch       Never launch app');
       Terminal.writeLine('  --verbose, -v     Show matching details');
       Terminal.writeLine('');
+      Terminal.writeLine('Matching:');
+      Terminal.writeLine('  Exact match       "Safari" matches Safari');
+      Terminal.writeLine('  Prefix match      "Saf" matches Safari');
+      Terminal.writeLine('  Regex match       "/^Google/" matches Google Chrome');
+      Terminal.writeLine('  Fuzzy match       "slck" matches Slack');
+      Terminal.writeLine('');
+      Terminal.writeLine('Regex syntax:');
+      Terminal.writeLine('  /pattern/         Case-sensitive regex');
+      Terminal.writeLine('  /pattern/i        Case-insensitive regex');
+      Terminal.writeLine('');
       Terminal.writeLine('Examples:');
       Terminal.writeLine('  cwm focus --app Safari');
-      Terminal.writeLine('  cwm focus --app "slck"      # fuzzy match');
-      Terminal.writeLine('  cwm focus --app "New Tab"   # match by title');
+      Terminal.writeLine('  cwm focus --app "slck"           # fuzzy match');
+      Terminal.writeLine('  cwm focus --app "New Tab"        # match by title');
+      Terminal.writeLine('  cwm focus --app "/^Google/"      # regex: starts with Google');
+      Terminal.writeLine('  cwm focus --app "/chrome|safari/i"  # regex: any browser');
       Terminal.writeLine('');
       return;
     }
@@ -292,21 +317,51 @@ const Commands = (function() {
 
     const appName = args[appIndex + 1];
     
+    // simulated app list for demo
+    const demoApps = ['Safari', 'Google Chrome', 'Terminal', 'Slack', 'Mail', 'Finder', 'VS Code'];
+    
     // determine match type for display
     const inputLower = appName.toLowerCase();
     let matchedApp = appName;
     let matchType = '';
     
-    // check match type
-    const fuzzyMatches = ['safri', 'safarri', 'saffari', 'termnial', 'terminl', 'mai', 'maill'];
-    const titleMatches = ['github', 'taulfsime'];
-    
-    if (fuzzyMatches.some(f => inputLower.includes(f))) {
-      matchedApp = inputLower.includes('saf') ? 'Safari' : inputLower.includes('term') ? 'Terminal' : 'Mail';
-      matchType = 'fuzzy match';
-    } else if (titleMatches.some(t => inputLower.includes(t))) {
-      matchedApp = 'Safari';
-      matchType = 'title match';
+    // check for regex pattern
+    const regexInfo = parseRegexPattern(appName);
+    if (regexInfo) {
+      try {
+        const flags = regexInfo.caseInsensitive ? 'i' : '';
+        const regex = new RegExp(regexInfo.pattern, flags);
+        const match = demoApps.find(app => regex.test(app));
+        if (match) {
+          matchedApp = match;
+          matchType = `regex: /${regexInfo.pattern}/${regexInfo.caseInsensitive ? 'i' : ''}`;
+        } else {
+          Terminal.writeLine('');
+          Terminal.writeLine(`No app matching regex: ${appName}`, 'error');
+          Terminal.writeLine('');
+          return;
+        }
+      } catch (e) {
+        Terminal.writeLine('');
+        Terminal.writeLine(`Invalid regex pattern: ${appName}`, 'error');
+        Terminal.writeLine('');
+        return;
+      }
+    } else {
+      // check match type (existing logic)
+      const fuzzyMatches = ['safri', 'safarri', 'saffari', 'termnial', 'terminl', 'mai', 'maill', 'slck', 'slak'];
+      const titleMatches = ['github', 'taulfsime'];
+      
+      if (fuzzyMatches.some(f => inputLower.includes(f))) {
+        if (inputLower.includes('saf')) matchedApp = 'Safari';
+        else if (inputLower.includes('term')) matchedApp = 'Terminal';
+        else if (inputLower.includes('slck') || inputLower.includes('slak')) matchedApp = 'Slack';
+        else matchedApp = 'Mail';
+        matchType = 'fuzzy match';
+      } else if (titleMatches.some(t => inputLower.includes(t))) {
+        matchedApp = 'Safari';
+        matchType = 'title match';
+      }
     }
     
     // simulate focus action
@@ -320,7 +375,7 @@ const Commands = (function() {
 
     // trigger preview animation
     if (typeof Preview !== 'undefined') {
-      Preview.focus(appName.toLowerCase());
+      Preview.focus(matchedApp.toLowerCase());
     }
   }
 

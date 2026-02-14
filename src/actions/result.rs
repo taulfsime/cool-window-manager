@@ -103,9 +103,11 @@ impl MatchData {
         let (match_type, distance) = match &result.match_type {
             MatchType::Exact => ("exact", None),
             MatchType::Prefix => ("prefix", None),
+            MatchType::Regex { .. } => ("regex", None),
             MatchType::Fuzzy { distance } => ("fuzzy", Some(*distance)),
             MatchType::TitleExact { .. } => ("title_exact", None),
             MatchType::TitlePrefix { .. } => ("title_prefix", None),
+            MatchType::TitleRegex { .. } => ("title_regex", None),
             MatchType::TitleFuzzy { distance, .. } => ("title_fuzzy", Some(*distance)),
         };
 

@@ -26,6 +26,9 @@ dirs = "5"
 # Fuzzy matching
 strsim = "0.11"
 
+# Regex matching
+regex = "1"
+
 # Async runtime for daemon
 tokio = { version = "1", features = ["full"] }
 

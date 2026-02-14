@@ -1,4 +1,5 @@
 use anyhow::Result;
+use regex::RegexBuilder;
 use strsim::levenshtein;
 
 #[derive(Debug, Clone)]
@@ -13,9 +14,11 @@ pub struct AppInfo {
 pub enum MatchType {
     Exact,
     Prefix,
+    Regex { pattern: String },
     Fuzzy { distance: usize },
     TitleExact { title: String },
     TitlePrefix { title: String },
+    TitleRegex { title: String, pattern: String },
     TitleFuzzy { title: String, distance: usize },
 }
 
@@ -30,6 +33,9 @@ impl MatchResult {
         match &self.match_type {
             MatchType::Exact => format!("\"{}\" (exact match)", self.app.name),
             MatchType::Prefix => format!("\"{}\" (prefix match)", self.app.name),
+            MatchType::Regex { pattern } => {
+                format!("\"{}\" (regex: /{}/)", self.app.name, pattern)
+            }
             MatchType::Fuzzy { distance } => {
                 format!("\"{}\" (fuzzy, distance={})", self.app.name, distance)
             }
@@ -38,6 +44,12 @@ impl MatchResult {
             }
             MatchType::TitlePrefix { title } => {
                 format!("\"{}\" (title prefix: \"{}\")", self.app.name, title)
+            }
+            MatchType::TitleRegex { title, pattern } => {
+                format!(
+                    "\"{}\" (title regex: /{}/ matched \"{}\")",
+                    self.app.name, pattern, title
+                )
             }
             MatchType::TitleFuzzy { title, distance } => {
                 format!(
@@ -49,9 +61,71 @@ impl MatchResult {
     }
 }
 
+/// Parse a query to detect if it's a regex pattern
+/// Returns Some((pattern, case_insensitive)) if the query is /pattern/ or /pattern/i
+fn parse_regex_pattern(query: &str) -> Option<(String, bool)> {
+    if !query.starts_with('/') {
+        return None;
+    }
+
+    if query.ends_with("/i") && query.len() > 3 {
+        Some((query[1..query.len() - 2].to_string(), true))
+    } else if query.ends_with('/') && query.len() > 2 {
+        Some((query[1..query.len() - 1].to_string(), false))
+    } else {
+        None
+    }
+}
+
+/// Find an app by regex pattern matching against name and title
+fn find_app_by_regex(
+    pattern: &str,
+    case_insensitive: bool,
+    apps: &[AppInfo],
+) -> Option<MatchResult> {
+    let regex = RegexBuilder::new(pattern)
+        .case_insensitive(case_insensitive)
+        .build()
+        .ok()?;
+
+    // 1. try name match first
+    for app in apps {
+        if regex.is_match(&app.name) {
+            return Some(MatchResult {
+                app: app.clone(),
+                match_type: MatchType::Regex {
+                    pattern: pattern.to_string(),
+                },
+            });
+        }
+    }
+
+    // 2. try title match
+    for app in apps {
+        for title in &app.titles {
+            if regex.is_match(title) {
+                return Some(MatchResult {
+                    app: app.clone(),
+                    match_type: MatchType::TitleRegex {
+                        title: title.clone(),
+                        pattern: pattern.to_string(),
+                    },
+                });
+            }
+        }
+    }
+
+    None
+}
+
 /// Find an app by name or window title using fuzzy matching
-/// Priority: name exact > name prefix > name fuzzy > title exact > title prefix > title fuzzy
+/// Priority: name exact > name prefix > regex > name fuzzy > title exact > title prefix > title regex > title fuzzy
 pub fn find_app(query: &str, apps: &[AppInfo], fuzzy_threshold: usize) -> Option<MatchResult> {
+    // check for regex pattern first (e.g., /Safari.*/ or /chrome/i)
+    if let Some((pattern, case_insensitive)) = parse_regex_pattern(query) {
+        return find_app_by_regex(&pattern, case_insensitive, apps);
+    }
+
     let query_lower = query.to_lowercase();
 
     // 1. exact name match (case-insensitive)
@@ -656,5 +730,164 @@ mod tests {
         // "kitten" -> "sitting" has distance 3
         let distance = levenshtein("kitten", "sitting");
         assert_eq!(distance, 3);
+    }
+
+    // ========================================================================
+    // Regex matching tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_regex_pattern_valid() {
+        let result = parse_regex_pattern("/Safari.*/");
+        assert_eq!(result, Some(("Safari.*".to_string(), false)));
+    }
+
+    #[test]
+    fn test_parse_regex_pattern_case_insensitive() {
+        let result = parse_regex_pattern("/chrome/i");
+        assert_eq!(result, Some(("chrome".to_string(), true)));
+    }
+
+    #[test]
+    fn test_parse_regex_pattern_not_regex() {
+        assert_eq!(parse_regex_pattern("Safari"), None);
+        assert_eq!(parse_regex_pattern("Saf/ari"), None);
+    }
+
+    #[test]
+    fn test_parse_regex_pattern_incomplete() {
+        // missing closing slash
+        assert_eq!(parse_regex_pattern("/Safari"), None);
+        // too short
+        assert_eq!(parse_regex_pattern("//"), None);
+        assert_eq!(parse_regex_pattern("/i"), None);
+    }
+
+    #[test]
+    fn test_regex_name_match_case_sensitive() {
+        let apps = test_apps();
+        let result = find_app("/^Slack$/", &apps, 2).unwrap();
+        assert_eq!(result.app.name, "Slack");
+        assert!(matches!(result.match_type, MatchType::Regex { .. }));
+    }
+
+    #[test]
+    fn test_regex_name_match_case_sensitive_no_match() {
+        let apps = test_apps();
+        // lowercase "slack" should not match "Slack" without /i flag
+        let result = find_app("/^slack$/", &apps, 2);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_regex_name_match_case_insensitive() {
+        let apps = test_apps();
+        let result = find_app("/^slack$/i", &apps, 2).unwrap();
+        assert_eq!(result.app.name, "Slack");
+        assert!(matches!(result.match_type, MatchType::Regex { .. }));
+    }
+
+    #[test]
+    fn test_regex_name_match_partial() {
+        let apps = test_apps();
+        // should match "Google Chrome" with partial regex
+        let result = find_app("/Google/", &apps, 2).unwrap();
+        assert_eq!(result.app.name, "Google Chrome");
+        assert!(matches!(result.match_type, MatchType::Regex { .. }));
+    }
+
+    #[test]
+    fn test_regex_title_match() {
+        let apps = test_apps();
+        // match window title containing "GitHub"
+        let result = find_app("/GitHub.*cool-window/", &apps, 2).unwrap();
+        assert_eq!(result.app.name, "Safari");
+        assert!(matches!(result.match_type, MatchType::TitleRegex { .. }));
+    }
+
+    #[test]
+    fn test_regex_title_match_case_insensitive() {
+        let apps = test_apps();
+        let result = find_app("/github/i", &apps, 2).unwrap();
+        assert_eq!(result.app.name, "Safari");
+        assert!(matches!(result.match_type, MatchType::TitleRegex { .. }));
+    }
+
+    #[test]
+    fn test_regex_invalid_pattern_returns_none() {
+        let apps = test_apps();
+        // invalid regex (unclosed group)
+        let result = find_app("/Safari(/", &apps, 2);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_regex_name_takes_priority_over_title() {
+        let apps = test_apps();
+        // "Slack" appears in both app name and title "general - Slack"
+        // name match should take priority
+        let result = find_app("/Slack/", &apps, 2).unwrap();
+        assert_eq!(result.app.name, "Slack");
+        assert!(matches!(result.match_type, MatchType::Regex { .. }));
+    }
+
+    #[test]
+    fn test_regex_alternation() {
+        let apps = test_apps();
+        // match either Safari or Chrome
+        let result = find_app("/Safari|Chrome/", &apps, 2).unwrap();
+        // should match first alphabetically (Google Chrome comes before Safari)
+        assert!(
+            result.app.name == "Google Chrome" || result.app.name == "Safari",
+            "expected Safari or Chrome, got {}",
+            result.app.name
+        );
+    }
+
+    #[test]
+    fn test_regex_no_match() {
+        let apps = test_apps();
+        let result = find_app("/NonExistentApp/", &apps, 2);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_match_result_describe_regex() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Safari".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::Regex {
+                pattern: "Saf.*".to_string(),
+            },
+        };
+        let desc = result.describe();
+        assert!(desc.contains("Safari"));
+        assert!(desc.contains("regex"));
+        assert!(desc.contains("Saf.*"));
+    }
+
+    #[test]
+    fn test_match_result_describe_title_regex() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Chrome".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::TitleRegex {
+                title: "GitHub - PR #123".to_string(),
+                pattern: "PR #\\d+".to_string(),
+            },
+        };
+        let desc = result.describe();
+        assert!(desc.contains("Chrome"));
+        assert!(desc.contains("title regex"));
+        assert!(desc.contains("PR #\\d+"));
+        assert!(desc.contains("GitHub - PR #123"));
     }
 }

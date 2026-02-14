@@ -251,13 +251,15 @@ cwm focus --app Safari
 cwm focus --app slck             # fuzzy matching by name
 cwm focus --app "New Tab"        # match by window title
 cwm focus --app "GitHub - cool"  # match by title prefix
+cwm focus --app '/^Google/'      # regex: apps starting with "Google"
+cwm focus --app '/chrome|safari/i'  # regex: any browser (case-insensitive)
 cwm focus --app Chrome --verbose
 cwm focus --app Safari --app Chrome  # try Safari first, fallback to Chrome
 cwm focus -a Safari -a Chrome        # short form
 ```
 
 Options:
-- `--app, -a <NAME>` - Target app name or window title (required, repeatable, fuzzy matched)
+- `--app, -a <NAME>` - Target app name or window title (required, repeatable, supports fuzzy and regex matching)
 - `--launch` - Launch first app if none found
 - `--no-launch` - Never launch app
 - `--verbose, -v` - Show matching details
@@ -446,6 +448,7 @@ Get information about windows.
 ```bash
 cwm get focused                  # info about focused window
 cwm get window --app Safari      # info about specific app's window
+cwm get window --app '/safari/i' --app '/chrome/i'  # try Safari, fallback to Chrome
 
 # Custom format output
 cwm get focused --format '{app.name}'           # just the app name
@@ -455,9 +458,10 @@ cwm get window --app Safari --format '{display.name}'      # which display
 
 Subcommands:
 - `focused` - Get info about the currently focused window
-- `window --app <NAME>` - Get info about a specific app's window
+- `window --app <NAME>` - Get info about a specific app's window (repeatable, tries each in order)
 
 Options:
+- `--app, -a <NAME>` - Target app name (required for `window`, repeatable, supports fuzzy and regex matching)
 - `--format <TEMPLATE>` - Custom output format using `{field}` placeholders
 
 Available fields for format:
@@ -836,26 +840,35 @@ cwm spotlight install
 
 Shortcuts are installed to `~/Applications/cwm/` and indexed by Spotlight. Search for "cwm: <name>" to run them.
 
-### Fuzzy matching
+### App matching
 
 Apps are matched by name and window title with priority:
 
 **Name matching:**
 1. Exact match (case-insensitive)
 2. Prefix match
-3. Fuzzy match (Levenshtein distance within threshold)
+3. Regex match (if query is `/pattern/` or `/pattern/i`)
+4. Fuzzy match (Levenshtein distance within threshold)
 
 **Title matching (if no name match):**
-4. Title exact match
-5. Title prefix match
-6. Title fuzzy match
+5. Title exact match
+6. Title prefix match
+7. Title regex match
+8. Title fuzzy match
 
-Examples:
+**Standard examples:**
 - `"Slack"` → Slack (name exact)
 - `"slck"` → Slack (name fuzzy, distance=1)
 - `"Goo"` → Google Chrome (name prefix)
 - `"New Tab"` → Google Chrome (title exact)
 - `"GitHub - taulfsime"` → Safari (title prefix)
+
+**Regex examples:**
+- `"/^Google/"` → Google Chrome (regex name match)
+- `"/chrome|safari/i"` → Chrome or Safari (case-insensitive alternation)
+- `"/Pull Request #\d+/"` → window with PR number in title
+
+Regex uses JavaScript-style `/pattern/` syntax. Add `/i` suffix for case-insensitive matching. Invalid regex patterns return no match.
 
 ## Website
 

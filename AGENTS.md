@@ -508,20 +508,40 @@ npm run dev  # starts server at http://localhost:3000
 
 ## Key Concepts
 
-### Fuzzy Matching
+### App Matching
 
 Applications are matched by name and window title with the following priority:
 
 1. **Name exact match** (case-insensitive): `"safari"` matches `"Safari"`
 2. **Name prefix match**: `"saf"` matches `"Safari"`
-3. **Name fuzzy match**: Levenshtein distance within threshold (default: 2)
-4. **Title exact match**: `"New Tab"` matches Chrome window with that title
-5. **Title prefix match**: `"GitHub - taulfsime"` matches window starting with that
-6. **Title fuzzy match**: Levenshtein distance within threshold
+3. **Name regex match**: `/^Google/` matches `"Google Chrome"`
+4. **Name fuzzy match**: Levenshtein distance within threshold (default: 2)
+5. **Title exact match**: `"New Tab"` matches Chrome window with that title
+6. **Title prefix match**: `"GitHub - taulfsime"` matches window starting with that
+7. **Title regex match**: `/GitHub.*PR/` matches window title containing "GitHub" and "PR"
+8. **Title fuzzy match**: Levenshtein distance within threshold
 
 Window titles are retrieved via the Accessibility API (`AXTitle` attribute) for all windows of each running application. The `AppInfo` struct contains a `titles: Vec<String>` field with all window titles.
 
-The threshold is configurable via `settings.fuzzy_threshold` in config.
+The fuzzy threshold is configurable via `settings.fuzzy_threshold` in config.
+
+#### Regex Matching
+
+Regex patterns use JavaScript-style `/pattern/` syntax:
+
+- `/Safari.*/` - case-sensitive regex matching
+- `/chrome/i` - case-insensitive regex (with `i` flag)
+- `/^Google/` - anchored pattern (must start with "Google")
+- `/Safari|Chrome|Firefox/i` - alternation (match any browser)
+
+Invalid regex patterns return no match (fail silently).
+
+Examples:
+```bash
+cwm focus --app '/^Google/'           # apps starting with "Google"
+cwm focus --app '/chrome|safari/i'    # any browser (case-insensitive)
+cwm focus --app '/Pull Request #\d+/' # PR windows by title
+```
 
 ### Configuration Hierarchy
 
