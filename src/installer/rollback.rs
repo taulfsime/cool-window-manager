@@ -1,18 +1,25 @@
+//! rollback support for safe updates with automatic recovery
+//!
+//! this module provides functions for performing updates with automatic rollback
+//! on failure, and browser-based error reporting for failed updates
+
+#![allow(dead_code)]
+
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use crate::config::TelemetrySettings;
-use crate::installer::github::GitHubClient;
 
 pub struct UpdateAttempt {
     pub new_version: String,
     pub previous_version: String,
 }
 
-#[allow(dead_code)]
-pub async fn safe_update_with_rollback<F>(update_fn: F) -> Result<()>
+/// perform update with automatic rollback on failure
+pub fn safe_update_with_rollback<F>(update_fn: F) -> Result<()>
 where
     F: FnOnce() -> Result<()>,
 {
@@ -20,13 +27,13 @@ where
     let backup_path = current_exe.with_extension("backup");
 
     // create backup
-    fs::copy(&current_exe, &backup_path).context("Failed to create backup")?;
+    fs::copy(&current_exe, &backup_path).context("failed to create backup")?;
 
     // attempt update
     match update_fn() {
         Ok(_) => {
             // test new binary
-            match test_updated_binary(&current_exe).await {
+            match test_updated_binary(&current_exe) {
                 Ok(_) => {
                     // success - remove backup
                     fs::remove_file(&backup_path).ok();
@@ -34,18 +41,18 @@ where
                 }
                 Err(e) => {
                     // test failed - rollback
-                    eprintln!("Update test failed: {}", e);
-                    eprintln!("Rolling back to previous version...");
+                    eprintln!("update test failed: {}", e);
+                    eprintln!("rolling back to previous version...");
 
                     fs::remove_file(&current_exe).ok();
-                    fs::rename(&backup_path, &current_exe).context("Failed to rollback")?;
+                    fs::rename(&backup_path, &current_exe).context("failed to rollback")?;
 
                     // restore man page from rolled-back binary
                     if let Err(man_err) = crate::installer::install::install_man_page(false) {
-                        eprintln!("⚠️  Failed to restore man page: {}", man_err);
+                        eprintln!("warning: failed to restore man page: {}", man_err);
                     }
 
-                    Err(anyhow!("Update rolled back due to test failure: {}", e))
+                    Err(anyhow!("update rolled back due to test failure: {}", e))
                 }
             }
         }
@@ -57,28 +64,27 @@ where
     }
 }
 
-#[allow(dead_code)]
-async fn test_updated_binary(binary_path: &Path) -> Result<()> {
-    use tokio::process::Command;
-
-    // run version command
-    let output = Command::new(binary_path).arg("version").output().await?;
+fn test_updated_binary(binary_path: &Path) -> Result<()> {
+    // run version command to verify binary works
+    let output = Command::new(binary_path).arg("version").output()?;
 
     if !output.status.success() {
         return Err(anyhow!(
-            "Binary failed version check: {}",
+            "binary failed version check: {}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
 
-    // could add more tests here
-    // - check permissions command
-    // - verify config loads
+    // verify output contains expected version format
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains("cwm") {
+        return Err(anyhow!("binary version output invalid"));
+    }
 
     Ok(())
 }
 
-#[allow(dead_code)]
+/// report update failure by opening browser with pre-filled GitHub issue
 pub fn report_update_failure(
     attempt: &UpdateAttempt,
     error: &anyhow::Error,
@@ -102,44 +108,33 @@ pub fn report_update_failure(
 
     // system info if enabled
     if telemetry.include_system_info {
-        report.insert("os_version".to_string(), get_macos_version()?);
+        if let Ok(os_version) = get_macos_version() {
+            report.insert("os_version".to_string(), os_version);
+        }
         report.insert(
             "architecture".to_string(),
             std::env::consts::ARCH.to_string(),
         );
         report.insert("cpu_count".to_string(), num_cpus::get().to_string());
 
-        // memory info
-        if let Ok(mem) = get_memory_info() {
-            report.insert("memory_total".to_string(), mem.0.to_string());
-            report.insert("memory_available".to_string(), mem.1.to_string());
+        if let Ok((total, available)) = get_memory_info() {
+            report.insert("memory_total".to_string(), total.to_string());
+            report.insert("memory_available".to_string(), available.to_string());
         }
     }
 
-    // operation log (last N lines of output)
-    if let Ok(log) = capture_recent_logs() {
-        report.insert("operation_log".to_string(), log);
-    }
-
-    // create GitHub issue
-    create_error_report_issue(&report)?;
+    // open browser with pre-filled issue
+    open_error_report_in_browser(&report)?;
 
     Ok(())
 }
 
-#[allow(dead_code)]
 fn get_macos_version() -> Result<String> {
-    use std::process::Command;
-
     let output = Command::new("sw_vers").arg("-productVersion").output()?;
-
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-#[allow(dead_code)]
 fn get_memory_info() -> Result<(u64, u64)> {
-    use std::process::Command;
-
     let output = Command::new("sysctl").args(["-n", "hw.memsize"]).output()?;
 
     let total = String::from_utf8_lossy(&output.stdout)
@@ -147,25 +142,16 @@ fn get_memory_info() -> Result<(u64, u64)> {
         .parse::<u64>()
         .unwrap_or(0);
 
-    // this is approximate - better would be to use vm_stat
-    let available = total / 2; // rough estimate
+    // approximate available memory
+    let available = total / 2;
 
     Ok((total, available))
 }
 
-#[allow(dead_code)]
-fn capture_recent_logs() -> Result<String> {
-    // in a real implementation, we'd capture stdout/stderr during the update
-    // for now, return a placeholder
-    Ok("Update operation log would be captured here".to_string())
-}
-
-#[allow(dead_code)]
-fn create_error_report_issue(report: &HashMap<String, String>) -> Result<()> {
+fn open_error_report_in_browser(report: &HashMap<String, String>) -> Result<()> {
     let repo = env!("GITHUB_REPO");
-    let client = GitHubClient::new(repo)?;
 
-    // format issue title
+    // build issue title
     let title = format!(
         "Update failure: {} -> {}",
         report
@@ -174,8 +160,8 @@ fn create_error_report_issue(report: &HashMap<String, String>) -> Result<()> {
         report.get("new_version").unwrap_or(&"unknown".to_string())
     );
 
-    // format issue body
-    let mut body = String::from("## Automatic Error Report\n\n");
+    // build issue body
+    let mut body = String::from("## Update Error Report\n\n");
     body.push_str("An update failed and was automatically rolled back.\n\n");
 
     body.push_str("### Error Details\n");
@@ -208,13 +194,16 @@ fn create_error_report_issue(report: &HashMap<String, String>) -> Result<()> {
         body.push_str("### System Information\n");
         body.push_str(&format!(
             "**OS:** macOS {}\n",
-            report.get("os_version").unwrap()
+            report.get("os_version").unwrap_or(&"unknown".to_string())
         ));
         body.push_str(&format!(
             "**Architecture:** {}\n",
-            report.get("architecture").unwrap()
+            report.get("architecture").unwrap_or(&"unknown".to_string())
         ));
-        body.push_str(&format!("**CPUs:** {}\n", report.get("cpu_count").unwrap()));
+        body.push_str(&format!(
+            "**CPUs:** {}\n",
+            report.get("cpu_count").unwrap_or(&"unknown".to_string())
+        ));
         if let Some(mem) = report.get("memory_total") {
             let mem_gb = mem.parse::<u64>().unwrap_or(0) / 1_073_741_824;
             body.push_str(&format!("**Memory:** {} GB\n", mem_gb));
@@ -222,14 +211,7 @@ fn create_error_report_issue(report: &HashMap<String, String>) -> Result<()> {
         body.push('\n');
     }
 
-    if let Some(log) = report.get("operation_log") {
-        body.push_str("### Operation Log\n");
-        body.push_str("```\n");
-        body.push_str(log);
-        body.push_str("\n```\n");
-    }
-
-    body.push_str("\n### Debug Information\n");
+    body.push_str("### Debug Information\n");
     body.push_str("<details>\n<summary>Full error chain</summary>\n\n");
     body.push_str("```\n");
     body.push_str(
@@ -239,13 +221,59 @@ fn create_error_report_issue(report: &HashMap<String, String>) -> Result<()> {
     );
     body.push_str("\n```\n</details>\n");
 
-    // create issue with labels
-    client.create_issue(
-        &title,
-        &body,
-        vec!["bug", "auto-reported", "update-failure"],
-    )?;
+    // url-encode title and body
+    let encoded_title = urlencoding::encode(&title);
+    let encoded_body = urlencoding::encode(&body);
 
-    println!("Error report submitted to GitHub");
+    // build GitHub new issue URL with pre-filled template
+    let url = format!(
+        "https://github.com/{}/issues/new?title={}&body={}&labels=bug,update-failure",
+        repo, encoded_title, encoded_body
+    );
+
+    // open in default browser
+    Command::new("open").arg(&url).spawn()?;
+
+    eprintln!("opening browser to report this issue...");
+    eprintln!(
+        "if the browser doesn't open, visit: https://github.com/{}/issues/new",
+        repo
+    );
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_macos_version() {
+        let version = get_macos_version();
+        assert!(version.is_ok());
+        let v = version.unwrap();
+        // should be something like "14.2.1" or "13.5"
+        assert!(!v.is_empty());
+        assert!(v.contains('.'));
+    }
+
+    #[test]
+    fn test_get_memory_info() {
+        let mem = get_memory_info();
+        assert!(mem.is_ok());
+        let (total, available) = mem.unwrap();
+        // should have at least 1GB
+        assert!(total > 1_000_000_000);
+        assert!(available > 0);
+    }
+
+    #[test]
+    fn test_update_attempt_fields() {
+        let attempt = UpdateAttempt {
+            new_version: "stable-abc12345".to_string(),
+            previous_version: "stable-def67890".to_string(),
+        };
+        assert_eq!(attempt.new_version, "stable-abc12345");
+        assert_eq!(attempt.previous_version, "stable-def67890");
+    }
 }

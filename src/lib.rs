@@ -1,6 +1,7 @@
 // library crate for cwm
 // exposes modules needed by auxiliary binaries (e.g., generate-man)
 
+pub mod actions;
 pub mod cli;
 pub mod config;
 pub mod daemon;

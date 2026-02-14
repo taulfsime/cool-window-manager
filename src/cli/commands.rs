@@ -1,19 +1,15 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use serde::Serialize;
 
 use std::path::PathBuf;
 
-use crate::config::{self, Config, Shortcut};
+use crate::actions::{self, Command, ExecutionContext};
+use crate::config::{self, Shortcut};
 use crate::daemon::hotkeys;
 use crate::display;
-use crate::window::{accessibility, manager, matching};
 
-use super::exit_codes;
-use super::output::{
-    self, AppData, DisplayData, FocusData, MatchData, MaximizeData, MoveDisplayData, OutputMode,
-    ResizeData, SizeData,
-};
+use super::convert::resolve_launch_flags;
+use super::output::{self, OutputMode};
 
 #[derive(Parser)]
 #[command(name = "cwm")]
@@ -363,19 +359,25 @@ pub enum ListResource {
     Aliases,
 }
 
-// JSON output structs for list command
+// JSON output structs for list command (used in tests to verify serialization format)
 
+#[cfg(test)]
+use serde::Serialize;
+
+#[cfg(test)]
 #[derive(Serialize)]
 struct ListResponse<T: Serialize> {
     items: Vec<T>,
 }
 
+#[cfg(test)]
 #[derive(Serialize)]
 struct AppSummary {
     name: String,
     pid: i32,
 }
 
+#[cfg(test)]
 #[derive(Serialize)]
 struct AppDetailed {
     name: String,
@@ -384,6 +386,7 @@ struct AppDetailed {
     titles: Vec<String>,
 }
 
+#[cfg(test)]
 #[derive(Serialize)]
 struct DisplaySummary {
     index: usize,
@@ -393,6 +396,7 @@ struct DisplaySummary {
     is_main: bool,
 }
 
+#[cfg(test)]
 #[derive(Serialize)]
 struct DisplayDetailed {
     index: usize,
@@ -411,6 +415,7 @@ struct DisplayDetailed {
     unique_id: String,
 }
 
+#[cfg(test)]
 #[derive(Serialize)]
 struct AliasSummary {
     name: String,
@@ -420,6 +425,7 @@ struct AliasSummary {
     display_index: Option<usize>,
 }
 
+#[cfg(test)]
 #[derive(Serialize)]
 struct AliasDetailed {
     name: String,
@@ -457,24 +463,6 @@ fn resolve_app_names(apps: &[String]) -> Result<Vec<String>> {
     apps.iter().map(|a| resolve_app_name(a)).collect()
 }
 
-/// convert MatchResult to MatchData for JSON output
-fn match_result_to_data(result: &matching::MatchResult, query: &str) -> MatchData {
-    MatchData {
-        match_type: format!("{:?}", result.match_type).to_lowercase(),
-        query: query.to_string(),
-        distance: result.distance(),
-    }
-}
-
-/// convert AppInfo to AppData for JSON output
-fn app_info_to_data(app: &matching::AppInfo) -> AppData {
-    AppData {
-        name: app.name.clone(),
-        pid: app.pid,
-        bundle_id: app.bundle_id.clone(),
-    }
-}
-
 pub fn execute(cli: Cli) -> Result<()> {
     let config_path = cli.config.as_deref();
     let output_mode = OutputMode::from_flags(cli.json, cli.no_json, cli.quiet, false, false);
@@ -488,79 +476,33 @@ pub fn execute(cli: Cli) -> Result<()> {
         } => {
             let config = config::load_with_override(config_path)?;
             let apps = resolve_app_names(&apps)?;
-            let running_apps = matching::get_running_apps()?;
 
-            // try each app in order until one is found
-            for app in &apps {
-                let match_result =
-                    matching::find_app(app, &running_apps, config.settings.fuzzy_threshold);
+            let cmd = Command::Focus {
+                app: apps,
+                launch: resolve_launch_flags(launch, no_launch),
+            };
+            let ctx = ExecutionContext::new_with_verbose(&config, true, verbose);
 
-                if let Some(result) = match_result {
-                    if verbose {
-                        eprintln!("Matched {} -> {}", app, result.describe());
-                    }
-                    manager::focus_app(&result.app, verbose)?;
-
-                    // output based on mode
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
                     if output_mode.is_json() {
-                        let data = FocusData {
-                            action: "focus",
-                            app: app_info_to_data(&result.app),
-                            match_info: match_result_to_data(&result, app),
-                        };
-                        output::print_json(&data);
+                        output::print_json(&result);
                     }
                     // silent on success in text/quiet mode (Unix convention)
-                    return Ok(());
-                } else if verbose {
-                    eprintln!("App '{}' not found, trying next...", app);
+                    Ok(())
                 }
-            }
-
-            // no app found, check if we should launch the first one
-            let should_launch =
-                config::should_launch(launch, no_launch, None, config.settings.launch);
-
-            if should_launch {
-                let first_app = &apps[0];
-                if verbose {
-                    eprintln!("No apps found, launching '{}'...", first_app);
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error_with_suggestions(
+                            err.code,
+                            &err.message,
+                            err.suggestions.clone(),
+                        );
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
                 }
-                manager::launch_app(first_app, verbose)?;
-
-                if output_mode.is_json() {
-                    // return minimal info for launched app
-                    let data = FocusData {
-                        action: "focus",
-                        app: AppData {
-                            name: first_app.clone(),
-                            pid: 0, // unknown until app starts
-                            bundle_id: None,
-                        },
-                        match_info: MatchData {
-                            match_type: "launched".to_string(),
-                            query: first_app.clone(),
-                            distance: None,
-                        },
-                    };
-                    output::print_json(&data);
-                }
-                return Ok(());
-            }
-
-            // error: no app found
-            let suggestions: Vec<String> = running_apps.iter().map(|a| a.name.clone()).collect();
-            let message = format!("no matching app found, tried: {}", apps.join(", "));
-
-            if output_mode.is_json() {
-                output::print_json_error_with_suggestions(
-                    exit_codes::APP_NOT_FOUND,
-                    &message,
-                    suggestions,
-                );
-                std::process::exit(exit_codes::APP_NOT_FOUND);
-            } else {
-                return Err(anyhow!("{}", message));
             }
         }
 
@@ -573,70 +515,28 @@ pub fn execute(cli: Cli) -> Result<()> {
             let config = config::load_with_override(config_path)?;
             let app = app.map(|a| resolve_app_name(&a)).transpose()?;
 
-            let (target_app, match_info) = if let Some(app_name) = &app {
-                let running_apps = matching::get_running_apps()?;
-                let match_result =
-                    matching::find_app(app_name, &running_apps, config.settings.fuzzy_threshold);
+            let cmd = Command::Maximize {
+                app: app.map(|a| vec![a]).unwrap_or_default(),
+                launch: resolve_launch_flags(launch, no_launch),
+            };
+            let ctx = ExecutionContext::new_with_verbose(&config, true, verbose);
 
-                match match_result {
-                    Some(result) => {
-                        if verbose {
-                            eprintln!("Matched {} -> {}", app_name, result.describe());
-                        }
-                        let match_data = match_result_to_data(&result, app_name);
-                        (Some(result.app), Some(match_data))
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
                     }
-                    None => {
-                        let should_launch =
-                            config::should_launch(launch, no_launch, None, config.settings.launch);
-
-                        if should_launch {
-                            if verbose {
-                                eprintln!("App '{}' not running, launching...", app_name);
-                            }
-                            manager::launch_app(app_name, verbose)?;
-                            if output_mode.is_json() {
-                                output::print_json_error(
-                                    exit_codes::APP_NOT_FOUND,
-                                    "app launched, run maximize again once ready",
-                                );
-                            }
-                            return Ok(());
-                        } else {
-                            if output_mode.is_json() {
-                                output::print_json_error(
-                                    exit_codes::APP_NOT_FOUND,
-                                    &format!("app '{}' not found", app_name),
-                                );
-                                std::process::exit(exit_codes::APP_NOT_FOUND);
-                            }
-                            return Err(anyhow!("App '{}' not found", app_name));
-                        }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
                     }
                 }
-            } else {
-                (None, None)
-            };
-
-            manager::maximize_app(target_app.as_ref(), verbose)?;
-
-            if output_mode.is_json() {
-                let app_data = target_app
-                    .as_ref()
-                    .map(app_info_to_data)
-                    .unwrap_or_else(|| AppData {
-                        name: "focused".to_string(),
-                        pid: 0,
-                        bundle_id: None,
-                    });
-                let data = MaximizeData {
-                    action: "maximize",
-                    app: app_data,
-                    match_info,
-                };
-                output::print_json(&data);
             }
-            Ok(())
         }
 
         Commands::MoveDisplay {
@@ -650,79 +550,29 @@ pub fn execute(cli: Cli) -> Result<()> {
             let app = app.map(|a| resolve_app_name(&a)).transpose()?;
             let display_target = display::DisplayTarget::parse(&target)?;
 
-            let (target_app, match_info) = if let Some(app_name) = &app {
-                let running_apps = matching::get_running_apps()?;
-                let match_result =
-                    matching::find_app(app_name, &running_apps, config.settings.fuzzy_threshold);
+            let cmd = Command::MoveDisplay {
+                app: app.map(|a| vec![a]).unwrap_or_default(),
+                target: display_target,
+                launch: resolve_launch_flags(launch, no_launch),
+            };
+            let ctx = ExecutionContext::new_with_verbose(&config, true, verbose);
 
-                match match_result {
-                    Some(result) => {
-                        if verbose {
-                            eprintln!("Matched {} -> {}", app_name, result.describe());
-                        }
-                        let match_data = match_result_to_data(&result, app_name);
-                        (Some(result.app), Some(match_data))
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
                     }
-                    None => {
-                        let should_launch =
-                            config::should_launch(launch, no_launch, None, config.settings.launch);
-
-                        if should_launch {
-                            if verbose {
-                                eprintln!("App '{}' not running, launching...", app_name);
-                            }
-                            manager::launch_app(app_name, verbose)?;
-                            if output_mode.is_json() {
-                                output::print_json_error(
-                                    exit_codes::APP_NOT_FOUND,
-                                    "app launched, run move-display again once ready",
-                                );
-                            }
-                            return Ok(());
-                        } else {
-                            if output_mode.is_json() {
-                                output::print_json_error(
-                                    exit_codes::APP_NOT_FOUND,
-                                    &format!("app '{}' not found", app_name),
-                                );
-                                std::process::exit(exit_codes::APP_NOT_FOUND);
-                            }
-                            return Err(anyhow!("App '{}' not found", app_name));
-                        }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
                     }
                 }
-            } else {
-                (None, None)
-            };
-
-            let target_display_info = manager::move_to_display_with_aliases(
-                target_app.as_ref(),
-                &display_target,
-                verbose,
-                &config.display_aliases,
-            )?;
-
-            if output_mode.is_json() {
-                let app_data = target_app
-                    .as_ref()
-                    .map(app_info_to_data)
-                    .unwrap_or_else(|| AppData {
-                        name: "focused".to_string(),
-                        pid: 0,
-                        bundle_id: None,
-                    });
-                let data = MoveDisplayData {
-                    action: "move_display",
-                    app: app_data,
-                    display: DisplayData {
-                        index: target_display_info.0,
-                        name: target_display_info.1,
-                    },
-                    match_info,
-                };
-                output::print_json(&data);
             }
-            Ok(())
         }
 
         Commands::Resize {
@@ -737,76 +587,32 @@ pub fn execute(cli: Cli) -> Result<()> {
 
             let config = config::load_with_override(config_path)?;
             let app = app.map(|a| resolve_app_name(&a)).transpose()?;
-
-            // parse the resize target
             let resize_target = ResizeTarget::parse(&to)?;
 
-            let (target_app, match_info) = if let Some(app_name) = &app {
-                let running_apps = matching::get_running_apps()?;
-                let match_result =
-                    matching::find_app(app_name, &running_apps, config.settings.fuzzy_threshold);
+            let cmd = Command::Resize {
+                app: app.map(|a| vec![a]).unwrap_or_default(),
+                to: resize_target,
+                overflow,
+                launch: resolve_launch_flags(launch, no_launch),
+            };
+            let ctx = ExecutionContext::new_with_verbose(&config, true, verbose);
 
-                match match_result {
-                    Some(result) => {
-                        if verbose {
-                            eprintln!("Matched {} -> {}", app_name, result.describe());
-                        }
-                        let match_data = match_result_to_data(&result, app_name);
-                        (Some(result.app), Some(match_data))
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
                     }
-                    None => {
-                        let should_launch =
-                            config::should_launch(launch, no_launch, None, config.settings.launch);
-
-                        if should_launch {
-                            if verbose {
-                                eprintln!("App '{}' not running, launching...", app_name);
-                            }
-                            manager::launch_app(app_name, verbose)?;
-                            if output_mode.is_json() {
-                                output::print_json_error(
-                                    exit_codes::APP_NOT_FOUND,
-                                    "app launched, run resize again once ready",
-                                );
-                            }
-                            return Ok(());
-                        } else {
-                            if output_mode.is_json() {
-                                output::print_json_error(
-                                    exit_codes::APP_NOT_FOUND,
-                                    &format!("app '{}' not found", app_name),
-                                );
-                                std::process::exit(exit_codes::APP_NOT_FOUND);
-                            }
-                            return Err(anyhow!("App '{}' not found", app_name));
-                        }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
                     }
                 }
-            } else {
-                (None, None)
-            };
-
-            let (width, height) =
-                manager::resize_app(target_app.as_ref(), &resize_target, overflow, verbose)?;
-
-            if output_mode.is_json() {
-                let app_data = target_app
-                    .as_ref()
-                    .map(app_info_to_data)
-                    .unwrap_or_else(|| AppData {
-                        name: "focused".to_string(),
-                        pid: 0,
-                        bundle_id: None,
-                    });
-                let data = ResizeData {
-                    action: "resize",
-                    app: app_data,
-                    size: SizeData { width, height },
-                    match_info,
-                };
-                output::print_json(&data);
             }
-            Ok(())
         }
 
         Commands::RecordShortcut {
@@ -909,78 +715,164 @@ pub fn execute(cli: Cli) -> Result<()> {
             Ok(())
         }
 
-        Commands::Daemon { command } => match command {
-            DaemonCommands::Start { log, foreground } => {
-                if foreground {
-                    crate::daemon::start_foreground(log)
-                } else {
-                    crate::daemon::start(log)
-                }
-            }
-            DaemonCommands::Stop => crate::daemon::stop(),
-            DaemonCommands::Status => {
-                crate::daemon::status()?;
-                Ok(())
-            }
-            DaemonCommands::Install { bin, log } => crate::daemon::install(bin, log),
-            DaemonCommands::Uninstall => crate::daemon::uninstall(),
-            DaemonCommands::RunForeground { log } => crate::daemon::start_foreground(log),
-        },
+        Commands::Daemon { command } => {
+            let config = config::load_with_override(config_path)?;
+            let cmd = command.to_command();
+            let ctx = ExecutionContext::cli_with_config_path(&config, false, config_path);
 
-        Commands::Config { command } => match command {
-            ConfigCommands::Show => {
-                let config = config::load_with_override(config_path)?;
-                let json =
-                    serde_json::to_string_pretty(&config).context("Failed to serialize config")?;
-                println!("{}", json);
-                Ok(())
-            }
-            ConfigCommands::Path => {
-                let path = config::get_config_path_with_override(config_path)?;
-                println!("{}", path.display());
-                Ok(())
-            }
-            ConfigCommands::Set { key, value } => {
-                let mut config = config::load_with_override(config_path)?;
-                config::set_value(&mut config, &key, &value)?;
-                config::save_with_override(&config, config_path)?;
-                println!("Set {} = {}", key, value);
-                Ok(())
-            }
-            ConfigCommands::Reset => {
-                let config = Config::default();
-                config::save_with_override(&config, config_path)?;
-                println!("Configuration reset to defaults");
-                Ok(())
-            }
-            ConfigCommands::Default => {
-                let config = config::default_with_examples();
-                let json =
-                    serde_json::to_string_pretty(&config).context("Failed to serialize config")?;
-                println!("{}", json);
-                Ok(())
-            }
-            ConfigCommands::Verify => {
-                let path = config::get_config_path_with_override(config_path)?;
-                let errors = config::verify(&path)?;
-
-                if errors.is_empty() {
-                    println!("✓ Configuration is valid: {}", path.display());
-                    Ok(())
-                } else {
-                    println!(
-                        "✗ Configuration has {} error(s): {}",
-                        errors.len(),
-                        path.display()
-                    );
-                    println!();
-                    for error in &errors {
-                        println!("  - {}", error);
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
+                    } else {
+                        // text output based on action
+                        let value = serde_json::to_value(&result).unwrap_or_default();
+                        if let Some(res) = value.get("result") {
+                            if let Some(status) = res.get("status").and_then(|v| v.as_str()) {
+                                match result.action {
+                                    "daemon_status" => {
+                                        let running = res
+                                            .get("running")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false);
+                                        if running {
+                                            let pid = res
+                                                .get("pid")
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(0);
+                                            println!("Daemon is running (PID: {})", pid);
+                                        } else {
+                                            println!("Daemon is not running");
+                                        }
+                                    }
+                                    "daemon_start" => {
+                                        if status == "started" {
+                                            println!("Daemon started");
+                                        }
+                                    }
+                                    "daemon_stop" => println!("Daemon stopped"),
+                                    "daemon_install" => {
+                                        println!("Daemon installed to run on login")
+                                    }
+                                    "daemon_uninstall" => {
+                                        println!("Daemon uninstalled from login items")
+                                    }
+                                    _ => {}
+                                }
+                            } else if result.action == "daemon_status" {
+                                // status doesn't have "status" field
+                                let running = res
+                                    .get("running")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                if running {
+                                    let pid = res.get("pid").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    println!("Daemon is running (PID: {})", pid);
+                                } else {
+                                    println!("Daemon is not running");
+                                }
+                            }
+                        }
                     }
-                    Err(anyhow!("configuration validation failed"))
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
                 }
             }
-        },
+        }
+
+        Commands::Config { command } => {
+            let config = config::load_with_override(config_path)?;
+            let cmd = command.to_command();
+            let ctx = ExecutionContext::cli_with_config_path(&config, false, config_path);
+
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
+                    } else {
+                        let value = serde_json::to_value(&result).unwrap_or_default();
+                        match result.action {
+                            "config_show" | "config_default" => {
+                                // pretty print the config JSON
+                                if let Some(res) = value.get("result") {
+                                    let json = serde_json::to_string_pretty(res)
+                                        .unwrap_or_else(|_| "{}".to_string());
+                                    println!("{}", json);
+                                }
+                            }
+                            "config_path" => {
+                                if let Some(res) = value.get("result") {
+                                    if let Some(path) = res.get("path").and_then(|v| v.as_str()) {
+                                        println!("{}", path);
+                                    }
+                                }
+                            }
+                            "config_set" => {
+                                if let Some(res) = value.get("result") {
+                                    let key = res.get("key").and_then(|v| v.as_str()).unwrap_or("");
+                                    let val =
+                                        res.get("value").and_then(|v| v.as_str()).unwrap_or("");
+                                    println!("Set {} = {}", key, val);
+                                }
+                            }
+                            "config_reset" => {
+                                println!("Configuration reset to defaults");
+                            }
+                            "config_verify" => {
+                                if let Some(res) = value.get("result") {
+                                    let valid =
+                                        res.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
+                                    let path =
+                                        res.get("path").and_then(|v| v.as_str()).unwrap_or("");
+
+                                    if valid {
+                                        println!("✓ Configuration is valid: {}", path);
+                                    } else {
+                                        let errors = res
+                                            .get("errors")
+                                            .and_then(|v| v.as_array())
+                                            .map(|arr| arr.len())
+                                            .unwrap_or(0);
+                                        println!(
+                                            "✗ Configuration has {} error(s): {}",
+                                            errors, path
+                                        );
+                                        println!();
+                                        if let Some(errs) =
+                                            res.get("errors").and_then(|v| v.as_array())
+                                        {
+                                            for err in errs {
+                                                if let Some(e) = err.as_str() {
+                                                    println!("  - {}", e);
+                                                }
+                                            }
+                                        }
+                                        return Err(anyhow!("configuration validation failed"));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
+                }
+            }
+        }
 
         Commands::List {
             resource,
@@ -989,21 +881,25 @@ pub fn execute(cli: Cli) -> Result<()> {
             format,
             detailed,
         } => {
-            // if no resource specified, show available resources
+            use crate::actions::ListResource as ActionListResource;
+
+            // if no resource specified, show available resources and exit with error
             let Some(resource) = resource else {
-                println!("Available resources:");
-                println!("  apps      Running applications");
-                println!("  displays  Available displays");
-                println!("  aliases   Display aliases (system and user-defined)");
-                println!();
-                println!("Usage: cwm list <RESOURCE> [OPTIONS]");
-                println!();
-                println!("Examples:");
-                println!("  cwm list apps");
-                println!("  cwm list apps --json");
-                println!("  cwm list apps --names");
-                println!("  cwm list displays --format '{{index}}: {{name}}'");
-                return Ok(());
+                eprintln!("error: missing required argument <RESOURCE>");
+                eprintln!();
+                eprintln!("Available resources:");
+                eprintln!("  apps      Running applications");
+                eprintln!("  displays  Available displays");
+                eprintln!("  aliases   Display aliases (system and user-defined)");
+                eprintln!();
+                eprintln!("Usage: cwm list <RESOURCE> [OPTIONS]");
+                eprintln!();
+                eprintln!("Examples:");
+                eprintln!("  cwm list apps");
+                eprintln!("  cwm list apps --json");
+                eprintln!("  cwm list apps --names");
+                eprintln!("  cwm list displays --format '{{index}}: {{name}}'");
+                std::process::exit(super::exit_codes::INVALID_ARGS);
             };
 
             // determine list output mode (list command has its own json flag)
@@ -1015,498 +911,299 @@ pub fn execute(cli: Cli) -> Result<()> {
                 format.is_some(),
             );
 
-            match resource {
-                ListResource::Apps => {
-                    let apps = matching::get_running_apps()?;
+            let config = config::load_with_override(config_path)?;
+            let action_resource = match resource {
+                ListResource::Apps => ActionListResource::Apps,
+                ListResource::Displays => ActionListResource::Displays,
+                ListResource::Aliases => ActionListResource::Aliases,
+            };
 
-                    match list_mode {
-                        OutputMode::Names => {
-                            for app in &apps {
-                                println!("{}", app.name);
-                            }
-                        }
-                        OutputMode::Format => {
-                            let fmt = format.as_ref().unwrap();
-                            for app in &apps {
-                                let data = if detailed {
-                                    serde_json::to_value(AppDetailed {
-                                        name: app.name.clone(),
-                                        pid: app.pid,
-                                        bundle_id: app.bundle_id.clone(),
-                                        titles: app.titles.clone(),
-                                    })
-                                    .unwrap_or_default()
-                                } else {
-                                    serde_json::to_value(AppSummary {
-                                        name: app.name.clone(),
-                                        pid: app.pid,
-                                    })
-                                    .unwrap_or_default()
-                                };
-                                println!("{}", output::format_template(fmt, &data));
-                            }
-                        }
-                        OutputMode::Json => {
-                            if detailed {
-                                let items: Vec<AppDetailed> = apps
-                                    .iter()
-                                    .map(|a| AppDetailed {
-                                        name: a.name.clone(),
-                                        pid: a.pid,
-                                        bundle_id: a.bundle_id.clone(),
-                                        titles: a.titles.clone(),
-                                    })
-                                    .collect();
-                                let response = ListResponse { items };
-                                output::print_json(&response);
-                            } else {
-                                let items: Vec<AppSummary> = apps
-                                    .iter()
-                                    .map(|a| AppSummary {
-                                        name: a.name.clone(),
-                                        pid: a.pid,
-                                    })
-                                    .collect();
-                                let response = ListResponse { items };
-                                output::print_json(&response);
-                            }
-                        }
-                        OutputMode::Text | OutputMode::Quiet => {
-                            println!("Running applications:");
-                            for app in &apps {
-                                let bundle = app
-                                    .bundle_id
-                                    .as_ref()
-                                    .map(|b| format!(" ({})", b))
-                                    .unwrap_or_default();
-                                println!("  {} [PID: {}]{}", app.name, app.pid, bundle);
-                                for title in &app.titles {
-                                    println!("    - {}", title);
-                                }
-                            }
-                            println!("\nTotal: {} applications", apps.len());
+            let cmd = Command::List {
+                resource: action_resource,
+                detailed,
+            };
+            let ctx = ExecutionContext::new_with_verbose(&config, true, false);
+
+            let result = actions::execute(cmd, &ctx).map_err(|e| anyhow!("{}", e.message))?;
+
+            // extract items from result
+            let result_value = serde_json::to_value(&result).unwrap_or_default();
+            let items = result_value
+                .get("items")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            // format output based on mode
+            match list_mode {
+                OutputMode::Names => {
+                    for item in &items {
+                        if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                            println!("{}", name);
                         }
                     }
                 }
-
-                ListResource::Displays => {
-                    let displays = display::get_displays()?;
-
-                    match list_mode {
-                        OutputMode::Names => {
-                            for d in &displays {
-                                println!("{}", d.name);
-                            }
-                        }
-                        OutputMode::Format => {
-                            let fmt = format.as_ref().unwrap();
-                            for d in &displays {
-                                let data = if detailed {
-                                    serde_json::to_value(DisplayDetailed {
-                                        index: d.index,
-                                        name: d.name.clone(),
-                                        width: d.width,
-                                        height: d.height,
-                                        x: d.x,
-                                        y: d.y,
-                                        is_main: d.is_main,
-                                        is_builtin: d.is_builtin,
-                                        display_id: d.display_id,
-                                        vendor_id: d.vendor_id,
-                                        model_id: d.model_id,
-                                        serial_number: d.serial_number,
-                                        unit_number: d.unit_number,
-                                        unique_id: d.unique_id(),
-                                    })
-                                    .unwrap_or_default()
-                                } else {
-                                    serde_json::to_value(DisplaySummary {
-                                        index: d.index,
-                                        name: d.name.clone(),
-                                        width: d.width,
-                                        height: d.height,
-                                        is_main: d.is_main,
-                                    })
-                                    .unwrap_or_default()
-                                };
-                                println!("{}", output::format_template(fmt, &data));
-                            }
-                        }
-                        OutputMode::Json => {
-                            if detailed {
-                                let items: Vec<DisplayDetailed> = displays
-                                    .iter()
-                                    .map(|d| DisplayDetailed {
-                                        index: d.index,
-                                        name: d.name.clone(),
-                                        width: d.width,
-                                        height: d.height,
-                                        x: d.x,
-                                        y: d.y,
-                                        is_main: d.is_main,
-                                        is_builtin: d.is_builtin,
-                                        display_id: d.display_id,
-                                        vendor_id: d.vendor_id,
-                                        model_id: d.model_id,
-                                        serial_number: d.serial_number,
-                                        unit_number: d.unit_number,
-                                        unique_id: d.unique_id(),
-                                    })
-                                    .collect();
-                                let response = ListResponse { items };
-                                output::print_json(&response);
-                            } else {
-                                let items: Vec<DisplaySummary> = displays
-                                    .iter()
-                                    .map(|d| DisplaySummary {
-                                        index: d.index,
-                                        name: d.name.clone(),
-                                        width: d.width,
-                                        height: d.height,
-                                        is_main: d.is_main,
-                                    })
-                                    .collect();
-                                let response = ListResponse { items };
-                                output::print_json(&response);
-                            }
-                        }
-                        OutputMode::Text | OutputMode::Quiet => {
-                            if displays.is_empty() {
-                                println!("No displays found");
-                            } else {
-                                println!("Available displays:");
-                                for d in &displays {
-                                    println!("  {}", d.describe());
-                                }
-                            }
-                        }
+                OutputMode::Format => {
+                    let fmt = format.as_ref().unwrap();
+                    for item in &items {
+                        println!("{}", output::format_template(fmt, item));
                     }
                 }
-
-                ListResource::Aliases => {
-                    let config = config::load_with_override(config_path)?;
-                    let displays = display::get_displays()?;
-
-                    let system_aliases = [
-                        ("builtin", "Built-in display"),
-                        ("external", "External display"),
-                        ("main", "Primary display"),
-                        ("secondary", "Secondary display"),
-                    ];
-
-                    // collect all alias names for --names mode
-                    let all_alias_names: Vec<String> = system_aliases
-                        .iter()
-                        .map(|(name, _)| name.to_string())
-                        .chain(config.display_aliases.keys().cloned())
-                        .collect();
-
-                    match list_mode {
-                        OutputMode::Names => {
-                            for name in &all_alias_names {
-                                println!("{}", name);
-                            }
-                        }
-                        OutputMode::Format => {
-                            let fmt = format.as_ref().unwrap();
-                            for (alias_name, _) in &system_aliases {
-                                let resolved = display::resolve_alias(
-                                    alias_name,
-                                    &config.display_aliases,
-                                    &displays,
-                                );
-                                let data = serde_json::to_value(AliasSummary {
-                                    name: alias_name.to_string(),
-                                    alias_type: "system".to_string(),
-                                    resolved: resolved.is_ok(),
-                                    display_index: resolved.as_ref().ok().map(|d| d.index),
-                                })
+                OutputMode::Json => {
+                    output::print_json(&result);
+                }
+                OutputMode::Text | OutputMode::Quiet => match resource {
+                    ListResource::Apps => {
+                        println!("Running applications:");
+                        for item in &items {
+                            let name = item
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let pid = item.get("pid").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let bundle = item
+                                .get("bundle_id")
+                                .and_then(|v| v.as_str())
+                                .map(|b| format!(" ({})", b))
                                 .unwrap_or_default();
-                                println!("{}", output::format_template(fmt, &data));
-                            }
-                            for alias_name in config.display_aliases.keys() {
-                                let resolved = display::resolve_alias(
-                                    alias_name,
-                                    &config.display_aliases,
-                                    &displays,
-                                );
-                                let data = serde_json::to_value(AliasSummary {
-                                    name: alias_name.clone(),
-                                    alias_type: "user".to_string(),
-                                    resolved: resolved.is_ok(),
-                                    display_index: resolved.as_ref().ok().map(|d| d.index),
-                                })
-                                .unwrap_or_default();
-                                println!("{}", output::format_template(fmt, &data));
-                            }
-                        }
-                        OutputMode::Json => {
-                            if detailed {
-                                let mut items: Vec<AliasDetailed> = Vec::new();
-
-                                for (alias_name, description) in &system_aliases {
-                                    let resolved = display::resolve_alias(
-                                        alias_name,
-                                        &config.display_aliases,
-                                        &displays,
-                                    );
-                                    items.push(AliasDetailed {
-                                        name: alias_name.to_string(),
-                                        alias_type: "system".to_string(),
-                                        resolved: resolved.is_ok(),
-                                        display_index: resolved.as_ref().ok().map(|d| d.index),
-                                        display_name: resolved
-                                            .as_ref()
-                                            .ok()
-                                            .map(|d| d.name.clone()),
-                                        display_unique_id: resolved
-                                            .as_ref()
-                                            .ok()
-                                            .map(|d| d.unique_id()),
-                                        description: Some(description.to_string()),
-                                        mapped_ids: None,
-                                    });
-                                }
-
-                                for (alias_name, mappings) in &config.display_aliases {
-                                    let resolved = display::resolve_alias(
-                                        alias_name,
-                                        &config.display_aliases,
-                                        &displays,
-                                    );
-                                    items.push(AliasDetailed {
-                                        name: alias_name.clone(),
-                                        alias_type: "user".to_string(),
-                                        resolved: resolved.is_ok(),
-                                        display_index: resolved.as_ref().ok().map(|d| d.index),
-                                        display_name: resolved
-                                            .as_ref()
-                                            .ok()
-                                            .map(|d| d.name.clone()),
-                                        display_unique_id: resolved
-                                            .as_ref()
-                                            .ok()
-                                            .map(|d| d.unique_id()),
-                                        description: None,
-                                        mapped_ids: Some(mappings.clone()),
-                                    });
-                                }
-
-                                let response = ListResponse { items };
-                                output::print_json(&response);
-                            } else {
-                                let mut items: Vec<AliasSummary> = Vec::new();
-
-                                for (alias_name, _) in &system_aliases {
-                                    let resolved = display::resolve_alias(
-                                        alias_name,
-                                        &config.display_aliases,
-                                        &displays,
-                                    );
-                                    items.push(AliasSummary {
-                                        name: alias_name.to_string(),
-                                        alias_type: "system".to_string(),
-                                        resolved: resolved.is_ok(),
-                                        display_index: resolved.as_ref().ok().map(|d| d.index),
-                                    });
-                                }
-
-                                for alias_name in config.display_aliases.keys() {
-                                    let resolved = display::resolve_alias(
-                                        alias_name,
-                                        &config.display_aliases,
-                                        &displays,
-                                    );
-                                    items.push(AliasSummary {
-                                        name: alias_name.clone(),
-                                        alias_type: "user".to_string(),
-                                        resolved: resolved.is_ok(),
-                                        display_index: resolved.as_ref().ok().map(|d| d.index),
-                                    });
-                                }
-
-                                let response = ListResponse { items };
-                                output::print_json(&response);
-                            }
-                        }
-                        OutputMode::Text | OutputMode::Quiet => {
-                            println!("System Aliases:");
-                            for (alias_name, description) in &system_aliases {
-                                if let Ok(d) = display::resolve_alias(
-                                    alias_name,
-                                    &config.display_aliases,
-                                    &displays,
-                                ) {
-                                    println!(
-                                        "  {:<20} → Display {}: {} [{}]",
-                                        alias_name,
-                                        d.index,
-                                        d.name,
-                                        d.unique_id()
-                                    );
-                                } else {
-                                    println!(
-                                        "  {:<20} → Not found in current setup ({})",
-                                        alias_name, description
-                                    );
-                                }
-                            }
-
-                            if !config.display_aliases.is_empty() {
-                                println!("\nUser-Defined Aliases:");
-                                for (alias_name, mappings) in &config.display_aliases {
-                                    if let Ok(d) = display::resolve_alias(
-                                        alias_name,
-                                        &config.display_aliases,
-                                        &displays,
-                                    ) {
-                                        println!(
-                                            "  {:<20} → Display {}: {} [{}] ✓",
-                                            alias_name,
-                                            d.index,
-                                            d.name,
-                                            d.unique_id()
-                                        );
-                                    } else {
-                                        println!(
-                                            "  {:<20} → Not found (mapped: {})",
-                                            alias_name,
-                                            mappings.join(", ")
-                                        );
+                            println!("  {} [PID: {}]{}", name, pid, bundle);
+                            if let Some(titles) = item.get("titles").and_then(|v| v.as_array()) {
+                                for title in titles {
+                                    if let Some(t) = title.as_str() {
+                                        println!("    - {}", t);
                                     }
                                 }
-                            } else {
-                                println!("\nNo user-defined aliases configured.");
+                            }
+                        }
+                        println!("\nTotal: {} applications", items.len());
+                    }
+                    ListResource::Displays => {
+                        if items.is_empty() {
+                            println!("No displays found");
+                        } else {
+                            println!("Available displays:");
+                            for item in &items {
+                                let index = item.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let name = item
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown");
+                                let width = item.get("width").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let height =
+                                    item.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let is_main = item
+                                    .get("is_main")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                let main_str = if is_main { " (main)" } else { "" };
+                                println!(
+                                    "  {}: {} ({}x{}){}",
+                                    index, name, width, height, main_str
+                                );
                             }
                         }
                     }
-                }
+                    ListResource::Aliases => {
+                        println!("Display Aliases:");
+                        for item in &items {
+                            let name = item
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let alias_type = item
+                                .get("type")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let resolved = item
+                                .get("resolved")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+
+                            if resolved {
+                                let display_index = item
+                                    .get("display_index")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                let display_name = item
+                                    .get("display_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown");
+                                println!(
+                                    "  {:<20} ({}) → Display {}: {}",
+                                    name, alias_type, display_index, display_name
+                                );
+                            } else {
+                                println!("  {:<20} ({}) → not resolved", name, alias_type);
+                            }
+                        }
+                    }
+                },
             }
 
             Ok(())
         }
 
         Commands::Get { command } => {
-            // JSON output struct for get command
-            #[derive(Serialize)]
-            struct WindowInfo {
-                app: AppData,
-                window: manager::WindowData,
-                display: manager::DisplayDataInfo,
-            }
+            use crate::actions::GetTarget;
 
-            match command {
-                GetCommands::Focused { format: fmt } => {
-                    let (app, window_data, display_data) = manager::get_focused_window_info()?;
+            let config = config::load_with_override(config_path)?;
 
-                    let info = WindowInfo {
-                        app: app_info_to_data(&app),
-                        window: window_data,
-                        display: display_data,
-                    };
-
-                    if let Some(fmt_str) = fmt {
-                        let value = serde_json::to_value(&info).unwrap_or_default();
-                        println!("{}", output::format_template(&fmt_str, &value));
-                    } else if output_mode.is_json() {
-                        output::print_json(&info);
-                    } else {
-                        println!("{} (PID: {})", info.app.name, info.app.pid);
-                        if let Some(title) = &info.window.title {
-                            println!("  Title: {}", title);
-                        }
-                        println!("  Position: {}, {}", info.window.x, info.window.y);
-                        println!("  Size: {}x{}", info.window.width, info.window.height);
-                        println!("  Display: {} ({})", info.display.index, info.display.name);
-                    }
-                }
-
+            let (cmd, fmt) = match command {
+                GetCommands::Focused { format: fmt } => (
+                    Command::Get {
+                        target: GetTarget::Focused,
+                    },
+                    fmt,
+                ),
                 GetCommands::Window { app, format: fmt } => {
                     let app_name = resolve_app_name(&app)?;
-                    let config = config::load_with_override(config_path)?;
-                    let running_apps = matching::get_running_apps()?;
+                    (
+                        Command::Get {
+                            target: GetTarget::Window {
+                                app: vec![app_name],
+                            },
+                        },
+                        fmt,
+                    )
+                }
+            };
 
-                    let match_result = matching::find_app(
-                        &app_name,
-                        &running_apps,
-                        config.settings.fuzzy_threshold,
-                    );
+            let ctx = ExecutionContext::new_with_verbose(&config, true, false);
 
-                    let matched_app = match match_result {
-                        Some(result) => result.app,
-                        None => {
-                            if output_mode.is_json() {
-                                output::print_json_error(
-                                    exit_codes::APP_NOT_FOUND,
-                                    &format!("app '{}' not found", app_name),
-                                );
-                                std::process::exit(exit_codes::APP_NOT_FOUND);
-                            }
-                            return Err(anyhow!("App '{}' not found", app_name));
-                        }
-                    };
-
-                    let (_, window_data, display_data) =
-                        manager::get_window_info_for_app(&matched_app)?;
-
-                    let info = WindowInfo {
-                        app: app_info_to_data(&matched_app),
-                        window: window_data,
-                        display: display_data,
-                    };
-
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
                     if let Some(fmt_str) = fmt {
-                        let value = serde_json::to_value(&info).unwrap_or_default();
+                        let value = serde_json::to_value(&result).unwrap_or_default();
                         println!("{}", output::format_template(&fmt_str, &value));
                     } else if output_mode.is_json() {
-                        output::print_json(&info);
+                        output::print_json(&result);
                     } else {
-                        println!("{} (PID: {})", info.app.name, info.app.pid);
-                        if let Some(title) = &info.window.title {
-                            println!("  Title: {}", title);
+                        // text output - extract data from result
+                        let value = serde_json::to_value(&result).unwrap_or_default();
+                        if let Some(app) = value.get("app") {
+                            let name = app
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let pid = app.get("pid").and_then(|v| v.as_i64()).unwrap_or(0);
+                            println!("{} (PID: {})", name, pid);
                         }
-                        println!("  Position: {}, {}", info.window.x, info.window.y);
-                        println!("  Size: {}x{}", info.window.width, info.window.height);
-                        println!("  Display: {} ({})", info.display.index, info.display.name);
+                        if let Some(window) = value.get("window") {
+                            if let Some(title) = window.get("title").and_then(|v| v.as_str()) {
+                                println!("  Title: {}", title);
+                            }
+                            let x = window.get("x").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let y = window.get("y").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let w = window.get("width").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let h = window.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
+                            println!("  Position: {}, {}", x, y);
+                            println!("  Size: {}x{}", w, h);
+                        }
+                        if let Some(display) = value.get("display") {
+                            let index = display.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let name = display
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            println!("  Display: {} ({})", index, name);
+                        }
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
                     }
                 }
             }
-            Ok(())
         }
 
         Commands::CheckPermissions { prompt } => {
-            if prompt {
-                let trusted = accessibility::check_and_prompt();
-                if trusted {
-                    println!("✓ Accessibility permissions granted");
-                } else {
-                    println!("✗ Accessibility permissions not granted");
-                    println!("\nPlease grant permissions in System Settings:");
-                    println!("  System Settings > Privacy & Security > Accessibility");
+            let config = config::load_with_override(config_path)?;
+            let cmd = Command::CheckPermissions { prompt };
+            let ctx = ExecutionContext::new_with_verbose(&config, true, false);
+
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
+                    } else {
+                        // text output - extract from result
+                        let value = serde_json::to_value(&result).unwrap_or_default();
+                        if let Some(res) = value.get("result") {
+                            let granted = res
+                                .get("granted")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            if granted {
+                                println!("✓ Accessibility permissions granted");
+                            } else {
+                                println!("✗ Accessibility permissions not granted");
+                                println!("\nPlease grant permissions in System Settings:");
+                                println!("  System Settings > Privacy & Security > Accessibility");
+                            }
+                        }
+                    }
+                    Ok(())
                 }
-            } else {
-                accessibility::print_permission_status()?;
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
+                }
             }
-            Ok(())
         }
 
         Commands::Version => {
-            use crate::version::{Version, VersionInfo};
+            let config = config::load_with_override(config_path)?;
+            let cmd = Command::Version;
+            let ctx = ExecutionContext::new_with_verbose(&config, true, false);
 
-            let version = Version::current();
-            println!("cwm {}", version.version_string());
-            println!(
-                "Built: {}",
-                version.build_date.format("%Y-%m-%d %H:%M:%S UTC")
-            );
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
+                    } else {
+                        // text output
+                        let value = serde_json::to_value(&result).unwrap_or_default();
+                        if let Some(res) = value.get("result") {
+                            let version_str = res
+                                .get("version_string")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let build_date = res
+                                .get("build_date")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            println!("cwm {}", version_str);
+                            println!("Built: {}", build_date);
 
-            // try to load version info for install path
-            if let Ok(info) = VersionInfo::load() {
-                println!("Installed: {}", info.install_path.display());
+                            if let Some(install_path) =
+                                res.get("install_path").and_then(|v| v.as_str())
+                            {
+                                println!("Installed: {}", install_path);
+                            }
+
+                            println!("Repository: https://github.com/{}", env!("GITHUB_REPO"));
+                        }
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
+                }
             }
-
-            println!("Repository: https://github.com/{}", env!("GITHUB_REPO"));
-            Ok(())
         }
 
         Commands::Install {
@@ -1514,65 +1211,55 @@ pub fn execute(cli: Cli) -> Result<()> {
             force,
             no_sudo,
         } => {
-            use crate::installer::{detect_install_paths, install_binary};
-
-            let target_dir = if let Some(p) = path {
-                p
-            } else {
-                // interactive path selection
-                let paths = detect_install_paths();
-
-                if paths.is_empty() {
-                    return Err(anyhow!("No suitable installation directories found"));
-                }
-
-                println!("Where would you like to install cwm?\n");
-                for (i, path) in paths.iter().enumerate() {
-                    println!("  {}. {}", i + 1, path.status_line());
-                }
-                println!("  {}. Custom path...", paths.len() + 1);
-
-                print!("\nChoice [1]: ");
-                use std::io::{self, Write};
-                io::stdout().flush()?;
-
-                let mut input = String::new();
-                io::stdin().read_line(&mut input)?;
-                let choice = input.trim();
-
-                let idx = if choice.is_empty() {
-                    0
-                } else {
-                    choice
-                        .parse::<usize>()
-                        .map(|n| n.saturating_sub(1))
-                        .unwrap_or(0)
-                };
-
-                if idx < paths.len() {
-                    paths[idx].path.clone()
-                } else {
-                    // custom path
-                    print!("Enter custom path: ");
-                    io::stdout().flush()?;
-                    let mut custom = String::new();
-                    io::stdin().read_line(&mut custom)?;
-                    PathBuf::from(shellexpand::tilde(custom.trim()).to_string())
-                }
+            let config = config::load_with_override(config_path)?;
+            let cmd = Command::Install {
+                path,
+                force,
+                no_sudo,
             };
+            let ctx = ExecutionContext::cli_with_config_path(&config, false, config_path);
 
-            // check if we need sudo
-            let needs_sudo = !no_sudo && !crate::installer::paths::check_writable(&target_dir);
-
-            install_binary(&target_dir, force, needs_sudo)?;
-            Ok(())
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
+                    }
+                    // text output is handled by the handler (prints during install)
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
+                }
+            }
         }
 
         Commands::Uninstall { path } => {
-            use crate::installer::uninstall_binary;
+            let config = config::load_with_override(config_path)?;
+            let cmd = Command::Uninstall { path };
+            let ctx = ExecutionContext::cli_with_config_path(&config, false, config_path);
 
-            uninstall_binary(path.as_deref())?;
-            Ok(())
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
+                    }
+                    // text output is handled by the handler
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
+                }
+            }
         }
 
         Commands::Update {
@@ -1580,174 +1267,223 @@ pub fn execute(cli: Cli) -> Result<()> {
             force,
             prerelease,
         } => {
-            use crate::installer::{check_for_updates, perform_update};
-            use crate::version::Version;
+            let config = config::load_with_override(config_path)?;
+            let cmd = Command::Update {
+                check,
+                force,
+                prerelease,
+            };
+            let ctx = ExecutionContext::cli_with_config_path(&config, false, config_path);
 
-            let mut config = config::load_with_override(config_path)?;
-
-            // enable prerelease channels if requested
-            if prerelease {
-                config.settings.update.channels.beta = true;
-                config.settings.update.channels.dev = true;
-            }
-
-            let current = Version::current();
-            println!("Current version: {}", current.version_string());
-
-            println!("Checking for updates...");
-            match check_for_updates(&config.settings.update, true)? {
-                Some(release) => {
-                    println!("\n🆕 New version available: {}", release.version);
-
-                    if let Some(ref notes) = release.release_notes {
-                        println!("\nRelease notes:");
-                        println!("{}", notes);
-                    }
-
-                    if check {
-                        println!("\nRun 'cwm update' to install");
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
                     } else {
-                        println!("\nUpdate size: {:.2} MB", release.size as f64 / 1_048_576.0);
-
-                        if !force {
-                            print!("Install update? [Y/n]: ");
-                            use std::io::{self, Write};
-                            io::stdout().flush()?;
-
-                            let mut input = String::new();
-                            io::stdin().read_line(&mut input)?;
-
-                            if input.trim().to_lowercase() == "n" {
-                                println!("Update cancelled");
-                                return Ok(());
+                        // text output based on result
+                        let value = serde_json::to_value(&result).unwrap_or_default();
+                        if let Some(res) = value.get("result") {
+                            let status = res.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                            match status {
+                                "up_to_date" => {
+                                    println!("You are on the latest version");
+                                }
+                                "updated" => {
+                                    // success message already printed by handler
+                                }
+                                "cancelled" => {
+                                    println!("Update cancelled");
+                                }
+                                _ => {
+                                    // check-only mode
+                                    if check {
+                                        let available = res
+                                            .get("update_available")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false);
+                                        if available {
+                                            let new_ver = res
+                                                .get("new_version")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("unknown");
+                                            println!("\n🆕 New version available: {}", new_ver);
+                                            println!("\nRun 'cwm update' to install");
+                                        }
+                                    }
+                                }
                             }
                         }
-
-                        perform_update(release, force)?;
-
-                        // update last check time
-                        config.settings.update.last_check = Some(chrono::Utc::now());
-                        config::save_with_override(&config, config_path)?;
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
                     }
                 }
-                None => {
-                    println!("You are on the latest version");
-
-                    // update last check time
-                    config.settings.update.last_check = Some(chrono::Utc::now());
-                    config::save_with_override(&config, config_path)?;
-                }
             }
-
-            Ok(())
         }
 
-        Commands::Spotlight { command } => match command {
-            SpotlightCommands::Install { name, force } => {
-                let config = config::load_with_override(config_path)?;
+        Commands::Spotlight { command } => {
+            let config = config::load_with_override(config_path)?;
+            let cmd = command.to_command();
+            let ctx = ExecutionContext::cli_with_config_path(&config, false, config_path);
 
-                if config.spotlight.is_empty() {
-                    println!("No spotlight shortcuts configured.");
-                    println!("\nAdd shortcuts to your config file:");
-                    println!("  cwm spotlight example");
-                    println!("\nOr edit ~/.cwm/config.json directly.");
-                    return Ok(());
-                }
-
-                let apps_dir = crate::spotlight::get_apps_directory();
-                println!("Installing spotlight shortcuts to: {}", apps_dir.display());
-
-                if let Some(shortcut_name) = name {
-                    // install specific shortcut
-                    let shortcut = config
-                        .spotlight
-                        .iter()
-                        .find(|s| s.name.eq_ignore_ascii_case(&shortcut_name))
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "Shortcut '{}' not found in config. Available: {}",
-                                shortcut_name,
-                                config
-                                    .spotlight
-                                    .iter()
-                                    .map(|s| s.name.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            )
-                        })?;
-
-                    let path = crate::spotlight::install_shortcut(shortcut, force)?;
-                    println!("✓ Installed: {}", path.display());
-                } else {
-                    // install all shortcuts
-                    let installed = crate::spotlight::install_all(&config.spotlight, force)?;
-
-                    if installed.is_empty() {
-                        println!("No shortcuts were installed.");
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
                     } else {
-                        println!("\n✓ Installed {} shortcut(s):", installed.len());
-                        for path in &installed {
-                            if let Some(name) = path.file_name() {
-                                println!("  - {}", name.to_string_lossy());
+                        let value = serde_json::to_value(&result).unwrap_or_default();
+                        match result.action {
+                            "spotlight_install" => {
+                                if let Some(res) = value.get("result") {
+                                    let status =
+                                        res.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                                    match status {
+                                        "no_shortcuts" => {
+                                            println!("No spotlight shortcuts configured.");
+                                            println!("\nAdd shortcuts to your config file:");
+                                            println!("  cwm spotlight example");
+                                            println!("\nOr edit ~/.cwm/config.json directly.");
+                                        }
+                                        "installed" => {
+                                            let apps_dir = res
+                                                .get("apps_directory")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("");
+                                            println!(
+                                                "Installing spotlight shortcuts to: {}",
+                                                apps_dir
+                                            );
+
+                                            if let Some(shortcut) =
+                                                res.get("shortcut").and_then(|v| v.as_str())
+                                            {
+                                                let path = res
+                                                    .get("path")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("");
+                                                println!("✓ Installed: {}", path);
+                                                let _ = shortcut; // used for single shortcut
+                                            } else if let Some(count) =
+                                                res.get("count").and_then(|v| v.as_u64())
+                                            {
+                                                if count == 0 {
+                                                    println!("No shortcuts were installed.");
+                                                } else {
+                                                    println!(
+                                                        "\n✓ Installed {} shortcut(s):",
+                                                        count
+                                                    );
+                                                    if let Some(paths) =
+                                                        res.get("paths").and_then(|v| v.as_array())
+                                                    {
+                                                        for p in paths {
+                                                            if let Some(path_str) = p.as_str() {
+                                                                if let Some(name) =
+                                                                    std::path::Path::new(path_str)
+                                                                        .file_name()
+                                                                {
+                                                                    println!(
+                                                                        "  - {}",
+                                                                        name.to_string_lossy()
+                                                                    );
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            println!("\nShortcuts are now available in Spotlight.");
+                                            println!("Search for \"cwm: <name>\" to use them.");
+                                        }
+                                        _ => {}
+                                    }
+                                }
                             }
+                            "spotlight_list" => {
+                                if let Some(res) = value.get("result") {
+                                    let shortcuts = res
+                                        .get("shortcuts")
+                                        .and_then(|v| v.as_array())
+                                        .map(|arr| arr.len())
+                                        .unwrap_or(0);
+
+                                    if shortcuts == 0 {
+                                        println!("No spotlight shortcuts installed.");
+                                        println!("\nTo install shortcuts:");
+                                        println!(
+                                            "  1. Add shortcuts to config: cwm spotlight example"
+                                        );
+                                        println!("  2. Install them: cwm spotlight install");
+                                    } else {
+                                        println!("Installed spotlight shortcuts:\n");
+                                        if let Some(arr) =
+                                            res.get("shortcuts").and_then(|v| v.as_array())
+                                        {
+                                            for name in arr {
+                                                if let Some(n) = name.as_str() {
+                                                    println!("  cwm: {}", n);
+                                                }
+                                            }
+                                        }
+                                        println!("\nTotal: {} shortcut(s)", shortcuts);
+                                        if let Some(dir) =
+                                            res.get("apps_directory").and_then(|v| v.as_str())
+                                        {
+                                            println!("Location: {}", dir);
+                                        }
+                                    }
+                                }
+                            }
+                            "spotlight_remove" => {
+                                if let Some(res) = value.get("result") {
+                                    if let Some(shortcut) =
+                                        res.get("shortcut").and_then(|v| v.as_str())
+                                    {
+                                        println!("✓ Removed: cwm: {}", shortcut);
+                                    } else if let Some(count) =
+                                        res.get("count").and_then(|v| v.as_u64())
+                                    {
+                                        if count == 0 {
+                                            println!("No spotlight shortcuts to remove.");
+                                        } else {
+                                            println!("✓ Removed {} shortcut(s)", count);
+                                        }
+                                    }
+                                }
+                            }
+                            "spotlight_example" => {
+                                if let Some(res) = value.get("result") {
+                                    if let Some(examples) = res.get("examples") {
+                                        println!("Add this to your config.json:\n");
+                                        println!("\"spotlight\": ");
+                                        let json = serde_json::to_string_pretty(examples)
+                                            .unwrap_or_else(|_| "[]".to_string());
+                                        println!("{}", json);
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
+                    Ok(())
                 }
-
-                println!("\nShortcuts are now available in Spotlight.");
-                println!("Search for \"cwm: <name>\" to use them.");
-
-                Ok(())
-            }
-
-            SpotlightCommands::List => {
-                let installed = crate::spotlight::get_installed_shortcuts()?;
-
-                if installed.is_empty() {
-                    println!("No spotlight shortcuts installed.");
-                    println!("\nTo install shortcuts:");
-                    println!("  1. Add shortcuts to config: cwm spotlight example");
-                    println!("  2. Install them: cwm spotlight install");
-                } else {
-                    println!("Installed spotlight shortcuts:\n");
-                    for name in &installed {
-                        println!("  cwm: {}", name);
-                    }
-                    println!("\nTotal: {} shortcut(s)", installed.len());
-                    println!(
-                        "Location: {}",
-                        crate::spotlight::get_apps_directory().display()
-                    );
-                }
-
-                Ok(())
-            }
-
-            SpotlightCommands::Remove { name, all } => {
-                if all {
-                    let count = crate::spotlight::remove_all()?;
-                    if count == 0 {
-                        println!("No spotlight shortcuts to remove.");
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
                     } else {
-                        println!("✓ Removed {} shortcut(s)", count);
+                        Err(anyhow!("{}", err.message))
                     }
-                } else if let Some(shortcut_name) = name {
-                    crate::spotlight::remove_shortcut(&shortcut_name)?;
-                    println!("✓ Removed: cwm: {}", shortcut_name);
-                } else {
-                    return Err(anyhow!(
-                        "Specify a shortcut name or use --all to remove all shortcuts"
-                    ));
                 }
-
-                Ok(())
             }
-
-            SpotlightCommands::Example => {
-                crate::spotlight::print_example_config();
-                Ok(())
-            }
-        },
+        }
     }
 }
 
@@ -2011,101 +1747,6 @@ mod tests {
         // empty string is valid (not stdin)
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "");
-    }
-
-    // ========================================================================
-    // match_result_to_data tests
-    // ========================================================================
-
-    #[test]
-    fn test_match_result_to_data_exact() {
-        let app = matching::AppInfo {
-            name: "Safari".to_string(),
-            pid: 1234,
-            bundle_id: Some("com.apple.Safari".to_string()),
-            titles: vec![],
-        };
-        let result = matching::MatchResult {
-            app,
-            match_type: matching::MatchType::Exact,
-        };
-
-        let data = match_result_to_data(&result, "Safari");
-        assert_eq!(data.match_type, "exact");
-        assert_eq!(data.query, "Safari");
-        // exact matches don't have a distance
-        assert_eq!(data.distance, None);
-    }
-
-    #[test]
-    fn test_match_result_to_data_fuzzy() {
-        let app = matching::AppInfo {
-            name: "Safari".to_string(),
-            pid: 1234,
-            bundle_id: None,
-            titles: vec![],
-        };
-        let result = matching::MatchResult {
-            app,
-            match_type: matching::MatchType::Fuzzy { distance: 2 },
-        };
-
-        let data = match_result_to_data(&result, "Safar");
-        assert_eq!(data.match_type, "fuzzy { distance: 2 }");
-        assert_eq!(data.query, "Safar");
-        assert_eq!(data.distance, Some(2));
-    }
-
-    #[test]
-    fn test_match_result_to_data_prefix() {
-        let app = matching::AppInfo {
-            name: "Safari".to_string(),
-            pid: 1234,
-            bundle_id: None,
-            titles: vec![],
-        };
-        let result = matching::MatchResult {
-            app,
-            match_type: matching::MatchType::Prefix,
-        };
-
-        let data = match_result_to_data(&result, "Saf");
-        assert_eq!(data.match_type, "prefix");
-        assert_eq!(data.query, "Saf");
-    }
-
-    // ========================================================================
-    // app_info_to_data tests
-    // ========================================================================
-
-    #[test]
-    fn test_app_info_to_data_with_bundle_id() {
-        let app = matching::AppInfo {
-            name: "Safari".to_string(),
-            pid: 1234,
-            bundle_id: Some("com.apple.Safari".to_string()),
-            titles: vec!["GitHub".to_string()],
-        };
-
-        let data = app_info_to_data(&app);
-        assert_eq!(data.name, "Safari");
-        assert_eq!(data.pid, 1234);
-        assert_eq!(data.bundle_id, Some("com.apple.Safari".to_string()));
-    }
-
-    #[test]
-    fn test_app_info_to_data_without_bundle_id() {
-        let app = matching::AppInfo {
-            name: "Test App".to_string(),
-            pid: 5678,
-            bundle_id: None,
-            titles: vec![],
-        };
-
-        let data = app_info_to_data(&app);
-        assert_eq!(data.name, "Test App");
-        assert_eq!(data.pid, 5678);
-        assert_eq!(data.bundle_id, None);
     }
 
     // ========================================================================
@@ -2809,71 +2450,5 @@ mod tests {
         let apps: Vec<String> = vec![];
         let result = resolve_app_names(&apps).unwrap();
         assert!(result.is_empty());
-    }
-
-    // ========================================================================
-    // match_result_to_data tests for title matches
-    // ========================================================================
-
-    #[test]
-    fn test_match_result_to_data_title_exact() {
-        let app = matching::AppInfo {
-            name: "Safari".to_string(),
-            pid: 1234,
-            bundle_id: None,
-            titles: vec!["GitHub".to_string()],
-        };
-        let result = matching::MatchResult {
-            app,
-            match_type: matching::MatchType::TitleExact {
-                title: "GitHub".to_string(),
-            },
-        };
-
-        let data = match_result_to_data(&result, "GitHub");
-        assert!(data.match_type.contains("titleexact"));
-        assert_eq!(data.query, "GitHub");
-    }
-
-    #[test]
-    fn test_match_result_to_data_title_prefix() {
-        let app = matching::AppInfo {
-            name: "Safari".to_string(),
-            pid: 1234,
-            bundle_id: None,
-            titles: vec!["GitHub - taulfsime".to_string()],
-        };
-        let result = matching::MatchResult {
-            app,
-            match_type: matching::MatchType::TitlePrefix {
-                title: "GitHub - taulfsime".to_string(),
-            },
-        };
-
-        let data = match_result_to_data(&result, "GitHub");
-        assert!(data.match_type.contains("titleprefix"));
-        assert_eq!(data.query, "GitHub");
-    }
-
-    #[test]
-    fn test_match_result_to_data_title_fuzzy() {
-        let app = matching::AppInfo {
-            name: "Safari".to_string(),
-            pid: 1234,
-            bundle_id: None,
-            titles: vec!["GitHub".to_string()],
-        };
-        let result = matching::MatchResult {
-            app,
-            match_type: matching::MatchType::TitleFuzzy {
-                title: "GitHub".to_string(),
-                distance: 1,
-            },
-        };
-
-        let data = match_result_to_data(&result, "GitHb");
-        assert!(data.match_type.contains("titlefuzzy"));
-        assert_eq!(data.query, "GitHb");
-        assert_eq!(data.distance, Some(1));
     }
 }

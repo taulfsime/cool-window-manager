@@ -42,6 +42,15 @@ fn create_test_config(test_dir: &std::path::Path) -> std::path::PathBuf {
 /// note: if args contains --json, JSON output is used; otherwise --no-json is added
 /// to prevent auto-JSON when stdout is piped
 fn run_list(args: &[&str]) -> std::process::Output {
+    run_list_impl(args, false)
+}
+
+/// helper to run cwm list command with explicit text output (--no-json)
+fn run_list_text(args: &[&str]) -> std::process::Output {
+    run_list_impl(args, true)
+}
+
+fn run_list_impl(args: &[&str], force_text: bool) -> std::process::Output {
     let test_dir = create_test_dir(&unique_test_name("list"));
     let config_path = create_test_config(&test_dir);
 
@@ -50,7 +59,8 @@ fn run_list(args: &[&str]) -> std::process::Output {
 
     let mut cmd_args = vec!["--config", config_path.to_str().unwrap()];
     // add --no-json for text output tests (stdout is piped, which auto-enables JSON)
-    if !has_json_flag {
+    // unless force_text is false and args already has --json
+    if force_text || !has_json_flag {
         cmd_args.push("--no-json");
     }
     cmd_args.push("list");
@@ -67,7 +77,7 @@ fn run_list(args: &[&str]) -> std::process::Output {
     output
 }
 
-/// helper to parse JSON output (handles JSON-RPC wrapper)
+/// helper to parse JSON output (extracts result from JSON-RPC wrapper)
 fn parse_json_output(output: &std::process::Output) -> serde_json::Value {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&stdout)
@@ -87,7 +97,7 @@ fn parse_json_output(output: &std::process::Output) -> serde_json::Value {
 
 #[test]
 fn test_list_apps_text_output() {
-    let output = run_list(&["apps"]);
+    let output = run_list_text(&["apps"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -164,8 +174,8 @@ fn test_list_apps_json_detailed_output() {
 #[test]
 fn test_list_apps_detailed_without_json_is_same_as_text() {
     // --detailed without --json should produce same output as text
-    let text_output = run_list(&["apps"]);
-    let detailed_output = run_list(&["apps", "--detailed"]);
+    let text_output = run_list_text(&["apps"]);
+    let detailed_output = run_list_text(&["apps", "--detailed"]);
 
     assert!(text_output.status.success());
     assert!(detailed_output.status.success());
@@ -190,7 +200,7 @@ fn test_list_apps_detailed_without_json_is_same_as_text() {
 
 #[test]
 fn test_list_displays_text_output() {
-    let output = run_list(&["displays"]);
+    let output = run_list_text(&["displays"]);
 
     assert!(output.status.success(), "list displays should succeed");
 
@@ -281,14 +291,23 @@ fn test_list_displays_json_detailed_output() {
 
 #[test]
 fn test_list_aliases_text_output() {
-    let output = run_list(&["aliases"]);
-
-    assert!(output.status.success(), "list aliases should succeed");
+    let output = run_list_text(&["aliases"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
     assert!(
-        stdout.contains("System Aliases:"),
-        "should have system aliases header"
+        output.status.success(),
+        "list aliases should succeed.\nstdout: {}\nstderr: {}",
+        stdout,
+        stderr
+    );
+
+    assert!(
+        stdout.contains("Display Aliases:"),
+        "should have display aliases header.\nstdout: {}\nstderr: {}",
+        stdout,
+        stderr
     );
     // should list system aliases
     assert!(
@@ -432,12 +451,12 @@ fn test_list_missing_resource_shows_help() {
         .output()
         .expect("Failed to run cwm");
 
-    // list without resource now shows help and succeeds
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    // list without resource shows help in stderr and exits with error
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stdout.contains("Available resources") || stdout.contains("Usage"),
+        stderr.contains("Available resources") || stderr.contains("Usage"),
         "list without resource should show help: {}",
-        stdout
+        stderr
     );
 }
 

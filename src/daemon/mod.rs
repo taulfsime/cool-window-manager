@@ -14,9 +14,8 @@ use crate::window::{manager, matching};
 
 use hotkeys::Hotkey;
 use ipc::{
-    format_error, format_error_response, format_success_response, get_pid_file_path,
-    get_socket_path, is_daemon_running, remove_pid_file, remove_socket_file, write_pid_file,
-    IpcRequest,
+    format_error_response, format_success_response, get_pid_file_path, get_socket_path,
+    is_daemon_running, remove_pid_file, remove_socket_file, write_pid_file, IpcRequest,
 };
 pub use launchd::{install, uninstall};
 
@@ -250,24 +249,6 @@ pub fn stop() -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Check daemon status
-pub fn status() -> Result<bool> {
-    let running = is_daemon_running();
-
-    if running {
-        let pid_path = get_pid_file_path();
-        if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
-            println!("Daemon is running (PID {})", pid_str.trim());
-        } else {
-            println!("Daemon is running");
-        }
-    } else {
-        println!("Daemon is not running");
-    }
-
-    Ok(running)
 }
 
 fn parse_shortcuts(config: &Config) -> Result<Vec<(Hotkey, String)>> {
@@ -587,19 +568,23 @@ fn start_socket_listener(config: Arc<Config>) -> Result<()> {
 
 /// Handle an IPC message and return the response string (or None for notifications)
 fn handle_ipc_message(line: &str, config: &Config) -> Option<String> {
-    // parse the request (auto-detects format)
+    // parse the request (JSON-RPC only)
     let request = match IpcRequest::parse(line) {
         Ok(req) => req,
         Err(e) => {
-            // can't parse - create a minimal text request for error response
-            let fake_req = IpcRequest::parse("error").unwrap();
-            return format_error(&fake_req, &format!("Invalid request: {}", e));
+            // can't parse - return JSON-RPC error
+            // create a minimal error response without a valid request
+            let error = crate::cli::output::JsonRpcError::new(
+                exit_codes::INVALID_ARGS,
+                format!("Invalid request: {}", e),
+            );
+            return serde_json::to_string(&error).ok();
         }
     };
 
     log(&format!(
-        "IPC request: {} {:?} (format: {:?})",
-        request.method, request.params, request.format
+        "IPC request: {} {:?}",
+        request.method, request.params
     ));
 
     // handle the request and get result
@@ -618,129 +603,44 @@ fn handle_ipc_request(
     request: &IpcRequest,
     config: &Config,
 ) -> Result<serde_json::Value, (i32, String)> {
-    match request.method.as_str() {
-        "ping" => Ok(serde_json::json!("pong")),
+    use crate::actions::{execute, ExecutionContext, JsonRpcRequest};
 
-        "status" => Ok(serde_json::json!({
-            "running": true,
-            "pid": std::process::id(),
-            "shortcuts": config.shortcuts.len(),
-            "app_rules": config.app_rules.len(),
-            "socket": get_socket_path().display().to_string(),
-        })),
+    // handle special "action" method for raw action strings (hotkey-style)
+    if request.method == "action" {
+        let action = request.params.get("action").ok_or_else(|| {
+            (
+                exit_codes::INVALID_ARGS,
+                "action requires 'action' parameter".to_string(),
+            )
+        })?;
 
-        "focus" => {
-            let app = request.params.get("app").ok_or_else(|| {
-                (
-                    exit_codes::INVALID_ARGS,
-                    "focus requires 'app' parameter".to_string(),
-                )
-            })?;
+        return execute_action(action, config)
+            .map(|()| serde_json::json!({"message": "Action executed"}))
+            .map_err(|e| (exit_codes::ERROR, e.to_string()));
+    }
 
-            let action = format!("focus:{}", app);
-            execute_action(&action, config)
-                .map(|()| serde_json::json!({"message": format!("Focused {}", app), "app": app}))
-                .map_err(|e| (exit_codes::APP_NOT_FOUND, e.to_string()))
+    // convert IpcRequest to JSON string and parse with JsonRpcRequest
+    let json_str = serde_json::json!({
+        "method": request.method,
+        "params": request.params,
+        "id": request.id,
+    })
+    .to_string();
+
+    let json_request =
+        JsonRpcRequest::parse(&json_str).map_err(|e| (exit_codes::INVALID_ARGS, e.message))?;
+
+    // convert to Command and execute
+    let cmd = json_request.to_command().map_err(|e| (e.code, e.message))?;
+
+    let ctx = ExecutionContext::new(config, false);
+
+    match execute(cmd, &ctx) {
+        Ok(result) => {
+            // serialize the ActionResult to JSON
+            serde_json::to_value(&result).map_err(|e| (exit_codes::ERROR, e.to_string()))
         }
-
-        "maximize" => {
-            let action = match request.params.get("app") {
-                Some(app) => format!("maximize:{}", app),
-                None => "maximize".to_string(),
-            };
-            execute_action(&action, config)
-                .map(|()| serde_json::json!({"message": "Window maximized"}))
-                .map_err(|e| (exit_codes::WINDOW_NOT_FOUND, e.to_string()))
-        }
-
-        "resize" => {
-            let to = request.params.get("to").ok_or_else(|| {
-                (
-                    exit_codes::INVALID_ARGS,
-                    "resize requires 'to' parameter".to_string(),
-                )
-            })?;
-
-            let action = match request.params.get("app") {
-                Some(app) => format!("resize:{}:{}", to, app),
-                None => format!("resize:{}", to),
-            };
-            execute_action(&action, config)
-                .map(|()| serde_json::json!({"message": format!("Window resized to {}", to), "to": to}))
-                .map_err(|e| (exit_codes::WINDOW_NOT_FOUND, e.to_string()))
-        }
-
-        "move_display" => {
-            let target = request.params.get("target").ok_or_else(|| {
-                (
-                    exit_codes::INVALID_ARGS,
-                    "move_display requires 'target' parameter".to_string(),
-                )
-            })?;
-
-            let action = match request.params.get("app") {
-                Some(app) => format!("move_display:{}:{}", target, app),
-                None => format!("move_display:{}", target),
-            };
-            execute_action(&action, config)
-                .map(|()| serde_json::json!({"message": format!("Window moved to display {}", target), "target": target}))
-                .map_err(|e| (exit_codes::DISPLAY_NOT_FOUND, e.to_string()))
-        }
-
-        "list_apps" => matching::get_running_apps()
-            .map(|apps| {
-                let app_list: Vec<serde_json::Value> = apps
-                    .iter()
-                    .map(|app| {
-                        serde_json::json!({
-                            "name": app.name,
-                            "pid": app.pid,
-                            "bundle_id": app.bundle_id,
-                            "titles": app.titles,
-                        })
-                    })
-                    .collect();
-                serde_json::json!({ "apps": app_list })
-            })
-            .map_err(|e| (exit_codes::ERROR, e.to_string())),
-
-        "list_displays" => crate::display::get_displays()
-            .map(|displays| {
-                let display_list: Vec<serde_json::Value> = displays
-                    .iter()
-                    .map(|d| {
-                        serde_json::json!({
-                            "index": d.index,
-                            "name": d.name,
-                            "width": d.width,
-                            "height": d.height,
-                            "is_main": d.is_main,
-                            "is_builtin": d.is_builtin,
-                        })
-                    })
-                    .collect();
-                serde_json::json!({ "displays": display_list })
-            })
-            .map_err(|e| (exit_codes::ERROR, format!("{}", e))),
-
-        "action" => {
-            // execute a raw action string (legacy format)
-            let action = request.params.get("action").ok_or_else(|| {
-                (
-                    exit_codes::INVALID_ARGS,
-                    "action requires 'action' parameter".to_string(),
-                )
-            })?;
-
-            execute_action(action, config)
-                .map(|()| serde_json::json!({"message": "Action executed"}))
-                .map_err(|e| (exit_codes::ERROR, e.to_string()))
-        }
-
-        _ => Err((
-            exit_codes::INVALID_ARGS,
-            format!("Unknown method: {}", request.method),
-        )),
+        Err(err) => Err((err.code, err.message)),
     }
 }
 
@@ -1096,7 +996,10 @@ mod tests {
 
         let result = handle_ipc_request(&request, &config);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), serde_json::json!("pong"));
+        let value = result.unwrap();
+        // ping returns ActionResult with action="ping" and flattened data
+        assert_eq!(value["action"], "ping");
+        assert_eq!(value["result"], "pong");
     }
 
     #[test]
@@ -1121,9 +1024,13 @@ mod tests {
         assert!(result.is_ok());
 
         let value = result.unwrap();
-        assert_eq!(value["running"], true);
-        assert_eq!(value["shortcuts"], 2);
-        assert_eq!(value["app_rules"], 0);
+        // status returns ActionResult with flattened data
+        assert_eq!(value["action"], "status");
+        // check result field contains the status data
+        let result_data = &value["result"];
+        assert!(result_data.get("running").is_some(), "result: {:?}", value);
+        assert!(result_data.get("socket_path").is_some());
+        assert!(result_data.get("pid_file").is_some());
     }
 
     #[test]
@@ -1136,7 +1043,7 @@ mod tests {
 
         let (code, msg) = result.unwrap_err();
         assert_eq!(code, exit_codes::INVALID_ARGS);
-        assert!(msg.contains("Unknown method"));
+        assert!(msg.contains("unknown") || msg.contains("Unknown"));
     }
 
     #[test]

@@ -178,10 +178,11 @@ pub fn from_jsonrpc_code(rpc_code: i32) -> i32 {
 }
 
 // ============================================================================
-// Result data structures for different actions
+// Result data structures for tests
 // ============================================================================
 
-/// result data for focus action
+/// result data for focus action (used in tests)
+#[cfg(test)]
 #[derive(Serialize)]
 pub struct FocusData {
     pub action: &'static str,
@@ -190,51 +191,8 @@ pub struct FocusData {
     pub match_info: MatchData,
 }
 
-/// result data for maximize action
-#[derive(Serialize)]
-pub struct MaximizeData {
-    pub action: &'static str,
-    pub app: AppData,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "match")]
-    pub match_info: Option<MatchData>,
-}
-
-/// result data for resize action
-#[derive(Serialize)]
-pub struct ResizeData {
-    pub action: &'static str,
-    pub app: AppData,
-    pub size: SizeData,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "match")]
-    pub match_info: Option<MatchData>,
-}
-
-#[derive(Serialize)]
-pub struct SizeData {
-    pub width: u32,
-    pub height: u32,
-}
-
-/// result data for move-display action
-#[derive(Serialize)]
-pub struct MoveDisplayData {
-    pub action: &'static str,
-    pub app: AppData,
-    pub display: DisplayData,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "match")]
-    pub match_info: Option<MatchData>,
-}
-
-#[derive(Serialize, Clone)]
-pub struct DisplayData {
-    pub index: usize,
-    pub name: String,
-}
-
-/// basic app information for action results
+/// basic app information for action results (used in tests)
+#[cfg(test)]
 #[derive(Serialize, Clone)]
 pub struct AppData {
     pub name: String,
@@ -243,7 +201,8 @@ pub struct AppData {
     pub bundle_id: Option<String>,
 }
 
-/// match information showing how an app was found
+/// match information showing how an app was found (used in tests)
+#[cfg(test)]
 #[derive(Serialize, Clone)]
 pub struct MatchData {
     #[serde(rename = "type")]
@@ -260,8 +219,11 @@ pub struct MatchData {
 /// format a string template with {field} placeholders
 ///
 /// # example
-/// ```ignore
-/// let data = AppData { name: "Safari".into(), pid: 1234, bundle_id: None };
+/// ```
+/// use cwm::cli::output::format_template;
+/// use serde_json::json;
+///
+/// let data = json!({"name": "Safari", "pid": 1234});
 /// let result = format_template("{name} ({pid})", &data);
 /// assert_eq!(result, "Safari (1234)");
 /// ```
@@ -284,9 +246,9 @@ pub fn format_template<T: Serialize>(template: &str, data: &T) -> String {
                 serde_json::Value::Array(arr) => {
                     // join array elements with comma
                     arr.iter()
-                        .filter_map(|v| match v {
-                            serde_json::Value::String(s) => Some(s.clone()),
-                            _ => Some(v.to_string()),
+                        .map(|v| match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            _ => v.to_string(),
                         })
                         .collect::<Vec<_>>()
                         .join(", ")

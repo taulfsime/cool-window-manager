@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::time::Duration;
 
 use crate::config::UpdateSettings;
@@ -293,35 +293,6 @@ impl GitHubClient {
         }
 
         Ok(None)
-    }
-
-    pub fn create_issue(&self, title: &str, body: &str, labels: Vec<&str>) -> Result<()> {
-        let url = format!("{}/repos/{}/issues", self.api_base_url, self.repo);
-
-        #[derive(Serialize)]
-        struct IssueRequest {
-            title: String,
-            body: String,
-            labels: Vec<String>,
-        }
-
-        let request = IssueRequest {
-            title: title.to_string(),
-            body: body.to_string(),
-            labels: labels.iter().map(|s| s.to_string()).collect(),
-        };
-
-        let response = self.client.post(&url).json(&request).send()?;
-
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "Failed to create issue: {} {}",
-                response.status(),
-                response.text().unwrap_or_default()
-            ));
-        }
-
-        Ok(())
     }
 }
 

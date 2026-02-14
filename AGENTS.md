@@ -143,9 +143,32 @@ cool-window-mng/
     ├── version.rs          # version management (Version, VersionInfo)
     ├── bin/
     │   └── generate-man.rs # man page generator using clap_mangen
+    ├── actions/
+    │   ├── mod.rs          # unified action layer, execute() dispatcher
+    │   ├── command.rs      # Command enum - single source of truth for all commands
+    │   ├── context.rs      # ExecutionContext with config and is_cli flag
+    │   ├── error.rs        # ActionError with exit codes and suggestions
+    │   ├── params.rs       # ActionParams (legacy, deprecated)
+    │   ├── parse.rs        # JsonRpcRequest parsing for IPC
+    │   ├── result.rs       # ActionResult and response data types
+    │   └── handlers/
+    │       ├── mod.rs      # handler module exports
+    │       ├── common.rs   # shared utilities (resolve_app_target, AppResolution)
+    │       ├── focus.rs    # focus action handler
+    │       ├── maximize.rs # maximize action handler
+    │       ├── resize.rs   # resize action handler
+    │       ├── move_display.rs # move-display action handler
+    │       ├── list.rs     # list apps/displays/aliases handlers
+    │       ├── get.rs      # get focused/window handlers
+    │       ├── system.rs   # ping, status, version, check_permissions handlers
+    │       ├── daemon.rs   # daemon status handler (start/stop are CLI-only)
+    │       ├── config.rs   # config show/path/verify handlers
+    │       ├── spotlight.rs # spotlight list/example handlers
+    │       └── install.rs  # update_check handler (install/update are CLI-only)
     ├── cli/
     │   ├── mod.rs          # module exports
     │   ├── commands.rs     # CLI command definitions and execution
+    │   ├── convert.rs      # Commands::to_command() conversion to unified Command
     │   ├── exit_codes.rs   # documented exit codes for scripting
     │   └── output.rs       # output formatting (JSON, text, format strings)
     ├── config/
@@ -155,7 +178,7 @@ cool-window-mng/
     ├── daemon/
     │   ├── mod.rs          # daemon lifecycle, action execution, hotkey parsing, IPC handling
     │   ├── hotkeys.rs      # global hotkey recording and listening (CGEventTap)
-    │   ├── ipc.rs          # PID file management, Unix socket IPC at ~/.cwm/cwm.sock
+    │   ├── ipc.rs          # PID file management, Unix socket IPC (JSON-RPC 2.0 only)
     │   ├── launchd.rs      # macOS launchd plist for auto-start
     │   └── app_watcher.rs  # NSWorkspace notifications for app launches
     ├── display/
@@ -181,6 +204,52 @@ cool-window-mng/
 
 ## Module Architecture
 
+### actions/
+
+Unified action layer providing consistent behavior across CLI, IPC, and future HTTP API.
+
+| File | Responsibility |
+|------|----------------|
+| `mod.rs` | `execute(Command, &ExecutionContext)` dispatcher, module exports |
+| `command.rs` | `Command` enum - single source of truth for all commands |
+| `context.rs` | `ExecutionContext` with config reference and `is_cli` flag |
+| `error.rs` | `ActionError` with exit codes, suggestions, and helper constructors |
+| `params.rs` | `ActionParams` enum (legacy, deprecated - use `Command` instead) |
+| `parse.rs` | `JsonRpcRequest` struct, `to_command()` for JSON-RPC → Command conversion |
+| `result.rs` | `ActionResult`, `ActionData`, `AppData`, `MatchData`, etc. |
+
+**Handler modules** (`handlers/`):
+
+| File | Responsibility |
+|------|----------------|
+| `common.rs` | `AppResolution` enum, `resolve_app_target()`, `resolve_launch_behavior()` |
+| `focus.rs` | focus action - brings app window to foreground |
+| `maximize.rs` | maximize action - fills screen |
+| `resize.rs` | resize action - percentage, pixels, or points |
+| `move_display.rs` | move-display action - moves window to another monitor |
+| `list.rs` | list apps/displays/aliases |
+| `get.rs` | get focused window or specific app's window info |
+| `system.rs` | ping, status, version, check_permissions |
+| `daemon.rs` | daemon status (start/stop/install are CLI-only) |
+| `config.rs` | config show/path/verify/default (set/reset are CLI-only) |
+| `spotlight.rs` | spotlight list/example (install/remove are CLI-only) |
+| `install.rs` | update_check (install/uninstall/update are CLI-only) |
+
+**Key types:**
+
+- `Command`: Unified enum for all commands (Focus, Maximize, Resize, MoveDisplay, List, Get, Ping, Status, Version, CheckPermissions, RecordShortcut, Daemon, Config, Spotlight, Install, Uninstall, Update)
+- `ExecutionContext`: Contains config reference, verbose flag, and `is_cli` flag
+- `ActionResult`: Serializable result with action name and typed data
+- `ActionError`: Error with exit code, message, and optional suggestions
+
+**Design principles:**
+
+- Commands are defined once in `Command` enum
+- All transports (CLI, IPC) parse their input into `Command`
+- `app` parameter is always `Vec<String>` (tries each in order)
+- Interactive commands return error via IPC (CLI-only)
+- `is_cli` flag distinguishes interactive vs non-interactive contexts
+
 ### cli/
 
 Handles command-line argument parsing and command execution.
@@ -189,6 +258,7 @@ Handles command-line argument parsing and command execution.
 |------|----------------|
 | `mod.rs` | re-exports `run()` and `Cli` |
 | `commands.rs` | defines `Cli` struct with clap derive, `Commands` enum, and `run()` function that dispatches to appropriate handlers |
+| `convert.rs` | `Commands::to_command()` conversion from CLI args to unified `Command` enum |
 | `exit_codes.rs` | exit code constants for scripting (SUCCESS, ERROR, APP_NOT_FOUND, etc.) |
 | `output.rs` | output formatting: `OutputMode` enum, JSON-RPC 2.0 response types, `format_template()` for custom format strings |
 
@@ -319,26 +389,32 @@ The daemon uses:
 The daemon exposes a Unix socket for inter-process communication, allowing external tools to control cwm without spawning new processes.
 
 - Socket location: `~/.cwm/cwm.sock`
-- Protocol: JSON-RPC 2.0 style (consistent with CLI `--json` output)
-- Available methods: `ping`, `status`, `focus`, `maximize`, `resize`, `move_display`, `list_apps`, `list_displays`, `action`
+- Protocol: JSON-RPC 2.0 (the `"jsonrpc": "2.0"` field is optional for convenience)
+- All requests must be JSON format
+- Available methods: all commands from `Command` enum (focus, maximize, resize, move_display, list, get, ping, status, version, config, etc.)
 
-**Supported input formats:**
-1. **JSON** (recommended): `{"method": "focus", "params": {"app": "Safari"}, "id": 1}` (the `"jsonrpc": "2.0"` field is optional)
-2. **Plain text**: `focus:Safari`
+**Request format:**
+```json
+{"method": "focus", "params": {"app": ["Safari", "Chrome"]}, "id": 1}
+```
 
-**Response format matches input:**
-- JSON input → JSON-RPC 2.0 response: `{"jsonrpc": "2.0", "result": {...}, "id": "1"}`
-- Plain text input → Plain text response: `OK` or `ERROR: message`
+**Response format (JSON-RPC 2.0):**
+```json
+{"jsonrpc": "2.0", "result": {...}, "id": "1"}
+```
 
-**Notifications:** JSON requests without `id` are treated as notifications (no response sent).
+**Notifications:** Requests without `id` are treated as notifications (no response sent).
+
+**Key differences from CLI:**
+- `app` parameter is always an array: `{"app": ["Safari"]}` not `{"app": "Safari"}`
+- Single string is accepted and converted to single-element array for convenience
+- Interactive commands (record_shortcut, install prompts) return errors via IPC
 
 Key types in `ipc.rs`:
-- `IpcRequest`: Parsed request with method, params, format, and optional id
-- `InputFormat`: Enum for `Json` or `Text`
-- `format_success_response()`: Format success response based on input format
-- `format_error_response()`: Format error response with JSON-RPC error codes
+- `IpcRequest`: Parsed request with method, params, and optional id
+- `format_success_response()`: Format JSON-RPC success response
+- `format_error_response()`: Format JSON-RPC error response
 - `send_jsonrpc()`: Send JSON-RPC 2.0 request to daemon
-- `send_text_command()`: Send plain text command to daemon
 
 ### display/
 
@@ -583,10 +659,14 @@ Tests are located in `#[cfg(test)]` modules within:
 
 | File | Test Coverage |
 |------|---------------|
+| `src/actions/command.rs` | Command::is_interactive(), ListResource parsing, method_name() |
+| `src/actions/parse.rs` | JSON-RPC parsing, to_command() for all command types, app array handling |
 | `src/cli/commands.rs` | ListResource enum parsing, JSON serialization structs, CLI argument parsing, helper functions (resolve_app_name, match_result_to_data, app_info_to_data) |
+| `src/cli/convert.rs` | Commands::to_command() conversion for all CLI commands |
 | `src/config/mod.rs` | config value parsing, key setting, JSONC parsing, multi-extension support, config path override |
 | `src/config/schema.rs` | `should_launch` priority logic, update settings serialization, `$schema` field |
 | `src/config/json_schema.rs` | schema validity, required definitions, file writing |
+| `src/daemon/ipc.rs` | JSON-RPC request parsing, response formatting, notification handling |
 | `src/display/mod.rs` | display target parsing, resolution with wraparound |
 | `src/window/matching.rs` | name matching (exact, prefix, fuzzy), title matching (exact, prefix, fuzzy) |
 | `src/window/manager.rs` | ResizeTarget parsing, find_display_for_point, WindowData/DisplayDataInfo serialization |
