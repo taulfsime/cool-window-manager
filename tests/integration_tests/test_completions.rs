@@ -454,7 +454,7 @@ fn test_completion_contains_all_commands() {
         "focus",
         "maximize",
         "resize",
-        "move-display",
+        "move",
         "list",
         "get",
         "config",

@@ -185,7 +185,7 @@ exit 1
 /// builds the IPC command string for the daemon
 fn build_ipc_command(shortcut: &SpotlightShortcut) -> String {
     // the daemon expects actions in format: action[:arg1[:arg2]]
-    // e.g., "focus:Safari", "maximize", "move_display:next", "resize:80"
+    // e.g., "focus:Safari", "maximize", "move:next", "resize:80"
 
     let (action_type, action_arg) = if let Some(idx) = shortcut.action.find(':') {
         (&shortcut.action[..idx], Some(&shortcut.action[idx + 1..]))
@@ -208,12 +208,12 @@ fn build_ipc_command(shortcut: &SpotlightShortcut) -> String {
                 "maximize".to_string()
             }
         }
-        "move_display" => {
+        "move" => {
             let target = action_arg.unwrap_or("next");
             if let Some(ref app) = shortcut.app {
-                format!("move_display:{}:{}", target, app)
+                format!("move:{}:{}", target, app)
             } else {
-                format!("move_display:{}", target)
+                format!("move:{}", target)
             }
         }
         "resize" => {
@@ -547,27 +547,27 @@ mod tests {
     }
 
     #[test]
-    fn test_build_ipc_command_move_display() {
+    fn test_build_ipc_command_move() {
         let shortcut = SpotlightShortcut {
             name: "Test".to_string(),
-            action: "move_display:next".to_string(),
+            action: "move:next".to_string(),
             app: None,
             launch: None,
             icon: None,
         };
-        assert_eq!(build_ipc_command(&shortcut), "move_display:next");
+        assert_eq!(build_ipc_command(&shortcut), "move:next");
     }
 
     #[test]
-    fn test_build_ipc_command_move_display_with_app() {
+    fn test_build_ipc_command_move_with_app() {
         let shortcut = SpotlightShortcut {
             name: "Test".to_string(),
-            action: "move_display:prev".to_string(),
+            action: "move:prev".to_string(),
             app: Some("Finder".to_string()),
             launch: None,
             icon: None,
         };
-        assert_eq!(build_ipc_command(&shortcut), "move_display:prev:Finder");
+        assert_eq!(build_ipc_command(&shortcut), "move:prev:Finder");
     }
 
     #[test]
@@ -717,10 +717,10 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_shell_script_move_display_prev() {
+    fn test_generate_shell_script_move_prev() {
         let shortcut = SpotlightShortcut {
             name: "Move Prev".to_string(),
-            action: "move_display:prev".to_string(),
+            action: "move:prev".to_string(),
             app: None,
             launch: None,
             icon: None,
@@ -728,14 +728,14 @@ mod tests {
 
         let script = generate_shell_script(&shortcut);
 
-        assert!(script.contains("COMMAND=\"move_display:prev\""));
+        assert!(script.contains("COMMAND=\"move:prev\""));
     }
 
     #[test]
-    fn test_generate_shell_script_move_display_with_app() {
+    fn test_generate_shell_script_move_with_app() {
         let shortcut = SpotlightShortcut {
             name: "Move Safari Next".to_string(),
-            action: "move_display:next".to_string(),
+            action: "move:next".to_string(),
             app: Some("Safari".to_string()),
             launch: None,
             icon: None,
@@ -743,7 +743,7 @@ mod tests {
 
         let script = generate_shell_script(&shortcut);
 
-        assert!(script.contains("COMMAND=\"move_display:next:Safari\""));
+        assert!(script.contains("COMMAND=\"move:next:Safari\""));
     }
 
     #[test]
@@ -764,11 +764,11 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_shell_script_move_display_default() {
-        // move_display without explicit target should default to next
+    fn test_generate_shell_script_move_default() {
+        // move without explicit target should default to next
         let shortcut = SpotlightShortcut {
             name: "Move Default".to_string(),
-            action: "move_display".to_string(),
+            action: "move".to_string(),
             app: None,
             launch: None,
             icon: None,
@@ -777,7 +777,7 @@ mod tests {
         let script = generate_shell_script(&shortcut);
 
         // default target is next
-        assert!(script.contains("COMMAND=\"move_display:next\""));
+        assert!(script.contains("COMMAND=\"move:next\""));
     }
 
     #[test]
@@ -848,16 +848,16 @@ mod tests {
     }
 
     #[test]
-    fn test_build_ipc_command_move_display_default_target() {
-        // move_display without target should default to "next"
+    fn test_build_ipc_command_move_default_target() {
+        // move without target should default to "next"
         let shortcut = SpotlightShortcut {
             name: "Test".to_string(),
-            action: "move_display".to_string(),
+            action: "move".to_string(),
             app: None,
             launch: None,
             icon: None,
         };
-        assert_eq!(build_ipc_command(&shortcut), "move_display:next");
+        assert_eq!(build_ipc_command(&shortcut), "move:next");
     }
 
     #[test]
@@ -899,15 +899,15 @@ mod tests {
     }
 
     #[test]
-    fn test_build_ipc_command_move_display_numeric() {
+    fn test_build_ipc_command_move_numeric() {
         let shortcut = SpotlightShortcut {
             name: "Test".to_string(),
-            action: "move_display:2".to_string(),
+            action: "move:2".to_string(),
             app: None,
             launch: None,
             icon: None,
         };
-        assert_eq!(build_ipc_command(&shortcut), "move_display:2");
+        assert_eq!(build_ipc_command(&shortcut), "move:2");
     }
 
     #[test]

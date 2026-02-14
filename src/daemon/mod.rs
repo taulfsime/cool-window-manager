@@ -314,16 +314,31 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
 
             manager::maximize_app(target_app.as_ref(), false)?;
         }
-        "move_display" => {
-            let target_str = action_arg.ok_or_else(|| anyhow!("move_display requires target"))?;
+        "move" => {
+            let arg_str = action_arg.ok_or_else(|| anyhow!("move requires target"))?;
 
-            let (display_target_str, app_name) = if let Some(idx) = target_str.find(':') {
-                (&target_str[..idx], Some(&target_str[idx + 1..]))
+            // parse format: position or display=target or position;display=target or position:app
+            // examples: top-left, next, display=next, top-left;display=2, 50%,50%:Safari
+            let (position_and_display, app_name) = if let Some(idx) = arg_str.rfind(':') {
+                // check if this colon is part of a display= clause or an app separator
+                let before_colon = &arg_str[..idx];
+                if before_colon.contains("display=")
+                    || before_colon.contains('%')
+                    || before_colon.contains("px")
+                    || before_colon.contains("pt")
+                {
+                    // colon is app separator
+                    (&arg_str[..idx], Some(&arg_str[idx + 1..]))
+                } else {
+                    // might be display target like "next" or position like "top-left"
+                    (arg_str, None)
+                }
             } else {
-                (target_str, None)
+                (arg_str, None)
             };
 
-            let display_target = crate::display::DisplayTarget::parse(display_target_str)?;
+            // parse position and display from the string
+            let (move_target, display_target) = parse_move_action_arg(position_and_display)?;
 
             let target_app = if let Some(name) = app_name {
                 let running_apps = matching::get_running_apps()?;
@@ -333,9 +348,10 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 None
             };
 
-            manager::move_to_display_with_aliases(
+            manager::move_window(
                 target_app.as_ref(),
-                &display_target,
+                move_target.as_ref(),
+                display_target.as_ref(),
                 false,
                 &config.display_aliases,
             )?;
@@ -418,13 +434,20 @@ fn execute_action_for_app_info(
         let result = match action_type {
             "focus" => manager::focus_app(target_app, false),
             "maximize" => manager::maximize_app(Some(target_app), false),
-            "move_display" => {
-                let target_str = match action_arg {
+            "move" => {
+                let arg_str = match action_arg {
                     Some(s) => s,
-                    None => return Err(anyhow!("move_display requires target")),
+                    None => return Err(anyhow!("move requires target")),
                 };
-                let display_target = crate::display::DisplayTarget::parse(target_str)?;
-                manager::move_to_display(Some(target_app), &display_target, false)
+                let (move_target, display_target) = parse_move_action_arg(arg_str)?;
+                manager::move_window(
+                    Some(target_app),
+                    move_target.as_ref(),
+                    display_target.as_ref(),
+                    false,
+                    &config.display_aliases,
+                )
+                .map(|_| ())
             }
             "resize" => {
                 use crate::window::ResizeTarget;
@@ -471,6 +494,70 @@ fn execute_action_for_app_info(
     }
 
     Err(last_error.unwrap_or_else(|| anyhow!("Failed after {} retries", max_retries)))
+}
+
+/// Parse move action argument string into position and display targets
+/// Formats:
+/// - "top-left" -> position only
+/// - "next" or "prev" or "0" -> display only (simple targets)
+/// - "display=next" -> display only (explicit)
+/// - "top-left;display=2" -> both position and display (semicolon separates arguments)
+/// - "50%,50%" -> position only (percentage, comma separates coordinates)
+fn parse_move_action_arg(
+    s: &str,
+) -> Result<(
+    Option<crate::window::manager::MoveTarget>,
+    Option<crate::display::DisplayTarget>,
+)> {
+    use crate::display::DisplayTarget;
+    use crate::window::manager::MoveTarget;
+
+    let s = s.trim();
+
+    // check for explicit display= syntax (display only)
+    if let Some(display_part) = s.strip_prefix("display=") {
+        let display = DisplayTarget::parse(display_part)?;
+        return Ok((None, Some(display)));
+    }
+
+    // check for combined format using semicolon: position;display=target
+    if s.contains(';') {
+        let parts: Vec<&str> = s.splitn(2, ';').collect();
+        if parts.len() == 2 {
+            let position = MoveTarget::parse(parts[0].trim())?;
+            let display_part = parts[1].trim();
+            let display_value = display_part
+                .strip_prefix("display=")
+                .unwrap_or(display_part);
+            let display = DisplayTarget::parse(display_value)?;
+            return Ok((Some(position), Some(display)));
+        }
+    }
+
+    // try to parse as display target first (for simple targets: next, prev, 0, 1, etc.)
+    if let Ok(display) = DisplayTarget::parse(s) {
+        // check if it's a simple display target (next, prev, or numeric)
+        match s.to_lowercase().as_str() {
+            "next" | "prev" => return Ok((None, Some(display))),
+            _ if s.chars().all(|c| c.is_ascii_digit()) => return Ok((None, Some(display))),
+            _ => {}
+        }
+    }
+
+    // try to parse as position
+    if let Ok(position) = MoveTarget::parse(s) {
+        return Ok((Some(position), None));
+    }
+
+    // try display target as fallback (for aliases)
+    if let Ok(display) = DisplayTarget::parse(s) {
+        return Ok((None, Some(display)));
+    }
+
+    Err(anyhow!(
+        "invalid move target '{}': expected position (top-left, 50%,50%, etc.) or display (next, prev, 0, etc.)",
+        s
+    ))
 }
 
 fn find_shortcut_launch(config: &Config, action: &str) -> Option<bool> {
@@ -1073,16 +1160,16 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_ipc_request_move_display_missing_target() {
+    fn test_handle_ipc_request_move_missing_target() {
         let config = create_test_config(vec![]);
-        let request = IpcRequest::parse(r#"{"method": "move_display"}"#).unwrap();
+        let request = IpcRequest::parse(r#"{"method": "move"}"#).unwrap();
 
         let result = handle_ipc_request(&request, &config);
         assert!(result.is_err());
 
         let (code, msg) = result.unwrap_err();
         assert_eq!(code, exit_codes::INVALID_ARGS);
-        assert!(msg.contains("target"));
+        assert!(msg.contains("to") || msg.contains("display"));
     }
 
     #[test]
@@ -1096,5 +1183,215 @@ mod tests {
         let (code, msg) = result.unwrap_err();
         assert_eq!(code, exit_codes::INVALID_ARGS);
         assert!(msg.contains("action"));
+    }
+
+    // ========================================================================
+    // parse_move_action_arg tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_move_action_arg_display_next() {
+        let (pos, disp) = super::parse_move_action_arg("next").unwrap();
+        assert!(pos.is_none());
+        assert!(disp.is_some());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_display_prev() {
+        let (pos, disp) = super::parse_move_action_arg("prev").unwrap();
+        assert!(pos.is_none());
+        assert!(disp.is_some());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_display_numeric() {
+        let (pos, disp) = super::parse_move_action_arg("2").unwrap();
+        assert!(pos.is_none());
+        assert!(disp.is_some());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_display_alias() {
+        // aliases like "external", "builtin", "office" should work
+        let (pos, disp) = super::parse_move_action_arg("external").unwrap();
+        assert!(pos.is_none());
+        assert!(disp.is_some());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_display_explicit() {
+        let (pos, disp) = super::parse_move_action_arg("display=next").unwrap();
+        assert!(pos.is_none());
+        assert!(disp.is_some());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_position_anchor() {
+        let (pos, disp) = super::parse_move_action_arg("top-left").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_none());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_position_percent() {
+        let (pos, disp) = super::parse_move_action_arg("50%,50%").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_none());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_combined_semicolon() {
+        let (pos, disp) = super::parse_move_action_arg("top-left;display=next").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_some());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_combined_semicolon_no_prefix() {
+        // semicolon without display= prefix should also work
+        let (pos, disp) = super::parse_move_action_arg("top-left;next").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_some());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_percent_with_display() {
+        let (pos, disp) = super::parse_move_action_arg("50%,50%;display=2").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_some());
+    }
+
+    // ========================================================================
+    // parse_move_action_arg - bare numbers
+    // ========================================================================
+
+    #[test]
+    fn test_parse_move_action_arg_bare_number_single_is_display() {
+        // single bare number is interpreted as display index, not percentage
+        // use explicit percentage (50%) or pair (50,50) for position
+        let (pos, disp) = super::parse_move_action_arg("2").unwrap();
+        assert!(pos.is_none());
+        assert!(disp.is_some());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_bare_number_pair() {
+        // pair of bare numbers is interpreted as percentage position
+        let (pos, disp) = super::parse_move_action_arg("25,75").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_none());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_bare_number_pair_with_display() {
+        let (pos, disp) = super::parse_move_action_arg("50,50;display=next").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_some());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_explicit_percent_single() {
+        // use explicit % for single-value percentage
+        let (pos, disp) = super::parse_move_action_arg("50%").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_none());
+    }
+
+    // ========================================================================
+    // parse_move_action_arg - relative movement
+    // ========================================================================
+
+    #[test]
+    fn test_parse_move_action_arg_relative_both_axes() {
+        let (pos, disp) = super::parse_move_action_arg("+100,-50").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_none());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_relative_x_only() {
+        let (pos, disp) = super::parse_move_action_arg("+100").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_none());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_relative_y_only() {
+        let (pos, disp) = super::parse_move_action_arg(",+100").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_none());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_relative_with_display() {
+        let (pos, disp) = super::parse_move_action_arg("+100,-50;display=2").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_some());
+    }
+
+    // ========================================================================
+    // parse_move_action_arg - pixels and points
+    // ========================================================================
+
+    #[test]
+    fn test_parse_move_action_arg_pixels() {
+        let (pos, disp) = super::parse_move_action_arg("100,200px").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_none());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_points() {
+        let (pos, disp) = super::parse_move_action_arg("100,200pt").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_none());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_pixels_with_display() {
+        let (pos, disp) = super::parse_move_action_arg("100,200px;display=next").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_some());
+    }
+
+    // ========================================================================
+    // parse_move_action_arg - center anchor
+    // ========================================================================
+
+    #[test]
+    fn test_parse_move_action_arg_center() {
+        let (pos, disp) = super::parse_move_action_arg("center").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_none());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_center_with_display() {
+        let (pos, disp) = super::parse_move_action_arg("center;display=2").unwrap();
+        assert!(pos.is_some());
+        assert!(disp.is_some());
+    }
+
+    // ========================================================================
+    // parse_move_action_arg - error cases
+    // ========================================================================
+
+    #[test]
+    fn test_parse_move_action_arg_invalid_position() {
+        let result = super::parse_move_action_arg("invalid-position");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_invalid_percent_range() {
+        let result = super::parse_move_action_arg("150%");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_move_action_arg_invalid_bare_number_range() {
+        // bare number pair with value > 100 should fail
+        let result = super::parse_move_action_arg("150,50");
+        assert!(result.is_err());
     }
 }

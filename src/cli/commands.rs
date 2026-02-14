@@ -76,10 +76,15 @@ pub enum Commands {
         verbose: bool,
     },
 
-    /// Move a window to another display
-    MoveDisplay {
+    /// Move a window to a specific position and/or display
+    Move {
+        /// Target position: anchor (top-left, right), absolute (100,200px), percent (50%,25%), or relative (+100,-50)
+        #[arg(short = 't', long = "to")]
+        to: Option<String>,
+
         /// Target display: "next", "prev", display index (0-based), or alias name
-        target: String,
+        #[arg(short = 'd', long)]
+        display: Option<String>,
 
         /// Target app name (fuzzy matched), uses focused window if not specified
         #[arg(short, long)]
@@ -551,20 +556,35 @@ pub fn execute(cli: Cli) -> Result<()> {
             }
         }
 
-        Commands::MoveDisplay {
-            target,
+        Commands::Move {
+            to,
+            display,
             app,
             launch,
             no_launch,
             verbose,
         } => {
+            use crate::window::manager::MoveTarget;
+
+            // at least one of --to or --display must be specified
+            if to.is_none() && display.is_none() {
+                return Err(anyhow!(
+                    "at least one of --to or --display must be specified"
+                ));
+            }
+
             let config = config::load_with_override(config_path)?;
             let app = app.map(|a| resolve_app_name(&a)).transpose()?;
-            let display_target = display::DisplayTarget::parse(&target)?;
 
-            let cmd = Command::MoveDisplay {
+            let move_target = to.map(|t| MoveTarget::parse(&t)).transpose()?;
+            let display_target = display
+                .map(|d| display::DisplayTarget::parse(&d))
+                .transpose()?;
+
+            let cmd = Command::Move {
                 app: app.map(|a| vec![a]).unwrap_or_default(),
-                target: display_target,
+                to: move_target,
+                display: display_target,
                 launch: resolve_launch_flags(launch, no_launch),
             };
             let ctx = ExecutionContext::new_with_verbose(&config, true, verbose);
@@ -1881,30 +1901,72 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_move_display() {
+    fn test_cli_parse_move_to_next() {
         use clap::Parser;
-        let cli = Cli::try_parse_from(["cwm", "move-display", "next"]).unwrap();
+        let cli = Cli::try_parse_from(["cwm", "move", "--to", "next"]).unwrap();
 
         match cli.command {
-            Commands::MoveDisplay { target, app, .. } => {
-                assert_eq!(target, "next");
+            Commands::Move {
+                to, display, app, ..
+            } => {
+                assert_eq!(to, Some("next".to_string()));
+                assert!(display.is_none());
                 assert!(app.is_none());
             }
-            _ => panic!("Expected MoveDisplay command"),
+            _ => panic!("Expected Move command"),
         }
     }
 
     #[test]
-    fn test_cli_parse_move_display_with_app() {
+    fn test_cli_parse_move_with_app() {
         use clap::Parser;
-        let cli = Cli::try_parse_from(["cwm", "move-display", "prev", "--app", "Safari"]).unwrap();
+        let cli =
+            Cli::try_parse_from(["cwm", "move", "--to", "top-left", "--app", "Safari"]).unwrap();
 
         match cli.command {
-            Commands::MoveDisplay { target, app, .. } => {
-                assert_eq!(target, "prev");
+            Commands::Move {
+                to, display, app, ..
+            } => {
+                assert_eq!(to, Some("top-left".to_string()));
+                assert!(display.is_none());
                 assert_eq!(app, Some("Safari".to_string()));
             }
-            _ => panic!("Expected MoveDisplay command"),
+            _ => panic!("Expected Move command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_move_with_display() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "move", "--display", "2"]).unwrap();
+
+        match cli.command {
+            Commands::Move {
+                to, display, app, ..
+            } => {
+                assert!(to.is_none());
+                assert_eq!(display, Some("2".to_string()));
+                assert!(app.is_none());
+            }
+            _ => panic!("Expected Move command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_move_with_to_and_display() {
+        use clap::Parser;
+        let cli =
+            Cli::try_parse_from(["cwm", "move", "--to", "50%,50%", "--display", "next"]).unwrap();
+
+        match cli.command {
+            Commands::Move {
+                to, display, app, ..
+            } => {
+                assert_eq!(to, Some("50%,50%".to_string()));
+                assert_eq!(display, Some("next".to_string()));
+                assert!(app.is_none());
+            }
+            _ => panic!("Expected Move command"),
         }
     }
 

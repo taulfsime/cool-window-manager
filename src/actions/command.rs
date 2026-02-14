@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use crate::display::DisplayTarget;
-use crate::window::manager::ResizeTarget;
+use crate::window::manager::{MoveTarget, ResizeTarget};
 
 /// all commands supported by cwm
 ///
@@ -44,12 +44,14 @@ pub enum Command {
         launch: Option<bool>,
     },
 
-    /// move a window to another display
-    MoveDisplay {
+    /// move a window to a specific position and/or display
+    Move {
         /// target app(s), empty = focused window
         app: Vec<String>,
-        /// display target (already parsed/validated)
-        target: DisplayTarget,
+        /// target position (None = keep relative position when switching display, or center)
+        to: Option<MoveTarget>,
+        /// target display (None = current display)
+        display: Option<DisplayTarget>,
         /// launch behavior override
         launch: Option<bool>,
     },
@@ -260,7 +262,7 @@ impl Command {
             Command::Focus { .. } => "focus",
             Command::Maximize { .. } => "maximize",
             Command::Resize { .. } => "resize",
-            Command::MoveDisplay { .. } => "move_display",
+            Command::Move { .. } => "move",
             Command::List { .. } => "list",
             Command::Get { .. } => "get",
             Command::Ping => "ping",

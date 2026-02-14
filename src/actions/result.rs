@@ -42,9 +42,10 @@ pub enum ActionData {
         match_info: Option<MatchData>,
     },
 
-    /// move-display action result
-    MoveDisplay {
+    /// move action result
+    Move {
         app: AppData,
+        position: PositionData,
         display: DisplayData,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(rename = "match")]
@@ -123,6 +124,13 @@ pub struct SizeData {
     pub height: u32,
 }
 
+/// position information for move results
+#[derive(Debug, Clone, Serialize)]
+pub struct PositionData {
+    pub x: i32,
+    pub y: i32,
+}
+
 /// display information
 #[derive(Debug, Clone, Serialize)]
 pub struct DisplayData {
@@ -172,11 +180,17 @@ impl ActionResult {
         }
     }
 
-    pub fn move_display(app: AppData, display: DisplayData, match_info: Option<MatchData>) -> Self {
+    pub fn move_window(
+        app: AppData,
+        position: PositionData,
+        display: DisplayData,
+        match_info: Option<MatchData>,
+    ) -> Self {
         Self {
-            action: "move-display",
-            data: ActionData::MoveDisplay {
+            action: "move",
+            data: ActionData::Move {
                 app,
+                position,
                 display,
                 match_info,
             },

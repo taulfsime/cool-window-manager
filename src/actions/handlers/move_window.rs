@@ -1,31 +1,34 @@
-//! move-display action handler
+//! move action handler
 
 use crate::actions::context::ExecutionContext;
 use crate::actions::error::ActionError;
 use crate::actions::handlers::common::{resolve_app_target, AppResolution};
-use crate::actions::result::{ActionResult, AppData, DisplayData};
+use crate::actions::result::{ActionResult, AppData, DisplayData, PositionData};
 use crate::display::DisplayTarget;
-use crate::window::manager;
+use crate::window::manager::{self, MoveTarget};
 
-/// execute move-display action
+/// execute move action
 pub fn execute(
     app: Vec<String>,
-    target: DisplayTarget,
+    to: Option<MoveTarget>,
+    display: Option<DisplayTarget>,
     launch: Option<bool>,
     ctx: &ExecutionContext,
 ) -> Result<ActionResult, ActionError> {
     match resolve_app_target(&app, launch, ctx)? {
         AppResolution::Found { app, match_info } => {
-            let (display_index, display_name) = manager::move_to_display_with_aliases(
+            let (x, y, display_index, display_name) = manager::move_window(
                 Some(&app),
-                &target,
+                to.as_ref(),
+                display.as_ref(),
                 ctx.verbose,
                 &ctx.config.display_aliases,
             )
             .map_err(ActionError::from)?;
 
-            Ok(ActionResult::move_display(
+            Ok(ActionResult::move_window(
                 AppData::from(&app),
+                PositionData { x, y },
                 DisplayData {
                     index: display_index,
                     name: display_name,
@@ -37,20 +40,22 @@ pub fn execute(
         }
         AppResolution::Launched { app_name } => Ok(ActionResult::launched(app_name)),
         AppResolution::Focused => {
-            let (display_index, display_name) = manager::move_to_display_with_aliases(
+            let (x, y, display_index, display_name) = manager::move_window(
                 None,
-                &target,
+                to.as_ref(),
+                display.as_ref(),
                 ctx.verbose,
                 &ctx.config.display_aliases,
             )
             .map_err(ActionError::from)?;
 
-            Ok(ActionResult::move_display(
+            Ok(ActionResult::move_window(
                 AppData {
                     name: "focused".to_string(),
                     pid: 0,
                     bundle_id: None,
                 },
+                PositionData { x, y },
                 DisplayData {
                     index: display_index,
                     name: display_name,

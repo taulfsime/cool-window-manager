@@ -609,7 +609,7 @@ fn test_config_with_valid_shortcuts() {
             },
             {
                 "keys": "ctrl+alt+n",
-                "action": "move_display:next"
+                "action": "move:next"
             },
             {
                 "keys": "ctrl+alt+r",

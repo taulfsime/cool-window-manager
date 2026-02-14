@@ -49,14 +49,35 @@ pub fn get_example_shortcuts() -> Vec<SpotlightShortcut> {
         },
         SpotlightShortcut {
             name: "Move to Next Display".to_string(),
-            action: "move_display:next".to_string(),
+            action: "move:next".to_string(),
             app: None,
             launch: None,
             icon: None,
         },
         SpotlightShortcut {
             name: "Move to Previous Display".to_string(),
-            action: "move_display:prev".to_string(),
+            action: "move:prev".to_string(),
+            app: None,
+            launch: None,
+            icon: None,
+        },
+        SpotlightShortcut {
+            name: "Move to Top Left".to_string(),
+            action: "move:top-left".to_string(),
+            app: None,
+            launch: None,
+            icon: None,
+        },
+        SpotlightShortcut {
+            name: "Center Window".to_string(),
+            action: "move:50%,50%".to_string(),
+            app: None,
+            launch: None,
+            icon: None,
+        },
+        SpotlightShortcut {
+            name: "Top Left on Next Display".to_string(),
+            action: "move:top-left;display=next".to_string(),
             app: None,
             launch: None,
             icon: None,
@@ -105,7 +126,7 @@ mod tests {
     #[test]
     fn test_get_example_shortcuts_count() {
         let shortcuts = get_example_shortcuts();
-        assert_eq!(shortcuts.len(), 7);
+        assert_eq!(shortcuts.len(), 10);
     }
 
     #[test]
@@ -123,13 +144,13 @@ mod tests {
     }
 
     #[test]
-    fn test_get_example_shortcuts_has_move_display() {
+    fn test_get_example_shortcuts_has_move() {
         let shortcuts = get_example_shortcuts();
         let move_count = shortcuts
             .iter()
-            .filter(|s| s.action.starts_with("move_display"))
+            .filter(|s| s.action.starts_with("move:"))
             .count();
-        assert_eq!(move_count, 2);
+        assert_eq!(move_count, 5);
     }
 
     #[test]

@@ -26,8 +26,8 @@ mod test_cli_get;
 #[path = "integration_tests/test_cli_maximize.rs"]
 mod test_cli_maximize;
 
-#[path = "integration_tests/test_cli_move_display.rs"]
-mod test_cli_move_display;
+#[path = "integration_tests/test_cli_move.rs"]
+mod test_cli_move;
 
 #[path = "integration_tests/test_cli_resize.rs"]
 mod test_cli_resize;

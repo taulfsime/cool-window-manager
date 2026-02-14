@@ -270,21 +270,18 @@ fn validate_action(action: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    if let Some(arg) = action.strip_prefix("move_display:") {
+    if let Some(arg) = action.strip_prefix("move:") {
         if arg.is_empty() {
             return Err(
-                "action 'move_display' requires a target (next, prev, number, or alias name)"
+                "action 'move' requires a target (position like top-left, or display like next)"
                     .to_string(),
             );
         }
-        // validate target: next, prev, numeric index, or alias name
-        if arg != "next"
-            && arg != "prev"
-            && arg.parse::<u32>().is_err()
-            && !is_valid_alias_name(arg)
-        {
+        // validate: can be position (top-left, 50%,50%, etc.), display (next, prev, 0), or combined
+        // for now, just check it's not empty and doesn't start with invalid chars
+        if arg.starts_with('-') && !arg.contains(',') {
             return Err(format!(
-                "invalid move_display target '{}': use 'next', 'prev', a number, or an alias name",
+                "invalid move target '{}': use position (top-left, 50%,50%), display (next, prev, 0), or combined (top-left;display=2)",
                 arg
             ));
         }
@@ -313,7 +310,7 @@ fn validate_action(action: &str) -> Result<(), String> {
     }
 
     Err(format!(
-        "invalid action '{}': valid actions are focus, maximize, move_display:<target>, resize:<size>",
+        "invalid action '{}': valid actions are focus, maximize, move:<target>, resize:<size>",
         action
     ))
 }
@@ -453,7 +450,7 @@ pub fn default_with_examples() -> Config {
             },
             Shortcut {
                 keys: "ctrl+alt+right".to_string(),
-                action: "move_display:next".to_string(),
+                action: "move:next".to_string(),
                 app: None,
                 launch: None,
             },
@@ -494,7 +491,7 @@ pub fn default_with_examples() -> Config {
             },
             SpotlightShortcut {
                 name: "Move to Next Display".to_string(),
-                action: "move_display:next".to_string(),
+                action: "move:next".to_string(),
                 app: None,
                 launch: None,
                 icon: None,
@@ -649,10 +646,15 @@ mod tests {
     fn test_validate_action_valid() {
         assert!(validate_action("focus").is_ok());
         assert!(validate_action("maximize").is_ok());
-        assert!(validate_action("move_display:next").is_ok());
-        assert!(validate_action("move_display:prev").is_ok());
-        assert!(validate_action("move_display:0").is_ok());
-        assert!(validate_action("move_display:2").is_ok());
+        assert!(validate_action("move:next").is_ok());
+        assert!(validate_action("move:prev").is_ok());
+        assert!(validate_action("move:0").is_ok());
+        assert!(validate_action("move:2").is_ok());
+        assert!(validate_action("move:top-left").is_ok());
+        assert!(validate_action("move:right").is_ok());
+        assert!(validate_action("move:50%,50%").is_ok());
+        assert!(validate_action("move:display=next").is_ok());
+        assert!(validate_action("move:top-left;display=2").is_ok());
         assert!(validate_action("resize:50").is_ok());
         assert!(validate_action("resize:100").is_ok());
         assert!(validate_action("resize:1").is_ok());
@@ -663,13 +665,126 @@ mod tests {
     #[test]
     fn test_validate_action_invalid() {
         assert!(validate_action("unknown").is_err());
-        assert!(validate_action("move_display:").is_err());
-        assert!(validate_action("move_display:-invalid").is_err());
-        assert!(validate_action("move_display:123invalid").is_err());
+        assert!(validate_action("move:").is_err());
         assert!(validate_action("resize:").is_err());
         assert!(validate_action("resize:0").is_err());
         assert!(validate_action("resize:101").is_err());
         assert!(validate_action("resize:abc").is_err());
+    }
+
+    // ========================================================================
+    // move action validation tests
+    // ========================================================================
+
+    #[test]
+    fn test_validate_action_move_anchors() {
+        // all anchor positions should be valid
+        assert!(validate_action("move:top-left").is_ok());
+        assert!(validate_action("move:top-right").is_ok());
+        assert!(validate_action("move:bottom-left").is_ok());
+        assert!(validate_action("move:bottom-right").is_ok());
+        assert!(validate_action("move:left").is_ok());
+        assert!(validate_action("move:right").is_ok());
+        assert!(validate_action("move:center").is_ok());
+        // case insensitive
+        assert!(validate_action("move:TOP-LEFT").is_ok());
+        assert!(validate_action("move:Center").is_ok());
+    }
+
+    #[test]
+    fn test_validate_action_move_display_targets() {
+        // display targets
+        assert!(validate_action("move:next").is_ok());
+        assert!(validate_action("move:prev").is_ok());
+        assert!(validate_action("move:0").is_ok());
+        assert!(validate_action("move:1").is_ok());
+        assert!(validate_action("move:2").is_ok());
+        // explicit display= syntax
+        assert!(validate_action("move:display=next").is_ok());
+        assert!(validate_action("move:display=prev").is_ok());
+        assert!(validate_action("move:display=1").is_ok());
+        // aliases
+        assert!(validate_action("move:external").is_ok());
+        assert!(validate_action("move:builtin").is_ok());
+    }
+
+    #[test]
+    fn test_validate_action_move_percentages() {
+        // percentage positions
+        assert!(validate_action("move:50%").is_ok());
+        assert!(validate_action("move:50%,50%").is_ok());
+        assert!(validate_action("move:0%,100%").is_ok());
+        assert!(validate_action("move:25%,75%").is_ok());
+        // decimal percentages
+        assert!(validate_action("move:50.5%").is_ok());
+        assert!(validate_action("move:33.3%,66.6%").is_ok());
+    }
+
+    #[test]
+    fn test_validate_action_move_bare_numbers() {
+        // bare numbers as percentages (pairs only - single numbers are display indices)
+        assert!(validate_action("move:50,50").is_ok());
+        assert!(validate_action("move:0,100").is_ok());
+        assert!(validate_action("move:25,75").is_ok());
+    }
+
+    #[test]
+    fn test_validate_action_move_pixels_points() {
+        // pixel positions
+        assert!(validate_action("move:100,200px").is_ok());
+        assert!(validate_action("move:0,0px").is_ok());
+        // point positions
+        assert!(validate_action("move:100,200pt").is_ok());
+    }
+
+    #[test]
+    fn test_validate_action_move_relative() {
+        // relative movement with both axes
+        assert!(validate_action("move:+100,+50").is_ok());
+        assert!(validate_action("move:+100,-50").is_ok());
+        assert!(validate_action("move:-100,-50").is_ok());
+        // single-axis relative (positive)
+        assert!(validate_action("move:+100").is_ok());
+        // Y-only relative
+        assert!(validate_action("move:,+100").is_ok());
+        assert!(validate_action("move:,-50").is_ok());
+    }
+
+    #[test]
+    fn test_validate_action_move_combined() {
+        // position + display with semicolon separator
+        assert!(validate_action("move:top-left;display=next").is_ok());
+        assert!(validate_action("move:center;display=2").is_ok());
+        assert!(validate_action("move:50%,50%;display=prev").is_ok());
+        assert!(validate_action("move:+100,-50;display=1").is_ok());
+        // without display= prefix
+        assert!(validate_action("move:top-left;next").is_ok());
+        assert!(validate_action("move:center;2").is_ok());
+    }
+
+    #[test]
+    fn test_validate_action_move_invalid_format() {
+        // empty target - this is caught by config validation
+        assert!(validate_action("move:").is_err());
+        // note: other invalid formats (like 101%, invalid-anchor) are caught
+        // at runtime by the daemon, not at config validation time
+        // this keeps config validation simple and avoids duplicating parsing logic
+    }
+
+    #[test]
+    fn test_validate_action_move_single_negative_rejected() {
+        // single negative number without comma is rejected at config validation
+        // because it's ambiguous (could be flag-like)
+        // users should use move:-50,0 or move:,-50 for single-axis relative
+        assert!(validate_action("move:-50").is_err());
+        assert!(validate_action("move:-100").is_err());
+    }
+
+    #[test]
+    fn test_validate_action_no_move_display() {
+        // old move_display action should not be valid
+        assert!(validate_action("move_display:next").is_err());
+        assert!(validate_action("move-display:next").is_err());
     }
 
     #[test]
@@ -682,7 +797,7 @@ mod tests {
                 {"keys": "ctrl+alt+s", "action": "focus", "app": "Slack"},
                 {"keys": "ctrl+alt+m", "action": "maximize"},
                 {"keys": "ctrl+alt+r", "action": "resize:80"},
-                {"keys": "ctrl+alt+d", "action": "move_display:next"}
+                {"keys": "ctrl+alt+d", "action": "move:next"}
             ],
             "app_rules": [
                 {"app": "Terminal", "action": "maximize"}
@@ -788,14 +903,13 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_invalid_move_display() {
+    fn test_verify_invalid_move() {
         let dir = std::env::temp_dir();
         let path = dir.join("cwm_test_invalid_move.json");
 
         let config = r#"{
             "shortcuts": [
-                {"keys": "ctrl+alt+1", "action": "move_display:"},
-                {"keys": "ctrl+alt+2", "action": "move_display:-invalid"}
+                {"keys": "ctrl+alt+1", "action": "move:"}
             ],
             "app_rules": [],
             "settings": {}
@@ -805,9 +919,8 @@ mod tests {
         let errors = verify(&path).unwrap();
         std::fs::remove_file(&path).ok();
 
-        assert_eq!(errors.len(), 2);
+        assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("requires a target"));
-        assert!(errors[1].contains("invalid move_display target"));
     }
 
     #[test]
@@ -891,7 +1004,7 @@ mod tests {
                 {"name": "Focus Safari", "action": "focus", "app": "Safari"},
                 {"name": "Maximize", "action": "maximize"},
                 {"name": "Resize 80", "action": "resize:80"},
-                {"name": "Move Next", "action": "move_display:next"}
+                {"name": "Move Next", "action": "move:next"}
             ]
         }"#;
 
@@ -992,7 +1105,7 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_spotlight_invalid_move_display() {
+    fn test_verify_spotlight_invalid_move() {
         let dir = std::env::temp_dir();
         let path = dir.join("cwm_test_spotlight_invalid_move.json");
 
@@ -1001,7 +1114,7 @@ mod tests {
             "app_rules": [],
             "settings": {},
             "spotlight": [
-                {"name": "Move", "action": "move_display:-invalid"}
+                {"name": "Move", "action": "move:"}
             ]
         }"#;
 
@@ -1010,7 +1123,7 @@ mod tests {
         std::fs::remove_file(&path).ok();
 
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("invalid move_display target"));
+        assert!(errors[0].contains("requires a target"));
     }
 
     #[test]

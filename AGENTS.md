@@ -79,7 +79,7 @@ Update the README when:
 - **focus**: bring an application window to the foreground
 - **maximize**: resize a window to fill the screen
 - **resize**: resize a window to a percentage of the screen (centered)
-- **move-display**: move a window to another monitor
+- **move**: move a window to a position (anchors, coordinates, percentages) and/or another display
 
 ### Architecture
 
@@ -159,7 +159,7 @@ cool-window-mng/
     │       ├── focus.rs    # focus action handler
     │       ├── maximize.rs # maximize action handler
     │       ├── resize.rs   # resize action handler
-    │       ├── move_display.rs # move-display action handler
+    │       ├── move_window.rs # move action handler
     │       ├── list.rs     # list apps/displays/aliases handlers
     │       ├── get.rs      # get focused/window handlers
     │       ├── system.rs   # ping, status, version, check_permissions handlers
@@ -231,7 +231,7 @@ Unified action layer providing consistent behavior across CLI, IPC, and future H
 | `focus.rs` | focus action - brings app window to foreground |
 | `maximize.rs` | maximize action - fills screen |
 | `resize.rs` | resize action - percentage, pixels, or points |
-| `move_display.rs` | move-display action - moves window to another monitor |
+| `move_window.rs` | move action - positions window (anchors, coordinates, percentages) and/or moves to another display |
 | `list.rs` | list apps/displays/aliases |
 | `get.rs` | get focused window or specific app's window info |
 | `system.rs` | ping, status, version, check_permissions |
@@ -267,7 +267,7 @@ Handles command-line argument parsing and command execution.
 | `exit_codes.rs` | exit code constants for scripting (SUCCESS, ERROR, APP_NOT_FOUND, etc.) |
 | `output.rs` | output formatting: `OutputMode` enum, JSON-RPC 2.0 response types, `format_template()` for custom format strings |
 
-Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list`, `get`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
+Commands defined: `focus`, `maximize`, `move`, `resize`, `list`, `get`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
 
 **CLI Command Reference:**
 
@@ -275,7 +275,7 @@ Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list`, `get`, 
 |---------|-------|-------------|
 | `focus` | `cwm focus --app <name> [--app <name>...]` | Focus an application window (tries each app in order) |
 | `maximize` | `cwm maximize [--app <name>]` | Maximize window to fill screen |
-| `move-display` | `cwm move-display <target> [--app <name>]` | Move window to another display |
+| `move` | `cwm move [--to <position>] [--display <target>] [--app <name>]` | Move window to position and/or display |
 | `resize` | `cwm resize --to <size> [--app <name>]` | Resize window (percent, pixels, or points) |
 | `list` | `cwm list <apps\|displays\|aliases> [--json] [--names] [--format] [--detailed]` | List resources |
 | `get` | `cwm get <focused\|window> [--app <name>] [--format]` | Get window information |
@@ -404,7 +404,7 @@ The daemon exposes a Unix socket for inter-process communication, allowing exter
 - Socket location: `~/.cwm/cwm.sock`
 - Protocol: JSON-RPC 2.0 (the `"jsonrpc": "2.0"` field is optional for convenience)
 - All requests must be JSON format
-- Available methods: all commands from `Command` enum (focus, maximize, resize, move_display, list, get, ping, status, version, config, etc.)
+- Available methods: all commands from `Command` enum (focus, maximize, resize, move, list, get, ping, status, version, config, etc.)
 
 **Request format:**
 ```json
@@ -469,7 +469,7 @@ Landing page hosted on GitHub Pages at [cwm.taulfsime.com](https://cwm.taulfsime
 **Features:**
 - Interactive terminal emulator with command history and tab completion
 - Mock macOS desktop preview showing window manipulations in real-time
-- Auto-demo on page load showcasing focus, maximize, move-display, resize
+- Auto-demo on page load showcasing focus, maximize, move, resize
 - Dynamic display management (2-4 displays with adaptive grid layout)
 - Red color theme with syntax highlighting
 - Optional keyboard sound effects
@@ -720,7 +720,7 @@ Integration tests for CLI commands, install, update, and rollback:
 | `tests/integration_tests/test_cli_focus.rs` | focus command with various flags |
 | `tests/integration_tests/test_cli_resize.rs` | resize command with various size formats |
 | `tests/integration_tests/test_cli_maximize.rs` | maximize command with various flags |
-| `tests/integration_tests/test_cli_move_display.rs` | move-display command with various targets |
+| `tests/integration_tests/test_cli_move.rs` | move command with various positions and display targets |
 | `tests/integration_tests/test_cli_get.rs` | get focused/window commands |
 | `tests/integration_tests/test_cli_daemon.rs` | daemon status/stop commands |
 | `tests/integration_tests/test_cli_version.rs` | version command |
@@ -776,7 +776,7 @@ cwm focus --app Safari
 cwm focus --app Safari --app Chrome  # try Safari, fallback to Chrome
 cwm maximize
 cwm resize --to 80
-cwm move-display next
+cwm move --display next
 
 # daemon mode
 cwm daemon start
@@ -830,11 +830,11 @@ The tool requires **Accessibility permissions** to function:
     },
     {
       "keys": "ctrl+alt+e",
-      "action": "move_display:external"
+      "action": "move:external"
     },
     {
       "keys": "ctrl+alt+o",
-      "action": "move_display:office"
+      "action": "move:office"
     }
   ],
   "app_rules": [
@@ -857,7 +857,7 @@ The tool requires **Accessibility permissions** to function:
     },
     {
       "name": "Move to Next Display",
-      "action": "move_display:next"
+      "action": "move:next"
     },
     {
       "name": "Resize 80%",
@@ -926,8 +926,8 @@ cwm list-displays --detailed
 Use in actions:
 ```json
 {
-  "action": "move_display:external",
-  "action": "move_display:office_main"
+  "action": "move:external",
+  "action": "move:office_main"
 }
 ```
 
@@ -936,7 +936,7 @@ Use in actions:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `keys` | string | yes | hotkey combination (e.g., `"ctrl+alt+s"`) |
-| `action` | string | yes | one of: `focus`, `maximize`, `resize`, `move_display:<target>` |
+| `action` | string | yes | one of: `focus`, `maximize`, `resize`, `move:<target>` |
 | `app` | string | no | application name (fuzzy matched) |
 | `launch` | bool | no | override global launch behavior |
 
@@ -953,7 +953,7 @@ Use in actions:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | name displayed in Spotlight (prefixed with "cwm: ") |
-| `action` | string | yes | same format as shortcuts: `focus`, `maximize`, `move_display:next`, `resize:80` |
+| `action` | string | yes | same format as shortcuts: `focus`, `maximize`, `move:next`, `resize:80` |
 | `app` | string | for focus | target application name (fuzzy matched) |
 | `launch` | bool | no | launch app if not running |
 

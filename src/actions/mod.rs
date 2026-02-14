@@ -41,11 +41,12 @@ pub fn execute(cmd: Command, ctx: &ExecutionContext) -> Result<ActionResult, Act
             overflow,
             launch,
         } => handlers::resize::execute(app, to, overflow, launch, ctx),
-        Command::MoveDisplay {
+        Command::Move {
             app,
-            target,
+            to,
+            display,
             launch,
-        } => handlers::move_display::execute(app, target, launch, ctx),
+        } => handlers::move_window::execute(app, to, display, launch, ctx),
 
         // query commands
         Command::List { resource, detailed } => match resource {

@@ -11,7 +11,7 @@ use serde::Deserialize;
 use crate::actions::command::*;
 use crate::actions::error::ActionError;
 use crate::display::DisplayTarget;
-use crate::window::manager::ResizeTarget;
+use crate::window::manager::{MoveTarget, ResizeTarget};
 
 /// JSON-RPC 2.0 request structure
 #[derive(Debug, Clone, Deserialize)]
@@ -70,13 +70,31 @@ impl JsonRpcRequest {
                 })
             }
 
-            "move_display" => {
-                let target_str = params.get_string("target")?;
-                let target = DisplayTarget::parse(&target_str)
+            "move" => {
+                let to_str = params.get_optional_string("to")?;
+                let display_str = params.get_optional_string("display")?;
+
+                // at least one of to or display must be specified
+                if to_str.is_none() && display_str.is_none() {
+                    return Err(ActionError::invalid_args(
+                        "move requires at least one of 'to' or 'display' parameter",
+                    ));
+                }
+
+                let to = to_str
+                    .map(|s| MoveTarget::parse(&s))
+                    .transpose()
                     .map_err(|e| ActionError::invalid_args(e.to_string()))?;
-                Ok(Command::MoveDisplay {
+
+                let display = display_str
+                    .map(|s| DisplayTarget::parse(&s))
+                    .transpose()
+                    .map_err(|e| ActionError::invalid_args(e.to_string()))?;
+
+                Ok(Command::Move {
                     app: params.get_string_array_or_empty("app"),
-                    target,
+                    to,
+                    display,
                     launch: params.get_optional_bool("launch")?,
                 })
             }
@@ -477,18 +495,142 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_move_display() {
-        let req = JsonRpcRequest::parse(r#"{"method":"move_display","params":{"target":"next"}}"#)
-            .unwrap();
+    fn test_parse_move_to_anchor() {
+        let req = JsonRpcRequest::parse(r#"{"method":"move","params":{"to":"top-left"}}"#).unwrap();
         let cmd = req.to_command().unwrap();
 
         match cmd {
-            Command::MoveDisplay { app, target, .. } => {
+            Command::Move {
+                app, to, display, ..
+            } => {
                 assert!(app.is_empty());
-                assert!(matches!(target, DisplayTarget::Next));
+                assert!(to.is_some());
+                assert!(display.is_none());
             }
-            _ => panic!("expected MoveDisplay command"),
+            _ => panic!("expected Move command"),
         }
+    }
+
+    #[test]
+    fn test_parse_move_display_only() {
+        let req =
+            JsonRpcRequest::parse(r#"{"method":"move","params":{"display":"next"}}"#).unwrap();
+        let cmd = req.to_command().unwrap();
+
+        match cmd {
+            Command::Move {
+                app, to, display, ..
+            } => {
+                assert!(app.is_empty());
+                assert!(to.is_none());
+                assert!(matches!(display, Some(DisplayTarget::Next)));
+            }
+            _ => panic!("expected Move command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_move_combined() {
+        let req = JsonRpcRequest::parse(
+            r#"{"method":"move","params":{"to":"top-left","display":"2","app":["Safari"]}}"#,
+        )
+        .unwrap();
+        let cmd = req.to_command().unwrap();
+
+        match cmd {
+            Command::Move {
+                app, to, display, ..
+            } => {
+                assert_eq!(app, vec!["Safari"]);
+                assert!(to.is_some());
+                assert!(display.is_some());
+            }
+            _ => panic!("expected Move command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_move_requires_to_or_display() {
+        let req = JsonRpcRequest::parse(r#"{"method":"move","params":{}}"#).unwrap();
+        let result = req.to_command();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("to") || err.message.contains("display"));
+    }
+
+    #[test]
+    fn test_parse_move_to_percent() {
+        let req = JsonRpcRequest::parse(r#"{"method":"move","params":{"to":"50%,50%"}}"#).unwrap();
+        let cmd = req.to_command().unwrap();
+
+        match cmd {
+            Command::Move { to, display, .. } => {
+                assert!(to.is_some());
+                assert!(display.is_none());
+            }
+            _ => panic!("expected Move command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_move_to_relative() {
+        let req = JsonRpcRequest::parse(r#"{"method":"move","params":{"to":"+100,-50"}}"#).unwrap();
+        let cmd = req.to_command().unwrap();
+
+        match cmd {
+            Command::Move { to, display, .. } => {
+                assert!(to.is_some());
+                assert!(display.is_none());
+            }
+            _ => panic!("expected Move command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_move_to_center() {
+        let req = JsonRpcRequest::parse(r#"{"method":"move","params":{"to":"center"}}"#).unwrap();
+        let cmd = req.to_command().unwrap();
+
+        match cmd {
+            Command::Move { to, display, .. } => {
+                assert!(to.is_some());
+                assert!(display.is_none());
+            }
+            _ => panic!("expected Move command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_move_to_pixels() {
+        let req =
+            JsonRpcRequest::parse(r#"{"method":"move","params":{"to":"100,200px"}}"#).unwrap();
+        let cmd = req.to_command().unwrap();
+
+        match cmd {
+            Command::Move { to, display, .. } => {
+                assert!(to.is_some());
+                assert!(display.is_none());
+            }
+            _ => panic!("expected Move command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_move_invalid_to() {
+        let req = JsonRpcRequest::parse(r#"{"method":"move","params":{"to":"invalid-position"}}"#)
+            .unwrap();
+        let result = req.to_command();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_move_invalid_percent_range() {
+        let req = JsonRpcRequest::parse(r#"{"method":"move","params":{"to":"150%"}}"#).unwrap();
+        let result = req.to_command();
+
+        assert!(result.is_err());
     }
 
     #[test]

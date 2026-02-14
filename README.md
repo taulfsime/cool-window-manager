@@ -179,7 +179,7 @@ cwm config set settings.update.check_frequency manual
 |---------|-------------|
 | `cwm focus --app <name>` | Focus an application window |
 | `cwm maximize [--app <name>]` | Maximize a window to fill the screen |
-| `cwm move-display <target> [--app <name>]` | Move a window to another display |
+| `cwm move [--to <position>] [--display <target>] [--app <name>]` | Move a window to a position and/or display |
 | `cwm resize --to <size> [--app <name>]` | Resize a window to a target size |
 | `cwm list <resource>` | List resources (apps, displays, aliases) |
 | `cwm check-permissions` | Check accessibility permissions |
@@ -273,24 +273,43 @@ Options:
 - `--no-launch` - Never launch app
 - `--verbose, -v` - Show details
 
-### move-display
+### move
 
-Move a window to another display.
+Move a window to a specific position and/or another display.
 
 ```bash
-cwm move-display next            # move to next display
-cwm move-display prev            # move to previous display
-cwm move-display 0               # move to display index 0
-cwm move-display external        # move to display alias "external"
-cwm move-display next --app "Terminal"
+# position only (on current display)
+cwm move --to top-left           # move to top-left corner
+cwm move --to top-right          # move to top-right corner
+cwm move --to bottom-left        # move to bottom-left corner
+cwm move --to bottom-right       # move to bottom-right corner
+cwm move --to left               # move to left edge (vertically centered)
+cwm move --to right              # move to right edge (vertically centered)
+cwm move --to 50%,50%            # center window (window center at 50%,50%)
+cwm move --to 100px,200px        # absolute position in pixels
+cwm move --to 100pt,200pt        # absolute position in points
+cwm move --to +100,-50           # relative movement from current position
+
+# display only (keeps relative position)
+cwm move --display next          # move to next display
+cwm move --display prev          # move to previous display
+cwm move --display 1             # move to display index 1 (1-based)
+cwm move --display external      # move to display alias "external"
+
+# combined position and display
+cwm move --to top-left --display next
+cwm move --to 50%,50% --display 2 --app "Terminal"
 ```
 
 Options:
-- `<TARGET>` - Display target: `next`, `prev`, index (0-based), or alias name
-- `--app, -a <NAME>` - Target app name (optional)
+- `--to, -t <POSITION>` - Target position: anchor, percentage, pixels, points, or relative
+- `--display, -d <TARGET>` - Display target: `next`, `prev`, index (1-based), or alias name
+- `--app, -a <NAME>` - Target app name (optional, uses focused window if omitted)
 - `--launch` - Launch app if not running
 - `--no-launch` - Never launch app
 - `--verbose, -v` - Show details
+
+**Note:** At least one of `--to` or `--display` is required.
 
 #### Display Aliases
 
@@ -313,11 +332,11 @@ Use display aliases to reference monitors by name instead of index. This is usef
   "shortcuts": [
     {
       "keys": "ctrl+alt+e",
-      "action": "move_display:external"
+      "action": "move:external"
     },
     {
       "keys": "ctrl+alt+o",
-      "action": "move_display:office_main"
+      "action": "move:office_main"
     }
   ]
 }
@@ -521,7 +540,7 @@ echo "focus:Safari" | nc -U ~/.cwm/cwm.sock
 # OK
 ```
 
-Available methods: `ping`, `status`, `focus`, `maximize`, `resize`, `move_display`, `list_apps`, `list_displays`, `action`.
+Available methods: `ping`, `status`, `focus`, `maximize`, `resize`, `move`, `list_apps`, `list_displays`, `action`.
 
 For detailed IPC documentation and examples in Python, Node.js, Ruby, Go, Rust, and Hammerspoon, see [SCRIPTS.md](SCRIPTS.md#ipc-socket).
 
@@ -666,7 +685,7 @@ Example config:
     },
     {
       "keys": "ctrl+alt+right",
-      "action": "move_display:next"
+      "action": "move:next"
     },
     {
       "keys": "ctrl+alt+7",
@@ -680,7 +699,7 @@ Example config:
   "app_rules": [
     {
       "app": "Slack",
-      "action": "move_display:1"
+      "action": "move:1"
     },
     {
       "app": "Terminal",
@@ -707,7 +726,7 @@ Example config:
     },
     {
       "name": "Move to Next Display",
-      "action": "move_display:next"
+      "action": "move:next"
     },
     {
       "name": "Resize 80%",
@@ -748,10 +767,16 @@ Example config:
 - `action` - One of:
   - `focus` - Focus an application window
   - `maximize` - Maximize window to fill screen
-  - `move_display:next` - Move to next display
-  - `move_display:prev` - Move to previous display
-  - `move_display:<index>` - Move to display by index (0-based)
-  - `move_display:<alias>` - Move to display by alias name
+  - `move:<target>` - Move window to position and/or display. Target formats:
+    - `move:next` - Move to next display
+    - `move:prev` - Move to previous display
+    - `move:<index>` - Move to display by index (1-based)
+    - `move:<alias>` - Move to display by alias name
+    - `move:top-left` - Move to anchor position (top-left, top-right, bottom-left, bottom-right, left, right)
+    - `move:50%,50%` - Move window center to percentage position
+    - `move:100px,200px` - Move to absolute pixel position
+    - `move:+100,-50` - Relative movement from current position
+    - `move:top-left;display=next` - Combined position and display (semicolon separates arguments)
   - `resize:<size>` - Resize window. Size formats:
     - `resize:80` - 80% of screen
     - `resize:0.8` - 80% (decimal)
@@ -760,7 +785,7 @@ Example config:
     - `resize:1920x1080px` - exact pixel dimensions
     - `resize:800pt` - 800 points wide
     - `resize:800x600pt` - exact point dimensions
-- `app` - Target app name or window title (optional for maximize/move_display/resize, fuzzy matched)
+- `app` - Target app name or window title (optional for maximize/move/resize, fuzzy matched)
 - `launch` - Override global setting (optional)
 
 The `app` field matches against both application names and window titles. For example, `"GitHub"` will match a Safari or Chrome window with "GitHub" in its title.
@@ -770,7 +795,7 @@ The `app` field matches against both application names and window titles. For ex
 App rules automatically apply actions when applications are launched. The daemon watches for new app launches and executes the configured action.
 
 - `app` - Application name to match (case-insensitive, supports prefix matching)
-- `action` - Same action format as shortcuts: `maximize`, `move_display:N`, `resize:N`, etc.
+- `action` - Same action format as shortcuts: `maximize`, `move:N`, `resize:N`, etc.
 - `delay_ms` - Delay in milliseconds before executing the action (optional, overrides global setting)
 
 The global default delay is set via `settings.delay_ms` (default: 500ms). This delay allows the window to appear before the action is applied.
@@ -787,7 +812,7 @@ This is useful for automatically moving apps to specific monitors or resizing th
 Spotlight shortcuts create macOS app bundles that appear in Spotlight search. When triggered, they execute cwm commands.
 
 - `name` - Name displayed in Spotlight (prefixed with "cwm: ")
-- `action` - Same format as shortcuts: `focus`, `maximize`, `move_display:next`, `resize:80`
+- `action` - Same format as shortcuts: `focus`, `maximize`, `move:next`, `resize:80`
 - `app` - Target app name (required for `focus`, optional for others)
 - `launch` - Launch app if not running (optional)
 - `icon` - Custom icon (optional). Can be:

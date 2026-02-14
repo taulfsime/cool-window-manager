@@ -142,6 +142,356 @@ impl FromStr for ResizeTarget {
     }
 }
 
+/// Anchor position for predefined window placement
+#[derive(Debug, Clone, PartialEq)]
+pub enum AnchorPosition {
+    /// top-left corner of screen
+    TopLeft,
+    /// top-right corner of screen
+    TopRight,
+    /// bottom-left corner of screen
+    BottomLeft,
+    /// bottom-right corner of screen
+    BottomRight,
+    /// left edge, vertically centered
+    Left,
+    /// right edge, vertically centered
+    Right,
+    /// center of screen
+    Center,
+}
+
+impl AnchorPosition {
+    /// parse anchor position from string
+    pub fn parse(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "top-left" | "topleft" => Ok(AnchorPosition::TopLeft),
+            "top-right" | "topright" => Ok(AnchorPosition::TopRight),
+            "bottom-left" | "bottomleft" => Ok(AnchorPosition::BottomLeft),
+            "bottom-right" | "bottomright" => Ok(AnchorPosition::BottomRight),
+            "left" => Ok(AnchorPosition::Left),
+            "right" => Ok(AnchorPosition::Right),
+            "center" => Ok(AnchorPosition::Center),
+            _ => Err(anyhow!(
+                "invalid anchor '{}': valid anchors are top-left, top-right, bottom-left, bottom-right, left, right, center",
+                s
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for AnchorPosition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AnchorPosition::TopLeft => write!(f, "top-left"),
+            AnchorPosition::TopRight => write!(f, "top-right"),
+            AnchorPosition::BottomLeft => write!(f, "bottom-left"),
+            AnchorPosition::BottomRight => write!(f, "bottom-right"),
+            AnchorPosition::Left => write!(f, "left"),
+            AnchorPosition::Right => write!(f, "right"),
+            AnchorPosition::Center => write!(f, "center"),
+        }
+    }
+}
+
+/// Target position for move operations
+#[derive(Debug, Clone, PartialEq)]
+pub enum MoveTarget {
+    /// anchor preset (top-left, right, center, etc.)
+    Anchor(AnchorPosition),
+    /// absolute position in pixels (window center placed at x,y)
+    Pixels { x: i32, y: i32 },
+    /// absolute position in points (window center placed at x,y)
+    Points { x: i32, y: i32 },
+    /// percentage of screen (window center placed at x%, y%)
+    Percent { x: f64, y: f64 },
+    /// relative movement from current position (both axes)
+    Relative { dx: i32, dy: i32 },
+    /// relative movement on X axis only (Y stays the same)
+    RelativeX { dx: i32 },
+    /// relative movement on Y axis only (X stays the same)
+    RelativeY { dy: i32 },
+}
+
+impl MoveTarget {
+    /// Parse a move target string
+    ///
+    /// Supported formats:
+    /// - `top-left`, `top-right`, `bottom-left`, `bottom-right`, `left`, `right`, `center` - anchor positions
+    /// - `100,200px` or `100x200px` - absolute position in pixels
+    /// - `100,200pt` or `100x200pt` - absolute position in points
+    /// - `50%,25%` or `50%` - percentage of screen (window center at that position)
+    /// - `50,25` or `50` - bare numbers parsed as percentages (must be 0-100)
+    /// - `+100,-50` - relative movement from current position (both axes)
+    /// - `+100` or `-50` - single-axis X relative movement (Y unchanged)
+    /// - `,+100` or `,-50` - single-axis Y relative movement (X unchanged)
+    pub fn parse(s: &str) -> Result<Self> {
+        let s = s.trim();
+
+        if s.is_empty() {
+            return Err(anyhow!("empty position value"));
+        }
+
+        // check for Y-only relative (starts with comma followed by + or -)
+        if let Some(rest) = s.strip_prefix(',') {
+            if rest.starts_with('+') || rest.starts_with('-') {
+                let lower = rest.to_lowercase();
+                if lower.ends_with("px") || lower.ends_with("pt") || lower.contains('%') {
+                    return Err(anyhow!(
+                        "invalid relative format '{}': units not allowed in relative movement",
+                        s
+                    ));
+                }
+                let dy: i32 = rest
+                    .trim()
+                    .parse()
+                    .map_err(|_| anyhow!("invalid y offset: '{}'", rest))?;
+                return Ok(MoveTarget::RelativeY { dy });
+            }
+        }
+
+        // check for pixel dimensions first (before relative check)
+        // this handles negative pixel values like -100x200px
+        let lower = s.to_lowercase();
+        if lower.ends_with("px") {
+            return Self::parse_coordinates(
+                s.trim_end_matches("px").trim_end_matches("PX"),
+                |x, y| MoveTarget::Pixels { x, y },
+            );
+        }
+
+        // check for point dimensions
+        if lower.ends_with("pt") {
+            return Self::parse_coordinates(
+                s.trim_end_matches("pt").trim_end_matches("PT"),
+                |x, y| MoveTarget::Points { x, y },
+            );
+        }
+
+        // check for relative movement (starts with + or -)
+        if s.starts_with('+') || s.starts_with('-') {
+            // check if it has percent (not allowed for relative)
+            if lower.contains('%') {
+                return Err(anyhow!(
+                    "invalid relative format '{}': units not allowed in relative movement",
+                    s
+                ));
+            }
+            return Self::parse_relative(s);
+        }
+
+        // check for explicit percentage: 50%,25% or 50%
+        if s.contains('%') {
+            return Self::parse_percent(s, true);
+        }
+
+        // try to parse as anchor first
+        if let Ok(anchor) = AnchorPosition::parse(s) {
+            return Ok(MoveTarget::Anchor(anchor));
+        }
+
+        // try to parse as bare numbers (interpreted as percentages)
+        Self::parse_bare_numbers(s)
+    }
+
+    /// parse relative movement: +100,-50 or -100,+50 or +100 (single axis)
+    fn parse_relative(s: &str) -> Result<Self> {
+        // check for comma (two-axis relative)
+        if s.contains(',') {
+            let parts: Vec<&str> = s.split(',').collect();
+            if parts.len() != 2 {
+                return Err(anyhow!(
+                    "invalid relative format '{}': expected '+X,-Y' or single value '+X'",
+                    s
+                ));
+            }
+
+            let dx: i32 = parts[0]
+                .trim()
+                .parse()
+                .map_err(|_| anyhow!("invalid x offset: '{}'", parts[0]))?;
+            let dy: i32 = parts[1]
+                .trim()
+                .parse()
+                .map_err(|_| anyhow!("invalid y offset: '{}'", parts[1]))?;
+
+            return Ok(MoveTarget::Relative { dx, dy });
+        }
+
+        // single value - X axis only
+        let dx: i32 = s
+            .trim()
+            .parse()
+            .map_err(|_| anyhow!("invalid offset: '{}'", s))?;
+
+        Ok(MoveTarget::RelativeX { dx })
+    }
+
+    /// parse coordinate pair: 100,200 or 100x200
+    fn parse_coordinates<F>(s: &str, constructor: F) -> Result<Self>
+    where
+        F: FnOnce(i32, i32) -> MoveTarget,
+    {
+        let s = s.trim();
+
+        // try comma separator first, then x
+        let parts: Vec<&str> = if s.contains(',') {
+            s.split(',').collect()
+        } else if s.to_lowercase().contains('x') {
+            // split by 'x' or 'X', but be careful with negative numbers
+            let lower = s.to_lowercase();
+            let idx = lower.find('x').unwrap();
+            vec![&s[..idx], &s[idx + 1..]]
+        } else {
+            return Err(anyhow!(
+                "invalid coordinate format '{}': expected 'X,Y' or 'XxY'",
+                s
+            ));
+        };
+
+        if parts.len() != 2 {
+            return Err(anyhow!(
+                "invalid coordinate format '{}': expected 'X,Y' or 'XxY'",
+                s
+            ));
+        }
+
+        let x: i32 = parts[0]
+            .trim()
+            .parse()
+            .map_err(|_| anyhow!("invalid x coordinate: '{}'", parts[0]))?;
+        let y: i32 = parts[1]
+            .trim()
+            .parse()
+            .map_err(|_| anyhow!("invalid y coordinate: '{}'", parts[1]))?;
+
+        Ok(constructor(x, y))
+    }
+
+    /// parse percentage: 50%,25% or 50%
+    /// if validate is true, checks that values are in 0-100 range
+    fn parse_percent(s: &str, validate: bool) -> Result<Self> {
+        let s = s.trim();
+
+        // check if it's a single percentage (shorthand for center)
+        if !s.contains(',') {
+            let pct_str = s.trim_end_matches('%');
+            let pct: f64 = pct_str
+                .parse()
+                .map_err(|_| anyhow!("invalid percentage: '{}'", s))?;
+            if validate && !(0.0..=100.0).contains(&pct) {
+                return Err(anyhow!("percentage {} out of range: must be 0-100", pct));
+            }
+            return Ok(MoveTarget::Percent { x: pct, y: pct });
+        }
+
+        // split by comma
+        let parts: Vec<&str> = s.split(',').collect();
+        if parts.len() != 2 {
+            return Err(anyhow!(
+                "invalid percentage format '{}': expected 'X%,Y%'",
+                s
+            ));
+        }
+
+        let x_str = parts[0].trim().trim_end_matches('%');
+        let y_str = parts[1].trim().trim_end_matches('%');
+
+        let x: f64 = x_str
+            .parse()
+            .map_err(|_| anyhow!("invalid x percentage: '{}'", parts[0]))?;
+        let y: f64 = y_str
+            .parse()
+            .map_err(|_| anyhow!("invalid y percentage: '{}'", parts[1]))?;
+
+        if validate {
+            if !(0.0..=100.0).contains(&x) {
+                return Err(anyhow!("x percentage {} out of range: must be 0-100", x));
+            }
+            if !(0.0..=100.0).contains(&y) {
+                return Err(anyhow!("y percentage {} out of range: must be 0-100", y));
+            }
+        }
+
+        Ok(MoveTarget::Percent { x, y })
+    }
+
+    /// parse bare numbers as percentages: 50,25 or 50
+    fn parse_bare_numbers(s: &str) -> Result<Self> {
+        let s = s.trim();
+
+        // single number
+        if !s.contains(',') {
+            let pct: f64 = s.parse().map_err(|_| {
+                anyhow!("invalid position '{}': not a valid anchor or percentage", s)
+            })?;
+            if !(0.0..=100.0).contains(&pct) {
+                return Err(anyhow!("percentage {} out of range: must be 0-100", pct));
+            }
+            return Ok(MoveTarget::Percent { x: pct, y: pct });
+        }
+
+        // two numbers
+        let parts: Vec<&str> = s.split(',').collect();
+        if parts.len() != 2 {
+            return Err(anyhow!(
+                "invalid position '{}': expected 'X,Y' or single value",
+                s
+            ));
+        }
+
+        let x: f64 = parts[0]
+            .trim()
+            .parse()
+            .map_err(|_| anyhow!("invalid x value: '{}'", parts[0]))?;
+        let y: f64 = parts[1]
+            .trim()
+            .parse()
+            .map_err(|_| anyhow!("invalid y value: '{}'", parts[1]))?;
+
+        if !(0.0..=100.0).contains(&x) {
+            return Err(anyhow!("x percentage {} out of range: must be 0-100", x));
+        }
+        if !(0.0..=100.0).contains(&y) {
+            return Err(anyhow!("y percentage {} out of range: must be 0-100", y));
+        }
+
+        Ok(MoveTarget::Percent { x, y })
+    }
+}
+
+impl FromStr for MoveTarget {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        MoveTarget::parse(s)
+    }
+}
+
+impl std::fmt::Display for MoveTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MoveTarget::Anchor(anchor) => write!(f, "{}", anchor),
+            MoveTarget::Pixels { x, y } => write!(f, "{},{}px", x, y),
+            MoveTarget::Points { x, y } => write!(f, "{},{}pt", x, y),
+            MoveTarget::Percent { x, y } => write!(f, "{}%,{}%", x, y),
+            MoveTarget::Relative { dx, dy } => {
+                let dx_sign = if *dx >= 0 { "+" } else { "" };
+                let dy_sign = if *dy >= 0 { "+" } else { "" };
+                write!(f, "{}{},{}{}", dx_sign, dx, dy_sign, dy)
+            }
+            MoveTarget::RelativeX { dx } => {
+                let sign = if *dx >= 0 { "+" } else { "" };
+                write!(f, "{}{}", sign, dx)
+            }
+            MoveTarget::RelativeY { dy } => {
+                let sign = if *dy >= 0 { "+" } else { "" };
+                write!(f, ",{}{}", sign, dy)
+            }
+        }
+    }
+}
+
 type AXUIElementRef = *mut std::ffi::c_void;
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -664,23 +1014,20 @@ fn get_usable_bounds_for_display(
     ))
 }
 
-/// Move a window to another display
-pub fn move_to_display(
+/// Move a window to a specific position
+///
+/// If `display_target` is Some, moves to that display first.
+/// If `position` is Some, positions the window at that location.
+/// If `position` is None but `display_target` is Some, centers on the target display.
+///
+/// Returns (new_x, new_y, display_index, display_name) on success.
+pub fn move_window(
     app: Option<&AppInfo>,
-    target: &crate::display::DisplayTarget,
-    verbose: bool,
-) -> Result<()> {
-    move_to_display_with_aliases(app, target, verbose, &Default::default())?;
-    Ok(())
-}
-
-/// Move window to display, returns (display_index, display_name) on success
-pub fn move_to_display_with_aliases(
-    app: Option<&AppInfo>,
-    target: &crate::display::DisplayTarget,
+    position: Option<&MoveTarget>,
+    display_target: Option<&crate::display::DisplayTarget>,
     verbose: bool,
     display_aliases: &std::collections::HashMap<String, Vec<String>>,
-) -> Result<(usize, String)> {
+) -> Result<(i32, i32, usize, String)> {
     use crate::display::{get_displays, resolve_target_display_with_aliases};
     use core_foundation::base::CFTypeRef;
 
@@ -691,9 +1038,6 @@ pub fn move_to_display_with_aliases(
     }
 
     let displays = get_displays()?;
-    if displays.len() < 2 {
-        return Err(anyhow!("Only one display found. Nothing to move to."));
-    }
 
     let (window, pid) = unsafe {
         if let Some(app_info) = app {
@@ -704,7 +1048,7 @@ pub fn move_to_display_with_aliases(
         }
     };
 
-    // get current window position to determine which display it's on
+    // get current window position and size
     let (wx, wy) = unsafe { get_window_position(window)? };
     let (ww, wh) = unsafe { get_window_size(window)? };
 
@@ -714,75 +1058,123 @@ pub fn move_to_display_with_aliases(
 
     // find current display
     let current_display_index = find_display_for_point(wx + ww / 2.0, wy + wh / 2.0, &displays);
+    let current_display = displays
+        .iter()
+        .find(|d| d.index == current_display_index)
+        .ok_or_else(|| anyhow!("Current display not found"))?;
 
-    if verbose {
-        println!("Current display: {}", current_display_index);
-    }
-
-    // resolve target display
-    let target_display = resolve_target_display_with_aliases(
-        current_display_index,
-        target,
-        &displays,
-        display_aliases,
-    )?;
+    // determine target display
+    let target_display = if let Some(dt) = display_target {
+        if displays.len() < 2 && !matches!(dt, crate::display::DisplayTarget::Index(_)) {
+            return Err(anyhow!("Only one display found. Cannot use next/prev."));
+        }
+        resolve_target_display_with_aliases(current_display_index, dt, &displays, display_aliases)?
+    } else {
+        current_display
+    };
 
     if verbose {
         println!("Target display: {}", target_display.describe());
     }
 
     // get usable bounds for target display
-    let (tx, ty, tw, th) = get_usable_bounds_for_display(target_display)?;
+    let (dx, dy, dw, dh) = get_usable_bounds_for_display(target_display)?;
 
     if verbose {
         println!(
             "Target display usable bounds: {}x{} at ({}, {})",
-            tw, th, tx, ty
+            dw, dh, dx, dy
         );
     }
 
-    // calculate new position - try to maintain relative position within display
-    // or just center if window is larger than display
-    let new_x;
-    let new_y;
-    let new_w;
-    let new_h;
-
-    if ww > tw || wh > th {
-        // window is larger than target display, maximize it
-        new_x = tx;
-        new_y = ty;
-        new_w = tw;
-        new_h = th;
-    } else {
-        // center the window on the target display
-        new_x = tx + (tw - ww) / 2.0;
-        new_y = ty + (th - wh) / 2.0;
-        new_w = ww;
-        new_h = wh;
-    }
+    // calculate new position based on target
+    let (new_x, new_y) = match position {
+        Some(MoveTarget::Anchor(anchor)) => {
+            calculate_anchor_position(anchor, (dx, dy, dw, dh), (ww, wh))
+        }
+        Some(MoveTarget::Pixels { x, y }) => {
+            // position window center at the specified coordinates
+            let new_x = *x as f64 - ww / 2.0;
+            let new_y = *y as f64 - wh / 2.0;
+            (new_x, new_y)
+        }
+        Some(MoveTarget::Points { x, y }) => {
+            // points are same as pixels on macOS for our purposes
+            let new_x = *x as f64 - ww / 2.0;
+            let new_y = *y as f64 - wh / 2.0;
+            (new_x, new_y)
+        }
+        Some(MoveTarget::Percent { x, y }) => {
+            // position window center at x%, y% of the display
+            let target_x = dx + (dw * x / 100.0);
+            let target_y = dy + (dh * y / 100.0);
+            // adjust so window center is at target position
+            let new_x = target_x - ww / 2.0;
+            let new_y = target_y - wh / 2.0;
+            (new_x, new_y)
+        }
+        Some(MoveTarget::Relative {
+            dx: rel_dx,
+            dy: rel_dy,
+        }) => {
+            // move relative to current position
+            (wx + *rel_dx as f64, wy + *rel_dy as f64)
+        }
+        Some(MoveTarget::RelativeX { dx: rel_dx }) => {
+            // move relative on X axis only, keep Y
+            (wx + *rel_dx as f64, wy)
+        }
+        Some(MoveTarget::RelativeY { dy: rel_dy }) => {
+            // move relative on Y axis only, keep X
+            (wx, wy + *rel_dy as f64)
+        }
+        None => {
+            // no position specified - center on target display
+            let new_x = dx + (dw - ww) / 2.0;
+            let new_y = dy + (dh - wh) / 2.0;
+            (new_x, new_y)
+        }
+    };
 
     if verbose {
-        println!(
-            "Moving window to: {}x{} at ({}, {})",
-            new_w, new_h, new_x, new_y
-        );
+        println!("Moving window to: ({}, {})", new_x, new_y);
     }
 
     unsafe {
         set_window_position(window, new_x, new_y)?;
-        if (new_w - ww).abs() > 1.0 || (new_h - wh).abs() > 1.0 {
-            set_window_size(window, new_w, new_h)?;
-        }
         core_foundation::base::CFRelease(window as CFTypeRef);
     }
 
     if verbose {
         println!("Done.");
     }
-    // silent on success in non-verbose mode (Unix convention)
 
-    Ok((target_display.index, target_display.name.clone()))
+    Ok((
+        new_x as i32,
+        new_y as i32,
+        target_display.index,
+        target_display.name.clone(),
+    ))
+}
+
+/// Calculate window position for an anchor
+fn calculate_anchor_position(
+    anchor: &AnchorPosition,
+    display_bounds: (f64, f64, f64, f64), // (x, y, width, height)
+    window_size: (f64, f64),              // (width, height)
+) -> (f64, f64) {
+    let (dx, dy, dw, dh) = display_bounds;
+    let (ww, wh) = window_size;
+
+    match anchor {
+        AnchorPosition::TopLeft => (dx, dy),
+        AnchorPosition::TopRight => (dx + dw - ww, dy),
+        AnchorPosition::BottomLeft => (dx, dy + dh - wh),
+        AnchorPosition::BottomRight => (dx + dw - ww, dy + dh - wh),
+        AnchorPosition::Left => (dx, dy + (dh - wh) / 2.0),
+        AnchorPosition::Right => (dx + dw - ww, dy + (dh - wh) / 2.0),
+        AnchorPosition::Center => (dx + (dw - ww) / 2.0, dy + (dh - wh) / 2.0),
+    }
 }
 
 /// Resize an app's window to a target size (centered)
@@ -1574,5 +1966,543 @@ mod tests {
             ResizeTarget::parse("0.995").unwrap(),
             ResizeTarget::Percent(100)
         );
+    }
+
+    // ========================================================================
+    // AnchorPosition tests
+    // ========================================================================
+
+    #[test]
+    fn test_anchor_position_parse_all() {
+        assert_eq!(
+            AnchorPosition::parse("top-left").unwrap(),
+            AnchorPosition::TopLeft
+        );
+        assert_eq!(
+            AnchorPosition::parse("top-right").unwrap(),
+            AnchorPosition::TopRight
+        );
+        assert_eq!(
+            AnchorPosition::parse("bottom-left").unwrap(),
+            AnchorPosition::BottomLeft
+        );
+        assert_eq!(
+            AnchorPosition::parse("bottom-right").unwrap(),
+            AnchorPosition::BottomRight
+        );
+        assert_eq!(AnchorPosition::parse("left").unwrap(), AnchorPosition::Left);
+        assert_eq!(
+            AnchorPosition::parse("right").unwrap(),
+            AnchorPosition::Right
+        );
+    }
+
+    #[test]
+    fn test_anchor_position_parse_case_insensitive() {
+        assert_eq!(
+            AnchorPosition::parse("TOP-LEFT").unwrap(),
+            AnchorPosition::TopLeft
+        );
+        assert_eq!(
+            AnchorPosition::parse("Top-Right").unwrap(),
+            AnchorPosition::TopRight
+        );
+        assert_eq!(
+            AnchorPosition::parse("BOTTOM-LEFT").unwrap(),
+            AnchorPosition::BottomLeft
+        );
+    }
+
+    #[test]
+    fn test_anchor_position_parse_no_hyphen() {
+        assert_eq!(
+            AnchorPosition::parse("topleft").unwrap(),
+            AnchorPosition::TopLeft
+        );
+        assert_eq!(
+            AnchorPosition::parse("topright").unwrap(),
+            AnchorPosition::TopRight
+        );
+        assert_eq!(
+            AnchorPosition::parse("bottomleft").unwrap(),
+            AnchorPosition::BottomLeft
+        );
+        assert_eq!(
+            AnchorPosition::parse("bottomright").unwrap(),
+            AnchorPosition::BottomRight
+        );
+    }
+
+    #[test]
+    fn test_anchor_position_parse_invalid() {
+        assert!(AnchorPosition::parse("top").is_err());
+        assert!(AnchorPosition::parse("bottom").is_err());
+        assert!(AnchorPosition::parse("middle").is_err());
+        assert!(AnchorPosition::parse("invalid").is_err());
+    }
+
+    #[test]
+    fn test_anchor_position_parse_center() {
+        assert_eq!(
+            AnchorPosition::parse("center").unwrap(),
+            AnchorPosition::Center
+        );
+        assert_eq!(
+            AnchorPosition::parse("CENTER").unwrap(),
+            AnchorPosition::Center
+        );
+    }
+
+    #[test]
+    fn test_anchor_position_display() {
+        assert_eq!(AnchorPosition::TopLeft.to_string(), "top-left");
+        assert_eq!(AnchorPosition::TopRight.to_string(), "top-right");
+        assert_eq!(AnchorPosition::BottomLeft.to_string(), "bottom-left");
+        assert_eq!(AnchorPosition::BottomRight.to_string(), "bottom-right");
+        assert_eq!(AnchorPosition::Left.to_string(), "left");
+        assert_eq!(AnchorPosition::Right.to_string(), "right");
+        assert_eq!(AnchorPosition::Center.to_string(), "center");
+    }
+
+    // ========================================================================
+    // MoveTarget tests
+    // ========================================================================
+
+    #[test]
+    fn test_move_target_parse_anchor() {
+        assert_eq!(
+            MoveTarget::parse("top-left").unwrap(),
+            MoveTarget::Anchor(AnchorPosition::TopLeft)
+        );
+        assert_eq!(
+            MoveTarget::parse("right").unwrap(),
+            MoveTarget::Anchor(AnchorPosition::Right)
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_pixels_comma() {
+        assert_eq!(
+            MoveTarget::parse("100,200px").unwrap(),
+            MoveTarget::Pixels { x: 100, y: 200 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_pixels_x_separator() {
+        assert_eq!(
+            MoveTarget::parse("100x200px").unwrap(),
+            MoveTarget::Pixels { x: 100, y: 200 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_pixels_negative() {
+        // use 'x' separator for negative values to avoid ambiguity with relative format
+        assert_eq!(
+            MoveTarget::parse("-100x200px").unwrap(),
+            MoveTarget::Pixels { x: -100, y: 200 }
+        );
+        assert_eq!(
+            MoveTarget::parse("100x-200px").unwrap(),
+            MoveTarget::Pixels { x: 100, y: -200 }
+        );
+        assert_eq!(
+            MoveTarget::parse("-100x-200px").unwrap(),
+            MoveTarget::Pixels { x: -100, y: -200 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_points() {
+        assert_eq!(
+            MoveTarget::parse("100,200pt").unwrap(),
+            MoveTarget::Points { x: 100, y: 200 }
+        );
+        assert_eq!(
+            MoveTarget::parse("100x200pt").unwrap(),
+            MoveTarget::Points { x: 100, y: 200 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_percent() {
+        assert_eq!(
+            MoveTarget::parse("50%,25%").unwrap(),
+            MoveTarget::Percent { x: 50.0, y: 25.0 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_percent_decimal() {
+        assert_eq!(
+            MoveTarget::parse("50.5%,25.5%").unwrap(),
+            MoveTarget::Percent { x: 50.5, y: 25.5 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_percent_single() {
+        // single percentage means center (same x and y)
+        assert_eq!(
+            MoveTarget::parse("50%").unwrap(),
+            MoveTarget::Percent { x: 50.0, y: 50.0 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_relative() {
+        assert_eq!(
+            MoveTarget::parse("+100,-50").unwrap(),
+            MoveTarget::Relative { dx: 100, dy: -50 }
+        );
+        assert_eq!(
+            MoveTarget::parse("+100,+50").unwrap(),
+            MoveTarget::Relative { dx: 100, dy: 50 }
+        );
+        assert_eq!(
+            MoveTarget::parse("-100,-50").unwrap(),
+            MoveTarget::Relative { dx: -100, dy: -50 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_case_insensitive() {
+        assert_eq!(
+            MoveTarget::parse("TOP-LEFT").unwrap(),
+            MoveTarget::Anchor(AnchorPosition::TopLeft)
+        );
+        assert_eq!(
+            MoveTarget::parse("100,200PX").unwrap(),
+            MoveTarget::Pixels { x: 100, y: 200 }
+        );
+        assert_eq!(
+            MoveTarget::parse("100,200PT").unwrap(),
+            MoveTarget::Points { x: 100, y: 200 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_whitespace() {
+        assert_eq!(
+            MoveTarget::parse(" top-left ").unwrap(),
+            MoveTarget::Anchor(AnchorPosition::TopLeft)
+        );
+        assert_eq!(
+            MoveTarget::parse(" 100,200px ").unwrap(),
+            MoveTarget::Pixels { x: 100, y: 200 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_invalid() {
+        assert!(MoveTarget::parse("").is_err());
+        assert!(MoveTarget::parse("abc").is_err());
+        assert!(MoveTarget::parse("invalid-anchor").is_err());
+    }
+
+    // ========================================================================
+    // bare number parsing (interpreted as percentages)
+    // ========================================================================
+
+    #[test]
+    fn test_move_target_parse_bare_number_single() {
+        // single bare number = same x and y percentage
+        assert_eq!(
+            MoveTarget::parse("50").unwrap(),
+            MoveTarget::Percent { x: 50.0, y: 50.0 }
+        );
+        assert_eq!(
+            MoveTarget::parse("0").unwrap(),
+            MoveTarget::Percent { x: 0.0, y: 0.0 }
+        );
+        assert_eq!(
+            MoveTarget::parse("100").unwrap(),
+            MoveTarget::Percent { x: 100.0, y: 100.0 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_bare_number_pair() {
+        // two bare numbers = x,y percentages
+        assert_eq!(
+            MoveTarget::parse("50,50").unwrap(),
+            MoveTarget::Percent { x: 50.0, y: 50.0 }
+        );
+        assert_eq!(
+            MoveTarget::parse("0,100").unwrap(),
+            MoveTarget::Percent { x: 0.0, y: 100.0 }
+        );
+        assert_eq!(
+            MoveTarget::parse("25,75").unwrap(),
+            MoveTarget::Percent { x: 25.0, y: 75.0 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_bare_number_decimal() {
+        assert_eq!(
+            MoveTarget::parse("50.5").unwrap(),
+            MoveTarget::Percent { x: 50.5, y: 50.5 }
+        );
+        assert_eq!(
+            MoveTarget::parse("33.3,66.6").unwrap(),
+            MoveTarget::Percent { x: 33.3, y: 66.6 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_bare_number_invalid_range() {
+        // bare numbers must be 0-100 (percentage range)
+        // note: negative numbers like -1 are parsed as relative movement, not bare numbers
+        assert!(MoveTarget::parse("101").is_err());
+        assert!(MoveTarget::parse("50,101").is_err());
+        assert!(MoveTarget::parse("150,50").is_err());
+    }
+
+    #[test]
+    fn test_move_target_parse_bare_number_negative_is_relative() {
+        // negative bare numbers are parsed as relative movement, not percentages
+        assert_eq!(
+            MoveTarget::parse("-1").unwrap(),
+            MoveTarget::RelativeX { dx: -1 }
+        );
+        assert_eq!(
+            MoveTarget::parse("-50").unwrap(),
+            MoveTarget::RelativeX { dx: -50 }
+        );
+    }
+
+    // ========================================================================
+    // single-axis relative movement
+    // ========================================================================
+
+    #[test]
+    fn test_move_target_parse_relative_x_only() {
+        // +N or -N alone = X-only relative movement
+        assert_eq!(
+            MoveTarget::parse("+100").unwrap(),
+            MoveTarget::RelativeX { dx: 100 }
+        );
+        assert_eq!(
+            MoveTarget::parse("-50").unwrap(),
+            MoveTarget::RelativeX { dx: -50 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_relative_y_only() {
+        // ,+N or ,-N = Y-only relative movement
+        assert_eq!(
+            MoveTarget::parse(",+100").unwrap(),
+            MoveTarget::RelativeY { dy: 100 }
+        );
+        assert_eq!(
+            MoveTarget::parse(",-50").unwrap(),
+            MoveTarget::RelativeY { dy: -50 }
+        );
+    }
+
+    #[test]
+    fn test_move_target_parse_relative_y_only_no_sign() {
+        // ,N without sign should fail (ambiguous)
+        assert!(MoveTarget::parse(",100").is_err());
+        assert!(MoveTarget::parse(",50").is_err());
+    }
+
+    // ========================================================================
+    // percentage validation (0-100 range)
+    // ========================================================================
+
+    #[test]
+    fn test_move_target_parse_percent_invalid_range() {
+        // explicit percentages must also be 0-100
+        assert!(MoveTarget::parse("101%").is_err());
+        assert!(MoveTarget::parse("-1%").is_err());
+        assert!(MoveTarget::parse("50%,101%").is_err());
+        assert!(MoveTarget::parse("-1%,50%").is_err());
+        assert!(MoveTarget::parse("150%,50%").is_err());
+    }
+
+    #[test]
+    fn test_move_target_parse_percent_boundary_values() {
+        // boundary values should work
+        assert_eq!(
+            MoveTarget::parse("0%").unwrap(),
+            MoveTarget::Percent { x: 0.0, y: 0.0 }
+        );
+        assert_eq!(
+            MoveTarget::parse("100%").unwrap(),
+            MoveTarget::Percent { x: 100.0, y: 100.0 }
+        );
+        assert_eq!(
+            MoveTarget::parse("0%,100%").unwrap(),
+            MoveTarget::Percent { x: 0.0, y: 100.0 }
+        );
+    }
+
+    // ========================================================================
+    // Display trait tests for new variants
+    // ========================================================================
+
+    #[test]
+    fn test_move_target_display_relative_x() {
+        // RelativeX displays as just the X offset (Y unchanged)
+        assert_eq!(MoveTarget::RelativeX { dx: 100 }.to_string(), "+100");
+        assert_eq!(MoveTarget::RelativeX { dx: -50 }.to_string(), "-50");
+    }
+
+    #[test]
+    fn test_move_target_display_relative_y() {
+        // RelativeY displays with leading comma (X unchanged)
+        assert_eq!(MoveTarget::RelativeY { dy: 100 }.to_string(), ",+100");
+        assert_eq!(MoveTarget::RelativeY { dy: -50 }.to_string(), ",-50");
+    }
+
+    #[test]
+    fn test_anchor_position_display_center() {
+        assert_eq!(AnchorPosition::Center.to_string(), "center");
+    }
+
+    #[test]
+    fn test_move_target_display() {
+        assert_eq!(
+            MoveTarget::Anchor(AnchorPosition::TopLeft).to_string(),
+            "top-left"
+        );
+        assert_eq!(
+            MoveTarget::Pixels { x: 100, y: 200 }.to_string(),
+            "100,200px"
+        );
+        assert_eq!(
+            MoveTarget::Points { x: 100, y: 200 }.to_string(),
+            "100,200pt"
+        );
+        assert_eq!(
+            MoveTarget::Percent { x: 50.0, y: 25.0 }.to_string(),
+            "50%,25%"
+        );
+        assert_eq!(
+            MoveTarget::Relative { dx: 100, dy: -50 }.to_string(),
+            "+100,-50"
+        );
+        assert_eq!(
+            MoveTarget::Relative { dx: -100, dy: 50 }.to_string(),
+            "-100,+50"
+        );
+    }
+
+    #[test]
+    fn test_move_target_from_str() {
+        let target: MoveTarget = "top-left".parse().unwrap();
+        assert_eq!(target, MoveTarget::Anchor(AnchorPosition::TopLeft));
+
+        let target: MoveTarget = "100,200px".parse().unwrap();
+        assert_eq!(target, MoveTarget::Pixels { x: 100, y: 200 });
+    }
+
+    // ========================================================================
+    // calculate_anchor_position tests
+    // ========================================================================
+
+    #[test]
+    fn test_calculate_anchor_position_top_left() {
+        let (x, y) = calculate_anchor_position(
+            &AnchorPosition::TopLeft,
+            (0.0, 0.0, 1920.0, 1080.0),
+            (800.0, 600.0),
+        );
+        assert_eq!(x, 0.0);
+        assert_eq!(y, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_anchor_position_top_right() {
+        let (x, y) = calculate_anchor_position(
+            &AnchorPosition::TopRight,
+            (0.0, 0.0, 1920.0, 1080.0),
+            (800.0, 600.0),
+        );
+        assert_eq!(x, 1120.0); // 1920 - 800
+        assert_eq!(y, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_anchor_position_bottom_left() {
+        let (x, y) = calculate_anchor_position(
+            &AnchorPosition::BottomLeft,
+            (0.0, 0.0, 1920.0, 1080.0),
+            (800.0, 600.0),
+        );
+        assert_eq!(x, 0.0);
+        assert_eq!(y, 480.0); // 1080 - 600
+    }
+
+    #[test]
+    fn test_calculate_anchor_position_bottom_right() {
+        let (x, y) = calculate_anchor_position(
+            &AnchorPosition::BottomRight,
+            (0.0, 0.0, 1920.0, 1080.0),
+            (800.0, 600.0),
+        );
+        assert_eq!(x, 1120.0); // 1920 - 800
+        assert_eq!(y, 480.0); // 1080 - 600
+    }
+
+    #[test]
+    fn test_calculate_anchor_position_left() {
+        let (x, y) = calculate_anchor_position(
+            &AnchorPosition::Left,
+            (0.0, 0.0, 1920.0, 1080.0),
+            (800.0, 600.0),
+        );
+        assert_eq!(x, 0.0);
+        assert_eq!(y, 240.0); // (1080 - 600) / 2
+    }
+
+    #[test]
+    fn test_calculate_anchor_position_right() {
+        let (x, y) = calculate_anchor_position(
+            &AnchorPosition::Right,
+            (0.0, 0.0, 1920.0, 1080.0),
+            (800.0, 600.0),
+        );
+        assert_eq!(x, 1120.0); // 1920 - 800
+        assert_eq!(y, 240.0); // (1080 - 600) / 2
+    }
+
+    #[test]
+    fn test_calculate_anchor_position_with_offset() {
+        // display not at origin
+        let (x, y) = calculate_anchor_position(
+            &AnchorPosition::TopLeft,
+            (1920.0, 0.0, 2560.0, 1440.0),
+            (800.0, 600.0),
+        );
+        assert_eq!(x, 1920.0);
+        assert_eq!(y, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_anchor_position_center() {
+        let (x, y) = calculate_anchor_position(
+            &AnchorPosition::Center,
+            (0.0, 0.0, 1920.0, 1080.0),
+            (800.0, 600.0),
+        );
+        assert_eq!(x, 560.0); // (1920 - 800) / 2
+        assert_eq!(y, 240.0); // (1080 - 600) / 2
+    }
+
+    #[test]
+    fn test_calculate_anchor_position_center_with_offset() {
+        // center on a display not at origin
+        let (x, y) = calculate_anchor_position(
+            &AnchorPosition::Center,
+            (1920.0, 0.0, 2560.0, 1440.0),
+            (800.0, 600.0),
+        );
+        assert_eq!(x, 1920.0 + (2560.0 - 800.0) / 2.0); // 2800
+        assert_eq!(y, (1440.0 - 600.0) / 2.0); // 420
     }
 }

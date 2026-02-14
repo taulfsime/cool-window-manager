@@ -158,16 +158,16 @@ pub const JSON_SCHEMA: &str = r##"{
            "const": "maximize",
            "description": "Maximize the current or specified window"
          },
-         {
-           "pattern": "^move_display:(next|prev|[0-9]+|[a-zA-Z_][a-zA-Z0-9_]*)$",
-           "description": "Move window to another display. Use next, prev, a display number, or an alias name (builtin, external, main, secondary, or custom)."
+          {
+           "pattern": "^move:.+$",
+           "description": "Move window to a position and/or display. Positions: top-left, top-right, bottom-left, bottom-right, left, right, 50%,50%, 100,200px. Displays: next, prev, 0, display=next, or combined: top-left;display=2 (semicolon separates arguments)"
          },
          {
            "pattern": "^resize:(100|[1-9][0-9]?|full)$",
            "description": "Resize window to a percentage of the screen (1-100) or full. Window is centered."
          }
        ],
-       "examples": ["focus", "maximize", "move_display:next", "move_display:prev", "move_display:0", "move_display:external", "move_display:office_main", "resize:80", "resize:full"]
+       "examples": ["focus", "maximize", "move:next", "move:top-left", "move:50%,50%", "move:display=external", "move:top-left;display=2", "resize:80", "resize:full"]
      },
     "Settings": {
       "type": "object",
@@ -348,5 +348,165 @@ mod tests {
         assert_eq!(content, JSON_SCHEMA);
 
         std::fs::remove_file(&path).ok();
+    }
+
+    // ========================================================================
+    // Action schema tests
+    // ========================================================================
+
+    #[test]
+    fn test_schema_action_has_all_types() {
+        let parsed: serde_json::Value = serde_json::from_str(JSON_SCHEMA).unwrap();
+        let action = parsed.get("$defs").and_then(|d| d.get("Action")).unwrap();
+
+        // action should have oneOf with multiple options
+        let one_of = action.get("oneOf").unwrap().as_array().unwrap();
+
+        // should have focus, maximize, move, resize
+        let has_focus = one_of
+            .iter()
+            .any(|v| v.get("const") == Some(&serde_json::json!("focus")));
+        let has_maximize = one_of
+            .iter()
+            .any(|v| v.get("const") == Some(&serde_json::json!("maximize")));
+        let has_move = one_of.iter().any(|v| {
+            v.get("pattern")
+                .and_then(|p| p.as_str())
+                .map(|s| s.contains("move:"))
+                .unwrap_or(false)
+        });
+        let has_resize = one_of.iter().any(|v| {
+            v.get("pattern")
+                .and_then(|p| p.as_str())
+                .map(|s| s.contains("resize:"))
+                .unwrap_or(false)
+        });
+
+        assert!(has_focus, "schema should include focus action");
+        assert!(has_maximize, "schema should include maximize action");
+        assert!(has_move, "schema should include move action pattern");
+        assert!(has_resize, "schema should include resize action pattern");
+    }
+
+    #[test]
+    fn test_schema_action_examples_include_move_variants() {
+        let parsed: serde_json::Value = serde_json::from_str(JSON_SCHEMA).unwrap();
+        let action = parsed.get("$defs").and_then(|d| d.get("Action")).unwrap();
+
+        let examples = action.get("examples").unwrap().as_array().unwrap();
+        let examples_str: Vec<&str> = examples.iter().filter_map(|v| v.as_str()).collect();
+
+        // check for various move action examples
+        assert!(
+            examples_str.iter().any(|e| *e == "move:next"),
+            "examples should include move:next"
+        );
+        assert!(
+            examples_str.iter().any(|e| *e == "move:top-left"),
+            "examples should include move:top-left"
+        );
+        assert!(
+            examples_str.iter().any(|e| e.contains("50%")),
+            "examples should include percentage move"
+        );
+        assert!(
+            examples_str.iter().any(|e| e.contains(";display=")),
+            "examples should include combined position;display format"
+        );
+    }
+
+    #[test]
+    fn test_schema_move_action_description_mentions_semicolon() {
+        let parsed: serde_json::Value = serde_json::from_str(JSON_SCHEMA).unwrap();
+        let action = parsed.get("$defs").and_then(|d| d.get("Action")).unwrap();
+
+        let one_of = action.get("oneOf").unwrap().as_array().unwrap();
+        let move_action = one_of
+            .iter()
+            .find(|v| {
+                v.get("pattern")
+                    .and_then(|p| p.as_str())
+                    .map(|s| s.contains("move:"))
+                    .unwrap_or(false)
+            })
+            .unwrap();
+
+        let description = move_action.get("description").unwrap().as_str().unwrap();
+
+        // description should mention semicolon separator
+        assert!(
+            description.contains("semicolon"),
+            "move action description should mention semicolon separator"
+        );
+        // description should mention various position types
+        assert!(
+            description.contains("top-left"),
+            "move action description should mention anchors"
+        );
+        assert!(
+            description.contains("%"),
+            "move action description should mention percentages"
+        );
+        assert!(
+            description.contains("px"),
+            "move action description should mention pixels"
+        );
+    }
+
+    #[test]
+    fn test_schema_move_action_no_move_display() {
+        // ensure old move_display action is not in schema
+        let schema_str = JSON_SCHEMA;
+        assert!(
+            !schema_str.contains("move_display"),
+            "schema should not contain old move_display action"
+        );
+        assert!(
+            !schema_str.contains("move-display"),
+            "schema should not contain old move-display action"
+        );
+    }
+
+    // ========================================================================
+    // display_aliases schema tests
+    // ========================================================================
+
+    #[test]
+    fn test_schema_display_aliases_structure() {
+        let parsed: serde_json::Value = serde_json::from_str(JSON_SCHEMA).unwrap();
+        let display_aliases = parsed
+            .get("properties")
+            .and_then(|p| p.get("display_aliases"))
+            .unwrap();
+
+        // should be an object type
+        assert_eq!(
+            display_aliases.get("type").and_then(|v| v.as_str()),
+            Some("object")
+        );
+
+        // should have additionalProperties as array of strings
+        let additional = display_aliases.get("additionalProperties").unwrap();
+        assert_eq!(
+            additional.get("type").and_then(|v| v.as_str()),
+            Some("array")
+        );
+    }
+
+    #[test]
+    fn test_schema_display_aliases_examples() {
+        let parsed: serde_json::Value = serde_json::from_str(JSON_SCHEMA).unwrap();
+        let display_aliases = parsed
+            .get("properties")
+            .and_then(|p| p.get("display_aliases"))
+            .unwrap();
+
+        let examples = display_aliases.get("examples").unwrap().as_array().unwrap();
+        assert!(!examples.is_empty(), "display_aliases should have examples");
+
+        // first example should have office and home aliases
+        let first_example = &examples[0];
+        assert!(first_example.get("office").is_some());
+        assert!(first_example.get("home").is_some());
     }
 }
