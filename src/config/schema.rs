@@ -77,6 +77,11 @@ pub struct SpotlightShortcut {
     /// launch app if not running
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch: Option<bool>,
+    /// custom icon for the Spotlight shortcut
+    /// can be: path to .icns file, path to .png file, or app name to extract icon from
+    /// if not specified, uses target app's icon (if app is set) or default cwm icon
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 impl SpotlightShortcut {
@@ -591,6 +596,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: Some(true),
+            icon: None,
         };
 
         assert_eq!(shortcut.display_name(), "cwm: Focus Safari");
@@ -603,6 +609,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: None,
+            icon: None,
         };
 
         assert_eq!(shortcut.identifier(), "focus-safari");
@@ -612,6 +619,7 @@ mod tests {
             action: "move_display:next".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         assert_eq!(shortcut2.identifier(), "move-to-next-display");
@@ -624,6 +632,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: Some(true),
+            icon: None,
         };
 
         let json = serde_json::to_string(&shortcut).unwrap();
@@ -633,6 +642,37 @@ mod tests {
         assert_eq!(parsed.action, "focus");
         assert_eq!(parsed.app, Some("Safari".to_string()));
         assert_eq!(parsed.launch, Some(true));
+        assert_eq!(parsed.icon, None);
+    }
+
+    #[test]
+    fn test_spotlight_shortcut_with_icon() {
+        let shortcut = SpotlightShortcut {
+            name: "Focus Safari".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: Some(true),
+            icon: Some("/path/to/icon.icns".to_string()),
+        };
+
+        let json = serde_json::to_string(&shortcut).unwrap();
+        assert!(json.contains("icon"));
+
+        let parsed: SpotlightShortcut = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.icon, Some("/path/to/icon.icns".to_string()));
+    }
+
+    #[test]
+    fn test_spotlight_shortcut_icon_from_json() {
+        let json = r#"{
+            "name": "Focus Chrome",
+            "action": "focus",
+            "app": "Chrome",
+            "icon": "Google Chrome"
+        }"#;
+
+        let shortcut: SpotlightShortcut = serde_json::from_str(json).unwrap();
+        assert_eq!(shortcut.icon, Some("Google Chrome".to_string()));
     }
 
     #[test]

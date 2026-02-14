@@ -130,6 +130,11 @@ pub const JSON_SCHEMA: &str = r##"{
         "launch": {
           "type": "boolean",
           "description": "Launch the app if not running"
+        },
+        "icon": {
+          "type": "string",
+          "description": "Custom icon for the Spotlight shortcut. Can be: path to .icns file, path to .png file, or app name to extract icon from. If not specified, uses target app's icon (if app is set) or default cwm icon.",
+          "examples": ["/path/to/icon.icns", "Safari", "~/icons/custom.png"]
         }
       },
       "if": {

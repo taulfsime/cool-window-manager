@@ -696,6 +696,12 @@ Example config:
       "launch": true
     },
     {
+      "name": "Focus Chrome",
+      "action": "focus",
+      "app": "Google Chrome",
+      "icon": "/path/to/custom-icon.icns"
+    },
+    {
       "name": "Maximize Window",
       "action": "maximize"
     },
@@ -784,6 +790,11 @@ Spotlight shortcuts create macOS app bundles that appear in Spotlight search. Wh
 - `action` - Same format as shortcuts: `focus`, `maximize`, `move_display:next`, `resize:80`
 - `app` - Target app name (required for `focus`, optional for others)
 - `launch` - Launch app if not running (optional)
+- `icon` - Custom icon (optional). Can be:
+  - Path to `.icns` file: `/path/to/icon.icns`
+  - Path to `.png` file: `~/icons/custom.png` (converted to icns)
+  - App name to extract icon from: `Safari`
+  - If not specified, uses target app's icon (when `app` is set) or default cwm icon
 
 After adding shortcuts to config, install them with:
 

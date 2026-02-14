@@ -1,4 +1,6 @@
 mod generator;
+pub(crate) mod icons;
+pub(crate) mod signing;
 
 pub use generator::{
     get_apps_directory, get_installed_shortcuts, install_all, install_shortcut, remove_all,
@@ -29,42 +31,49 @@ pub fn get_example_shortcuts() -> Vec<SpotlightShortcut> {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: Some(true),
+            icon: None, // will auto-extract from Safari
         },
         SpotlightShortcut {
             name: "Focus Slack".to_string(),
             action: "focus".to_string(),
             app: Some("Slack".to_string()),
             launch: Some(true),
+            icon: None, // will auto-extract from Slack
         },
         SpotlightShortcut {
             name: "Maximize Window".to_string(),
             action: "maximize".to_string(),
             app: None,
             launch: None,
+            icon: None, // will use default cwm icon
         },
         SpotlightShortcut {
             name: "Move to Next Display".to_string(),
             action: "move_display:next".to_string(),
             app: None,
             launch: None,
+            icon: None,
         },
         SpotlightShortcut {
             name: "Move to Previous Display".to_string(),
             action: "move_display:prev".to_string(),
             app: None,
             launch: None,
+            icon: None,
         },
         SpotlightShortcut {
             name: "Resize 80%".to_string(),
             action: "resize:80".to_string(),
             app: None,
             launch: None,
+            icon: None,
         },
         SpotlightShortcut {
             name: "Resize Full".to_string(),
             action: "resize:full".to_string(),
             app: None,
             launch: None,
+            icon: None,
         },
     ]
 }

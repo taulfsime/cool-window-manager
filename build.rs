@@ -12,6 +12,9 @@ fn main() {
     }
     println!("cargo:rerun-if-changed=man/cwm.1");
 
+    // compile spotlight stub executable
+    compile_spotlight_stub();
+
     // get git commit hash (with fallback for non-git environments like Docker)
     let (commit, short_commit, timestamp, dirty) = get_git_info();
 
@@ -76,4 +79,58 @@ fn main() {
     // release channel from environment or default to dev
     let channel = std::env::var("RELEASE_CHANNEL").unwrap_or_else(|_| "dev".to_string());
     println!("cargo:rustc-env=RELEASE_CHANNEL={}", channel);
+}
+
+/// compiles the spotlight stub executable for embedding in the binary
+fn compile_spotlight_stub() {
+    let stub_source = std::path::Path::new("scripts/spotlight_stub.c");
+    let assets_dir = std::path::Path::new("assets");
+    let stub_output = assets_dir.join("spotlight_stub");
+
+    println!("cargo:rerun-if-changed=scripts/spotlight_stub.c");
+
+    // ensure assets directory exists
+    std::fs::create_dir_all(assets_dir).ok();
+
+    // check if source exists
+    if !stub_source.exists() {
+        // create empty placeholder for initial compilation
+        if !stub_output.exists() {
+            std::fs::write(&stub_output, b"").ok();
+        }
+        return;
+    }
+
+    // get target architecture
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let arch_flag = match target_arch.as_str() {
+        "x86_64" => "x86_64",
+        "aarch64" => "arm64",
+        _ => "arm64", // default to arm64 for Apple Silicon
+    };
+
+    // compile directly with clang
+    let compile_status = Command::new("clang")
+        .args([
+            "-arch",
+            arch_flag,
+            "-O2",
+            "-o",
+            stub_output.to_str().unwrap(),
+            stub_source.to_str().unwrap(),
+        ])
+        .status();
+
+    match compile_status {
+        Ok(status) if status.success() => {
+            // compilation succeeded
+        }
+        _ => {
+            // create empty placeholder if compilation fails
+            if !stub_output.exists() {
+                std::fs::write(&stub_output, b"").ok();
+            }
+            eprintln!("Warning: Failed to compile spotlight stub, using placeholder");
+        }
+    }
 }

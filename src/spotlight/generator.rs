@@ -5,7 +5,12 @@ use std::path::{Path, PathBuf};
 
 use crate::config::SpotlightShortcut;
 
+use super::icons::resolve_icon;
+use super::signing::sign_app_bundle;
 use super::{default_apps_directory, BUNDLE_ID_PREFIX, SHORTCUT_PREFIX};
+
+/// embedded stub executable (compiled at build time)
+const STUB_EXECUTABLE: &[u8] = include_bytes!("../../assets/spotlight_stub");
 
 /// returns the directory where spotlight apps are installed
 pub fn get_apps_directory() -> PathBuf {
@@ -20,35 +25,72 @@ pub fn generate_app_bundle(shortcut: &SpotlightShortcut, apps_dir: &Path) -> Res
     // create app bundle structure
     let contents_dir = app_path.join("Contents");
     let macos_dir = contents_dir.join("MacOS");
+    let resources_dir = contents_dir.join("Resources");
 
     fs::create_dir_all(&macos_dir).with_context(|| {
         format!(
-            "Failed to create app bundle directory: {}",
+            "failed to create app bundle directory: {}",
             macos_dir.display()
         )
     })?;
 
-    // write Info.plist
+    fs::create_dir_all(&resources_dir).with_context(|| {
+        format!(
+            "failed to create resources directory: {}",
+            resources_dir.display()
+        )
+    })?;
+
+    // write Info.plist with enhanced keys
     let info_plist = generate_info_plist(shortcut);
     let plist_path = contents_dir.join("Info.plist");
     fs::write(&plist_path, info_plist)
-        .with_context(|| format!("Failed to write Info.plist: {}", plist_path.display()))?;
+        .with_context(|| format!("failed to write Info.plist: {}", plist_path.display()))?;
 
-    // write executable script
-    let script = generate_shell_script(shortcut);
-    let script_path = macos_dir.join("run");
-    fs::write(&script_path, script)
-        .with_context(|| format!("Failed to write script: {}", script_path.display()))?;
+    // write PkgInfo file
+    let pkginfo_path = contents_dir.join("PkgInfo");
+    fs::write(&pkginfo_path, "APPL????")
+        .with_context(|| format!("failed to write PkgInfo: {}", pkginfo_path.display()))?;
 
-    // make script executable
-    let mut perms = fs::metadata(&script_path)?.permissions();
+    // write executable (use compiled stub if available, otherwise shell script)
+    let exec_path = macos_dir.join("run");
+    if !STUB_EXECUTABLE.is_empty() {
+        // use compiled stub
+        fs::write(&exec_path, STUB_EXECUTABLE)
+            .with_context(|| format!("failed to write executable: {}", exec_path.display()))?;
+
+        // write command file for the stub
+        let ipc_command = build_ipc_command(shortcut);
+        let cmd_path = macos_dir.join("cwm_command.txt");
+        fs::write(&cmd_path, &ipc_command)
+            .with_context(|| format!("failed to write command file: {}", cmd_path.display()))?;
+    } else {
+        // fallback to shell script
+        let script = generate_shell_script(shortcut);
+        fs::write(&exec_path, script)
+            .with_context(|| format!("failed to write script: {}", exec_path.display()))?;
+    }
+
+    // make executable
+    let mut perms = fs::metadata(&exec_path)?.permissions();
     perms.set_mode(0o755);
-    fs::set_permissions(&script_path, perms)?;
+    fs::set_permissions(&exec_path, perms)?;
+
+    // resolve and write icon
+    let icon_path = resources_dir.join("AppIcon.icns");
+    if let Err(e) = resolve_icon(
+        shortcut.icon.as_deref(),
+        shortcut.app.as_deref(),
+        &icon_path,
+    ) {
+        eprintln!("Warning: failed to set icon for '{}': {}", shortcut.name, e);
+        // continue without icon - not fatal
+    }
 
     Ok(app_path)
 }
 
-/// generates the Info.plist content for an app bundle
+/// generates the Info.plist content for an app bundle with enhanced keys
 fn generate_info_plist(shortcut: &SpotlightShortcut) -> String {
     let bundle_name = shortcut.display_name();
     let bundle_id = format!("{}.{}", BUNDLE_ID_PREFIX, shortcut.identifier());
@@ -72,10 +114,26 @@ fn generate_info_plist(shortcut: &SpotlightShortcut) -> String {
     <string>1.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.13</string>
     <key>LSUIElement</key>
     <true/>
     <key>LSBackgroundOnly</key>
     <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>cwm uses AppleScript to display notifications</string>
 </dict>
 </plist>
 "#,
@@ -83,7 +141,7 @@ fn generate_info_plist(shortcut: &SpotlightShortcut) -> String {
     )
 }
 
-/// generates the shell script content for an app bundle
+/// generates the shell script content for an app bundle (fallback when stub not available)
 fn generate_shell_script(shortcut: &SpotlightShortcut) -> String {
     // build the action string for the daemon IPC
     // format: action[:arg] (same as daemon's execute_action expects)
@@ -96,17 +154,15 @@ fn generate_shell_script(shortcut: &SpotlightShortcut) -> String {
 # {}
 # generated by cwm spotlight
 
-SOCKET="/tmp/cwm.sock"
+SOCKET="$HOME/.cwm/cwm.sock"
 COMMAND="{}"
 
 # try to send command via socket to daemon (preferred - no permission issues)
 if [ -S "$SOCKET" ]; then
     RESPONSE=$(echo "$COMMAND" | nc -U "$SOCKET" -w 2 2>/dev/null)
     if [ $? -eq 0 ]; then
-        if [ "$RESPONSE" = "OK" ]; then
-            exit 0
-        elif echo "$RESPONSE" | grep -q "^ERROR:"; then
-            ERROR_MSG=$(echo "$RESPONSE" | sed 's/^ERROR: //')
+        if echo "$RESPONSE" | grep -q "\"error\""; then
+            ERROR_MSG=$(echo "$RESPONSE" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
             osascript -e "display notification \"$ERROR_MSG\" with title \"{}\""
             exit 1
         fi
@@ -178,7 +234,7 @@ pub fn install_shortcut(shortcut: &SpotlightShortcut, force: bool) -> Result<Pat
 
     // ensure apps directory exists
     fs::create_dir_all(&apps_dir)
-        .with_context(|| format!("Failed to create apps directory: {}", apps_dir.display()))?;
+        .with_context(|| format!("failed to create apps directory: {}", apps_dir.display()))?;
 
     let app_name = format!("{}{}.app", SHORTCUT_PREFIX, shortcut.name);
     let app_path = apps_dir.join(&app_name);
@@ -187,7 +243,7 @@ pub fn install_shortcut(shortcut: &SpotlightShortcut, force: bool) -> Result<Pat
     if app_path.exists() {
         if force {
             fs::remove_dir_all(&app_path).with_context(|| {
-                format!("Failed to remove existing app: {}", app_path.display())
+                format!("failed to remove existing app: {}", app_path.display())
             })?;
         } else {
             return Err(anyhow!(
@@ -197,7 +253,29 @@ pub fn install_shortcut(shortcut: &SpotlightShortcut, force: bool) -> Result<Pat
         }
     }
 
-    generate_app_bundle(shortcut, &apps_dir)
+    // generate the app bundle
+    let app_path = generate_app_bundle(shortcut, &apps_dir)?;
+
+    // sign the app bundle (best effort)
+    match sign_app_bundle(&app_path) {
+        Ok(result) => {
+            if !result.is_success() && !result.is_skipped() {
+                eprintln!(
+                    "Warning: code signing for '{}': {}",
+                    shortcut.name,
+                    result.description()
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "Warning: code signing failed for '{}': {}",
+                shortcut.name, e
+            );
+        }
+    }
+
+    Ok(app_path)
 }
 
 /// installs all spotlight shortcuts from config
@@ -211,7 +289,7 @@ pub fn install_all(shortcuts: &[SpotlightShortcut], force: bool) -> Result<Vec<P
             }
             Err(e) => {
                 // continue with other shortcuts but report error
-                eprintln!("Warning: Failed to install '{}': {}", shortcut.name, e);
+                eprintln!("Warning: failed to install '{}': {}", shortcut.name, e);
             }
         }
     }
@@ -233,7 +311,7 @@ pub fn remove_shortcut(name: &str) -> Result<()> {
     }
 
     fs::remove_dir_all(&app_path)
-        .with_context(|| format!("Failed to remove app: {}", app_path.display()))?;
+        .with_context(|| format!("failed to remove app: {}", app_path.display()))?;
 
     // trigger Spotlight reindex
     reindex_spotlight()?;
@@ -329,7 +407,7 @@ fn reindex_spotlight() -> Result<()> {
             Ok(())
         }
         Err(e) => {
-            eprintln!("Warning: Could not trigger Spotlight reindex: {}", e);
+            eprintln!("Warning: could not trigger Spotlight reindex: {}", e);
             Ok(())
         }
     }
@@ -346,6 +424,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: Some(true),
+            icon: None,
         };
 
         let plist = generate_info_plist(&shortcut);
@@ -354,6 +433,12 @@ mod tests {
         assert!(plist.contains("com.cwm.spotlight.focus-safari"));
         assert!(plist.contains("<key>LSUIElement</key>"));
         assert!(plist.contains("<true/>"));
+        // check for new keys
+        assert!(plist.contains("<key>CFBundleInfoDictionaryVersion</key>"));
+        assert!(plist.contains("<string>6.0</string>"));
+        assert!(plist.contains("<key>CFBundleIconFile</key>"));
+        assert!(plist.contains("<string>AppIcon</string>"));
+        assert!(plist.contains("<key>NSHighResolutionCapable</key>"));
     }
 
     #[test]
@@ -363,6 +448,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: Some(true),
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -372,7 +458,7 @@ mod tests {
         // socket-based IPC command format
         assert!(script.contains("COMMAND=\"focus:Safari\""));
         assert!(script.contains("nc -U"));
-        assert!(script.contains("/tmp/cwm.sock"));
+        assert!(script.contains(".cwm/cwm.sock"));
         assert!(script.contains("osascript"));
     }
 
@@ -383,6 +469,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Visual Studio Code".to_string()),
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -398,6 +485,7 @@ mod tests {
             action: "move_display:next".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -413,6 +501,7 @@ mod tests {
             action: "resize:80".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -428,6 +517,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "focus:Safari");
     }
@@ -439,6 +529,7 @@ mod tests {
             action: "focus".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "focus");
     }
@@ -450,6 +541,7 @@ mod tests {
             action: "maximize".to_string(),
             app: Some("Terminal".to_string()),
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "maximize:Terminal");
     }
@@ -461,6 +553,7 @@ mod tests {
             action: "move_display:next".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "move_display:next");
     }
@@ -472,6 +565,7 @@ mod tests {
             action: "move_display:prev".to_string(),
             app: Some("Finder".to_string()),
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "move_display:prev:Finder");
     }
@@ -483,6 +577,7 @@ mod tests {
             action: "resize:75".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "resize:75");
     }
@@ -494,6 +589,7 @@ mod tests {
             action: "resize:50".to_string(),
             app: Some("Notes".to_string()),
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "resize:50:Notes");
     }
@@ -509,6 +605,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: None,
+            icon: None,
         };
 
         let plist = generate_info_plist(&shortcut);
@@ -526,6 +623,7 @@ mod tests {
             action: "maximize".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         let plist = generate_info_plist(&shortcut);
@@ -542,6 +640,7 @@ mod tests {
             action: "move_display:next".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         let plist = generate_info_plist(&shortcut);
@@ -557,6 +656,7 @@ mod tests {
             action: "resize:75".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         let plist = generate_info_plist(&shortcut);
@@ -573,6 +673,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: None,
+            icon: None,
         };
 
         let plist = generate_info_plist(&shortcut);
@@ -591,6 +692,7 @@ mod tests {
             action: "maximize".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -606,6 +708,7 @@ mod tests {
             action: "maximize".to_string(),
             app: Some("Terminal".to_string()),
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -620,6 +723,7 @@ mod tests {
             action: "move_display:prev".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -634,6 +738,7 @@ mod tests {
             action: "move_display:next".to_string(),
             app: Some("Safari".to_string()),
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -649,6 +754,7 @@ mod tests {
             action: "resize".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -665,6 +771,7 @@ mod tests {
             action: "move_display".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -681,6 +788,7 @@ mod tests {
             action: "custom:arg1:arg2".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -695,6 +803,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -711,6 +820,7 @@ mod tests {
             action: "maximize".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
 
         let script = generate_shell_script(&shortcut);
@@ -732,6 +842,7 @@ mod tests {
             action: "maximize".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "maximize");
     }
@@ -744,6 +855,7 @@ mod tests {
             action: "move_display".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "move_display:next");
     }
@@ -756,6 +868,7 @@ mod tests {
             action: "resize".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "resize:80");
     }
@@ -767,6 +880,7 @@ mod tests {
             action: "unknown_action:with:args".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
         // unknown actions pass through unchanged
         assert_eq!(build_ipc_command(&shortcut), "unknown_action:with:args");
@@ -779,6 +893,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Visual Studio Code".to_string()),
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "focus:Visual Studio Code");
     }
@@ -790,6 +905,7 @@ mod tests {
             action: "move_display:2".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "move_display:2");
     }
@@ -801,6 +917,7 @@ mod tests {
             action: "resize:full".to_string(),
             app: None,
             launch: None,
+            icon: None,
         };
         assert_eq!(build_ipc_command(&shortcut), "resize:full");
     }

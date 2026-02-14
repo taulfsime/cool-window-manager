@@ -100,7 +100,7 @@ macOS only. The codebase requires macOS and will not compile on other platforms.
 cool-window-mng/
 ├── Cargo.toml              # project manifest and dependencies
 ├── Cargo.lock              # locked dependency versions
-├── build.rs                # build script for git version info
+├── build.rs                # build script for git version info and spotlight stub compilation
 ├── README.md               # user-facing documentation
 ├── AGENTS.md               # this file
 ├── install.sh              # shell installer script
@@ -113,7 +113,8 @@ cool-window-mng/
 │   ├── release-stable.sh   # helper script to create stable releases
 │   ├── list-releases.sh    # helper script to list all releases
 │   ├── coverage.sh         # generate test coverage report
-│   └── manual-test.sh      # interactive manual testing guide
+│   ├── manual-test.sh      # interactive manual testing guide
+│   └── spotlight_stub.c    # C source for Spotlight app stub executable
 ├── docs/                   # landing page (GitHub Pages at cwm.taulfsime.com)
 │   ├── index.html          # main page with terminal + preview
 │   ├── CNAME               # custom domain configuration
@@ -194,7 +195,9 @@ cool-window-mng/
     │   └── rollback.rs     # safe update with automatic rollback
     ├── spotlight/
     │   ├── mod.rs          # module exports, example config printing
-    │   └── generator.rs    # app bundle generation for Spotlight integration
+    │   ├── generator.rs    # app bundle generation for Spotlight integration
+    │   ├── icons.rs        # icon resolution and extraction from app bundles
+    │   └── signing.rs      # ad-hoc code signing for app bundles
     └── window/
         ├── mod.rs          # module exports
         ├── accessibility.rs # Accessibility API permission handling
