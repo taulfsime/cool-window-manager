@@ -188,6 +188,7 @@ cool-window-mng/
     │   ├── mod.rs          # module exports
     │   ├── paths.rs        # installation path detection and validation
     │   ├── install.rs      # binary installation logic
+    │   ├── completions.rs  # shell completion generation (bash, zsh, fish)
     │   ├── github.rs       # GitHub API client for releases
     │   ├── update.rs       # update checking and downloading
     │   └── rollback.rs     # safe update with automatic rollback
@@ -280,7 +281,7 @@ Commands defined: `focus`, `maximize`, `move-display`, `resize`, `list`, `get`, 
 | `config` | `cwm config <show\|path\|set\|reset\|default\|verify>` | Manage configuration |
 | `daemon` | `cwm daemon <start\|stop\|status\|install\|uninstall>` | Manage background daemon |
 | `spotlight` | `cwm spotlight <install\|list\|remove\|example>` | Manage Spotlight integration |
-| `install` | `cwm install [--path <dir>] [--force]` | Install cwm to system PATH |
+| `install` | `cwm install [--path <dir>] [--force] [--completions[=SHELL]] [--no-completions] [--completions-only]` | Install cwm to system PATH |
 | `uninstall` | `cwm uninstall [--path <dir>]` | Remove cwm from system |
 | `update` | `cwm update [--check] [--force] [--prerelease]` | Update to latest version |
 | `version` | `cwm version` | Display version information |
@@ -319,14 +320,15 @@ Key types:
 
 ### installer/
 
-Handles installation, updates, version management, and man page installation.
+Handles installation, updates, version management, man page installation, and shell completions.
 
 | File | Responsibility |
 |------|----------------|
 | `mod.rs` | module exports, `MAN_PAGE` embedded bytes, `MAN_DIR` constant |
 | `paths.rs` | installation path detection and validation |
 | `install.rs` | binary and man page installation logic (`install_binary()`, `install_man_page()`, `uninstall_binary()`, `uninstall_man_page()`) |
-| `update.rs` | update checking and downloading (also refreshes man page) |
+| `completions.rs` | shell completion generation and installation for bash, zsh, fish |
+| `update.rs` | update checking and downloading (also refreshes man page and completions) |
 | `github.rs` | GitHub API client for releases |
 | `rollback.rs` | safe update with automatic rollback (restores man page on rollback) |
 
@@ -335,6 +337,13 @@ Man page installation:
 - Embedded in binary via `include_bytes!`
 - Automatically installed/updated with binary
 - Prompts user to continue if installation fails
+
+Shell completion installation:
+- Supports bash, zsh, and fish shells
+- User locations: `~/.zsh/completions/_cwm`, `~/.bash_completion.d/cwm`, `~/.config/fish/completions/cwm.fish`
+- Generated at runtime using `clap_complete`
+- Automatically refreshed on `cwm update`
+- Removed on `cwm uninstall`
 
 ### version.rs
 
@@ -713,6 +722,7 @@ Integration tests for CLI commands, install, update, and rollback:
 | `tests/integration_tests/test_cli_daemon.rs` | daemon status/stop commands |
 | `tests/integration_tests/test_cli_version.rs` | version command |
 | `tests/integration_tests/test_spotlight.rs` | spotlight install/list/remove/example commands |
+| `tests/integration_tests/test_completions.rs` | shell completion installation for bash, zsh, fish |
 | `tests/integration_tests/test_list.rs` | list apps/displays/aliases with various output formats |
 | `tests/integration_tests/test_install.rs` | fresh install, directory creation, permissions, force overwrite |
 | `tests/integration_tests/test_update.rs` | version checking, download, checksum verification, binary replacement |

@@ -8,6 +8,9 @@ mod common;
 #[path = "integration_tests/test_channels.rs"]
 mod test_channels;
 
+#[path = "integration_tests/test_completions.rs"]
+mod test_completions;
+
 #[path = "integration_tests/test_cli_config.rs"]
 mod test_cli_config;
 

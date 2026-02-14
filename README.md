@@ -41,6 +41,63 @@ man cwm
 
 The man page is installed to `/usr/local/share/man/man1/cwm.1` and is updated automatically when you run `cwm update`.
 
+## Shell Completions
+
+cwm supports tab completion for Bash, Zsh, and Fish shells.
+
+### Automatic Installation
+
+Completions are installed automatically when you run `cwm install`. You'll be prompted to choose your shell.
+
+```bash
+cwm install                      # prompts for completions
+cwm install --completions        # auto-detect shell and install
+cwm install --completions=zsh    # install for specific shell
+cwm install --completions=all    # install for all shells
+cwm install --no-completions     # skip completions
+```
+
+### Manual Installation
+
+If you need to install completions separately (e.g., after building from source):
+
+```bash
+# install completions only (after binary is already installed)
+cwm install --completions-only --completions=zsh
+cwm install --completions-only --completions=bash
+cwm install --completions-only --completions=fish
+cwm install --completions-only --completions=all
+```
+
+### Completion Locations
+
+| Shell | Location |
+|-------|----------|
+| Zsh | `~/.zsh/completions/_cwm` |
+| Bash | `~/.bash_completion.d/cwm` |
+| Fish | `~/.config/fish/completions/cwm.fish` |
+
+### Enabling Completions
+
+After installation, you may need to enable completions in your shell:
+
+**Zsh** - Add to `~/.zshrc`:
+```bash
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit && compinit
+```
+
+**Bash** - Add to `~/.bashrc`:
+```bash
+[ -f ~/.bash_completion.d/cwm ] && source ~/.bash_completion.d/cwm
+```
+
+**Fish** - Completions are auto-loaded. Just open a new terminal.
+
+### Updating Completions
+
+Completions are automatically refreshed when you run `cwm update`. They are also removed when you run `cwm uninstall`.
+
 ## Permissions
 
 cwm requires Accessibility permissions to control windows.
@@ -152,6 +209,10 @@ Install cwm to system PATH.
 cwm install                      # Interactive installation
 cwm install --path ~/.local/bin  # Specific directory
 cwm install --force              # Overwrite existing
+cwm install --completions        # Auto-detect shell and install completions
+cwm install --completions=zsh    # Install completions for specific shell
+cwm install --no-completions     # Skip completion installation
+cwm install --completions-only --completions=zsh  # Only install completions
 ```
 
 ### uninstall

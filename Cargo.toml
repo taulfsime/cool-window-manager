@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 
 # Man page generation (used by generate-man binary)
 clap_mangen = "0.2"

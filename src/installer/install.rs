@@ -158,6 +158,15 @@ pub fn uninstall_binary(target_dir: Option<&Path>) -> Result<()> {
     // remove man page (warn on failure, don't abort)
     uninstall_man_page()?;
 
+    // remove shell completions
+    let removed_completions = crate::installer::completions::uninstall_all();
+    if !removed_completions.is_empty() {
+        println!("✓ Removed shell completions:");
+        for (shell, path) in &removed_completions {
+            println!("  - {}: {}", shell.name(), path.display());
+        }
+    }
+
     // optionally remove version info
     let version_path = dirs::home_dir()
         .map(|h| h.join(".cwm").join("version.json"))

@@ -172,6 +172,38 @@ find_release_url() {
     echo "$ASSET_URL"
 }
 
+# install shell completions
+install_completions() {
+    SHELL_NAME=$(basename "$SHELL")
+    
+    # check if shell is supported
+    case "$SHELL_NAME" in
+        zsh|bash|fish) ;;
+        *)
+            # unsupported shell, skip silently
+            return 0
+            ;;
+    esac
+    
+    echo ""
+    printf "Install shell completions for $SHELL_NAME? [Y/n]: "
+    read -r INSTALL_COMP
+    
+    case "${INSTALL_COMP:-y}" in
+        [Nn]|[Nn][Oo])
+            return 0
+            ;;
+    esac
+    
+    # use cwm to install completions
+    if "$INSTALL_DIR/cwm" install --completions-only --completions="$SHELL_NAME" 2>/dev/null; then
+        : # success message printed by cwm
+    else
+        warn "Failed to install completions automatically"
+        echo "You can install them later with: cwm install --completions-only --completions=$SHELL_NAME"
+    fi
+}
+
 # download and install
 install_cwm() {
     ARCH=$(detect_arch)
@@ -283,6 +315,9 @@ EOF
     echo ""
     info "✓ cwm installed successfully!"
     echo ""
+    
+    # install shell completions
+    install_completions
     
     # check PATH
     if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then

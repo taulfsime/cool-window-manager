@@ -120,6 +120,12 @@ pub enum Command {
         force: bool,
         /// don't use sudo even if needed
         no_sudo: bool,
+        /// install shell completions: None = prompt, Some("auto") = detect, Some("zsh") = specific
+        completions: Option<String>,
+        /// skip shell completion installation
+        no_completions: bool,
+        /// only install completions (skip binary installation)
+        completions_only: bool,
     },
 
     /// uninstall cwm from system
@@ -238,8 +244,12 @@ impl Command {
         match self {
             // record-shortcut without --yes requires user input
             Command::RecordShortcut { yes: false, .. } => true,
-            // install without path requires interactive selection
-            Command::Install { path: None, .. } => true,
+            // install without path requires interactive selection (unless completions_only)
+            Command::Install {
+                path: None,
+                completions_only: false,
+                ..
+            } => true,
             _ => false,
         }
     }
@@ -318,11 +328,14 @@ mod tests {
         }
         .is_interactive());
 
-        // install without path is interactive
+        // install without path is interactive (unless completions_only)
         assert!(Command::Install {
             path: None,
             force: false,
             no_sudo: false,
+            completions: None,
+            no_completions: false,
+            completions_only: false,
         }
         .is_interactive());
 
@@ -331,6 +344,20 @@ mod tests {
             path: Some(PathBuf::from("/usr/local/bin")),
             force: false,
             no_sudo: false,
+            completions: None,
+            no_completions: false,
+            completions_only: false,
+        }
+        .is_interactive());
+
+        // completions_only is not interactive (doesn't need path selection)
+        assert!(!Command::Install {
+            path: None,
+            force: false,
+            no_sudo: false,
+            completions: Some("zsh".to_string()),
+            no_completions: false,
+            completions_only: true,
         }
         .is_interactive());
 

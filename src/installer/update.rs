@@ -279,6 +279,22 @@ pub fn perform_update(release: ReleaseInfo, _force: bool) -> Result<()> {
         eprintln!("⚠️  Failed to update man page: {}", e);
     }
 
+    // refresh shell completions for any installed shells
+    let refreshed = crate::installer::completions::refresh_installed_completions();
+    let success_count = refreshed.iter().filter(|(_, r)| r.is_ok()).count();
+    if success_count > 0 {
+        let names: Vec<_> = refreshed
+            .iter()
+            .filter_map(|(shell, r)| r.as_ref().ok().map(|_| shell.name()))
+            .collect();
+        println!("✓ Updated shell completions: {}", names.join(", "));
+    }
+    for (shell, result) in &refreshed {
+        if let Err(e) = result {
+            eprintln!("⚠️  Failed to update {} completions: {}", shell.name(), e);
+        }
+    }
+
     println!("✓ Successfully updated to {}", release.version);
     Ok(())
 }

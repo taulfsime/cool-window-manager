@@ -191,10 +191,14 @@ impl JsonRpcRequest {
             }
 
             // ==================== Install Commands ====================
+            // note: install via IPC is limited - completions_only is the main use case
             "install" => Ok(Command::Install {
                 path: params.get_optional_string("path")?.map(PathBuf::from),
                 force: params.get_bool_or("force", false),
                 no_sudo: params.get_bool_or("no_sudo", false),
+                completions: params.get_optional_string("completions")?,
+                no_completions: params.get_bool_or("no_completions", false),
+                completions_only: params.get_bool_or("completions_only", false),
             }),
 
             "uninstall" => Ok(Command::Uninstall {
@@ -650,10 +654,37 @@ mod tests {
                 path,
                 force,
                 no_sudo,
+                completions,
+                no_completions,
+                completions_only,
             } => {
                 assert!(path.is_none());
                 assert!(force);
                 assert!(!no_sudo);
+                assert!(completions.is_none());
+                assert!(!no_completions);
+                assert!(!completions_only);
+            }
+            _ => panic!("expected Install command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_install_with_completions() {
+        let req = JsonRpcRequest::parse(
+            r#"{"method":"install","params":{"completions":"zsh","completions_only":true}}"#,
+        )
+        .unwrap();
+        let cmd = req.to_command().unwrap();
+
+        match cmd {
+            Command::Install {
+                completions,
+                completions_only,
+                ..
+            } => {
+                assert_eq!(completions, Some("zsh".to_string()));
+                assert!(completions_only);
             }
             _ => panic!("expected Install command"),
         }

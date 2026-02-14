@@ -1,3 +1,4 @@
+pub mod completions;
 pub mod github;
 pub mod install;
 pub mod paths;

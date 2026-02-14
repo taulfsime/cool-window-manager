@@ -212,6 +212,18 @@ pub enum Commands {
         /// Don't use sudo even if needed
         #[arg(long)]
         no_sudo: bool,
+
+        /// Install shell completions (auto-detect shell, or specify: bash, zsh, fish, all)
+        #[arg(long, value_name = "SHELL", num_args = 0..=1, default_missing_value = "auto")]
+        completions: Option<String>,
+
+        /// Skip shell completion installation (don't prompt)
+        #[arg(long, conflicts_with = "completions")]
+        no_completions: bool,
+
+        /// Only install completions (skip binary installation)
+        #[arg(long, requires = "completions")]
+        completions_only: bool,
     },
 
     /// Uninstall cwm from system
@@ -1210,12 +1222,18 @@ pub fn execute(cli: Cli) -> Result<()> {
             path,
             force,
             no_sudo,
+            completions,
+            no_completions,
+            completions_only,
         } => {
             let config = config::load_with_override(config_path)?;
             let cmd = Command::Install {
                 path,
                 force,
                 no_sudo,
+                completions,
+                no_completions,
+                completions_only,
             };
             let ctx = ExecutionContext::cli_with_config_path(&config, false, config_path);
 
@@ -2067,10 +2085,16 @@ mod tests {
                 path,
                 force,
                 no_sudo,
+                completions,
+                no_completions,
+                completions_only,
             } => {
                 assert!(path.is_none());
                 assert!(!force);
                 assert!(!no_sudo);
+                assert!(completions.is_none());
+                assert!(!no_completions);
+                assert!(!completions_only);
             }
             _ => panic!("Expected Install command"),
         }
@@ -2094,10 +2118,59 @@ mod tests {
                 path,
                 force,
                 no_sudo,
+                ..
             } => {
                 assert_eq!(path, Some(std::path::PathBuf::from("/usr/local/bin")));
                 assert!(force);
                 assert!(no_sudo);
+            }
+            _ => panic!("Expected Install command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_install_with_completions() {
+        use clap::Parser;
+
+        // --completions without value defaults to "auto"
+        let cli = Cli::try_parse_from(["cwm", "install", "--completions"]).unwrap();
+        match cli.command {
+            Commands::Install { completions, .. } => {
+                assert_eq!(completions, Some("auto".to_string()));
+            }
+            _ => panic!("Expected Install command"),
+        }
+
+        // --completions=zsh
+        let cli = Cli::try_parse_from(["cwm", "install", "--completions=zsh"]).unwrap();
+        match cli.command {
+            Commands::Install { completions, .. } => {
+                assert_eq!(completions, Some("zsh".to_string()));
+            }
+            _ => panic!("Expected Install command"),
+        }
+
+        // --completions-only requires --completions
+        let cli =
+            Cli::try_parse_from(["cwm", "install", "--completions-only", "--completions=bash"])
+                .unwrap();
+        match cli.command {
+            Commands::Install {
+                completions,
+                completions_only,
+                ..
+            } => {
+                assert_eq!(completions, Some("bash".to_string()));
+                assert!(completions_only);
+            }
+            _ => panic!("Expected Install command"),
+        }
+
+        // --no-completions
+        let cli = Cli::try_parse_from(["cwm", "install", "--no-completions"]).unwrap();
+        match cli.command {
+            Commands::Install { no_completions, .. } => {
+                assert!(no_completions);
             }
             _ => panic!("Expected Install command"),
         }
