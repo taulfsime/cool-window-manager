@@ -135,9 +135,21 @@
                     <div class="mock-terminal-line">$ cwm</div>
                   </div>
                 </div>
+                <div class="mock-window" data-app="vscode" style="--window-color: #1e1e1e;">
+                  <div class="mock-window-titlebar dark">
+                    <span class="mock-window-buttons"></span>
+                    <span class="mock-window-title">VS Code</span>
+                  </div>
+                  <div class="mock-window-content dark">
+                    <div class="mock-vscode-sidebar"></div>
+                  </div>
+                </div>
               </div>
               <div class="mock-display" data-display="2">
                 <div class="display-label">Display 2</div>
+                <div class="embedded-terminal" id="embedded-terminal">
+                  <div class="embedded-terminal-output" id="embedded-terminal-output"></div>
+                </div>
               </div>
             </div>
             <button class="add-display-btn" id="add-display-btn" title="Add display (max 4)">
@@ -167,6 +179,26 @@
       Made with <span class="heart">♥</span> by <a href="https://github.com/taulfsime" target="_blank" rel="noopener">@taulfsime</a>
     </div>
   </footer>
+
+  <!-- Mobile floating input bar -->
+  <div class="mobile-input-bar" id="mobile-input-bar">
+    <span class="mobile-prompt">$</span>
+    <input 
+      type="text" 
+      id="mobile-input" 
+      class="mobile-input"
+      placeholder="cwm focus --app Safari"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"
+      data-form-type="other"
+      data-lpignore="true"
+      data-1p-ignore="true"
+      aria-label="Mobile terminal input"
+    >
+    <button class="mobile-submit" id="mobile-submit" aria-label="Run command">▶</button>
+  </div>
 
   <!-- Scripts -->
   <script src="js/terminal.js"></script>

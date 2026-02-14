@@ -659,6 +659,14 @@ button {
   left: auto;
 }
 
+.mock-window[data-app="vscode"] {
+  top: 45px;
+  left: 30%;
+  width: 55%;
+  height: 50%;
+  z-index: 5;
+}
+
 /* mock dock */
 .mock-dock {
   height: 40px;
@@ -799,27 +807,232 @@ button {
   }
 }
 
+/* Mobile floating input bar - hidden on desktop */
+.mobile-input-bar {
+  display: none;
+}
+
+/* Embedded terminal - hidden on desktop */
+.embedded-terminal {
+  display: none;
+}
+
 @media (max-width: 640px) {
+  /* Hide separate terminal pane on mobile */
+  .terminal-pane {
+    display: none;
+  }
+  
+  /* Compact header */
   .header {
     padding: var(--spacing-sm) var(--spacing-md);
   }
   
+  .tagline {
+    display: none;
+  }
+  
+  /* Main layout adjustments */
   .main {
-    padding: var(--spacing-md);
-  }
-  
-  .footer {
-    flex-direction: column;
+    grid-template-columns: 1fr;
+    padding: var(--spacing-sm);
+    padding-bottom: 70px; /* space for floating input */
     gap: var(--spacing-sm);
-    text-align: center;
   }
   
+  /* Preview takes full space */
+  .preview-pane {
+    width: 100%;
+  }
+  
+  .window-frame {
+    min-height: 0;
+    max-height: none;
+    height: calc(100vh - 120px); /* header + floating input + padding */
+  }
+  
+  /* Display grid: apps on top (larger), terminal below (smaller) */
   .mock-displays {
-    flex-direction: column;
+    grid-template-columns: 1fr;
+    grid-template-rows: 1.5fr 1fr;
+  }
+  
+  /* Override multi-display layouts for mobile */
+  .mock-displays[data-count="2"],
+  .mock-displays[data-count="3"],
+  .mock-displays[data-count="4"] {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1.5fr 1fr;
+  }
+  
+  .mock-displays[data-count="3"] .mock-display[data-display="3"],
+  .mock-displays[data-count="4"] .mock-display[data-display="3"],
+  .mock-displays[data-count="4"] .mock-display[data-display="4"] {
+    display: none;
+  }
+  
+  .mock-displays[data-count="3"] .mock-display[data-display="1"],
+  .mock-displays[data-count="3"] .mock-display[data-display="2"],
+  .mock-displays[data-count="4"] .mock-display[data-display="1"],
+  .mock-displays[data-count="4"] .mock-display[data-display="2"] {
+    grid-column: 1;
   }
   
   .mock-display {
-    min-height: 150px;
+    min-height: 100px;
+  }
+  
+  /* Show embedded terminal on mobile */
+  .embedded-terminal {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
+    top: 28px;
+    left: 4px;
+    right: 4px;
+    bottom: 4px;
+    background: #1a1a1a;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  
+  .embedded-terminal-output {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-sm);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-primary);
+  }
+  
+  .embedded-terminal-output .terminal-line {
+    margin-bottom: 2px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  
+  .embedded-terminal-output .terminal-line.command {
+    color: var(--text-command);
+  }
+  
+  .embedded-terminal-output .terminal-line.success {
+    color: var(--text-success);
+  }
+  
+  .embedded-terminal-output .terminal-line.error {
+    color: var(--text-error);
+  }
+  
+  .embedded-terminal-output .terminal-line.info {
+    color: var(--text-secondary);
+  }
+  
+  .embedded-terminal-output .terminal-line.highlight {
+    color: var(--accent-secondary);
+    font-weight: 600;
+  }
+  
+  /* Floating input bar */
+  .mobile-input-bar {
+    display: flex;
+    align-items: center;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--chrome-border);
+    padding: var(--spacing-sm) var(--spacing-md);
+    gap: var(--spacing-sm);
+    z-index: 1000;
+  }
+  
+  .mobile-prompt {
+    color: var(--accent-primary);
+    font-family: var(--font-mono);
+    font-weight: bold;
+    font-size: var(--font-size-md);
+  }
+  
+  .mobile-input {
+    flex: 1;
+    background: var(--bg-input);
+    border: 1px solid var(--chrome-border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    min-width: 0; /* allow shrinking */
+  }
+  
+  .mobile-input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+  }
+  
+  .mobile-input::placeholder {
+    color: var(--text-dim);
+  }
+  
+  .mobile-submit {
+    width: 44px;
+    height: 44px;
+    background: var(--accent-primary);
+    color: white;
+    border-radius: var(--radius-sm);
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  
+  .mobile-submit:active {
+    background: var(--accent-secondary);
+  }
+  
+  /* Hide add display button on mobile */
+  .add-display-btn {
+    display: none;
+  }
+  
+  /* Hide footer on mobile to save space */
+  .footer {
+    display: none;
+  }
+  
+  /* Smaller mock windows on mobile */
+  .mock-window {
+    min-width: 60px;
+    min-height: 45px;
+  }
+  
+  .mock-window-titlebar {
+    height: 18px;
+    padding: 0 var(--spacing-xs);
+  }
+  
+  .mock-window-title {
+    font-size: 9px;
+  }
+  
+  .mock-window-buttons::before {
+    font-size: 6px;
+    letter-spacing: 1px;
+  }
+  
+  /* Smaller dock on mobile */
+  .mock-dock {
+    height: 32px;
+    margin: var(--spacing-xs);
+    padding: 0 var(--spacing-sm);
+  }
+  
+  .dock-item {
+    width: 22px;
+    height: 22px;
   }
 }
 

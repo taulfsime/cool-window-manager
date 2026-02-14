@@ -22,6 +22,13 @@ const Commands = (function() {
 
   // execute a command string
   function execute(input) {
+    // check for pipe/chain commands first
+    if ((input.includes('|') || input.includes('&&')) && input.startsWith('cwm')) {
+      if (handlePipeCommand(input)) {
+        return;
+      }
+    }
+    
     const parts = input.trim().split(/\s+/);
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1);
@@ -53,7 +60,7 @@ const Commands = (function() {
       ['cwm --help', 'Show cwm usage'],
       ['cwm focus --help', 'Focus command help'],
       ['cwm maximize --help', 'Maximize command help'],
-      ['cwm move-display --help', 'Move-display command help'],
+      ['cwm move --help', 'Move command help'],
       ['cwm resize --help', 'Resize command help']
     ];
 
@@ -132,11 +139,12 @@ const Commands = (function() {
       ['Regex matching', '"/chrome|safari/i" matches browsers'],
       ['Match by window title', 'Focus Chrome tab by title'],
       ['Maximize windows', 'cwm maximize'],
-      ['Move between displays', 'cwm move-display next'],
-      ['Resize to percentage', 'cwm resize 75'],
+      ['Move between displays', 'cwm move --display next'],
+      ['Resize to percentage', 'cwm resize --to 75'],
       ['Global hotkeys', 'Ctrl+Alt+S to focus Slack'],
       ['App launch rules', 'Auto-maximize Terminal on launch'],
       ['Spotlight integration', 'Search "cwm: Focus Safari"'],
+      ['Scripting support', 'cwm list apps --names | fzf'],
       ['Auto-updates', 'Stay up to date automatically']
     ];
 
@@ -225,11 +233,17 @@ const Commands = (function() {
       case 'maximize':
         cmdCwmMaximize(subArgs);
         break;
-      case 'move-display':
-        cmdCwmMoveDisplay(subArgs);
+      case 'move':
+        cmdCwmMove(subArgs);
         break;
       case 'resize':
         cmdCwmResize(subArgs);
+        break;
+      case 'list':
+        cmdCwmList(subArgs);
+        break;
+      case 'get':
+        cmdCwmGet(subArgs);
         break;
       case 'version':
         cmdVersion();
@@ -249,10 +263,10 @@ const Commands = (function() {
     Terminal.writeLine('Commands:');
     Terminal.writeLine('  focus          Focus an application window');
     Terminal.writeLine('  maximize       Maximize a window');
-    Terminal.writeLine('  move-display   Move window to another display');
-    Terminal.writeLine('  resize         Resize window to percentage');
-    Terminal.writeLine('  list-apps      List running applications');
-    Terminal.writeLine('  list-displays  List available displays');
+    Terminal.writeLine('  move           Move window to position/display');
+    Terminal.writeLine('  resize         Resize window to target size');
+    Terminal.writeLine('  list           List apps, displays, or aliases');
+    Terminal.writeLine('  get            Get window information');
     Terminal.writeLine('  daemon         Manage background daemon');
     Terminal.writeLine('  config         Manage configuration');
     Terminal.writeLine('  install        Install cwm to PATH');
@@ -316,9 +330,10 @@ const Commands = (function() {
     }
 
     const appName = args[appIndex + 1];
+    const isQuiet = args.includes('--quiet') || args.includes('-q');
     
-    // simulated app list for demo
-    const demoApps = ['Safari', 'Google Chrome', 'Terminal', 'Slack', 'Mail', 'Finder', 'VS Code'];
+    // simulated app list for demo (matches actual preview windows)
+    const demoApps = ['Safari', 'Mail', 'Terminal', 'VS Code'];
     
     // determine match type for display
     const inputLower = appName.toLowerCase();
@@ -365,13 +380,15 @@ const Commands = (function() {
     }
     
     // simulate focus action
-    Terminal.writeLine('');
-    if (matchType) {
-      Terminal.writeLine(`✓ Focused: ${matchedApp} (${matchType})`, 'success');
-    } else {
-      Terminal.writeLine(`✓ Focused: ${appName}`, 'success');
+    if (!isQuiet) {
+      Terminal.writeLine('');
+      if (matchType) {
+        Terminal.writeLine(`✓ Focused: ${matchedApp} (${matchType})`, 'success');
+      } else {
+        Terminal.writeLine(`✓ Focused: ${appName}`, 'success');
+      }
+      Terminal.writeLine('');
     }
-    Terminal.writeLine('');
 
     // trigger preview animation
     if (typeof Preview !== 'undefined') {
@@ -415,47 +432,62 @@ const Commands = (function() {
     }
   }
 
-  function cmdCwmMoveDisplay(args) {
+  function cmdCwmMove(args) {
     if (args.includes('--help') || args.includes('-h')) {
       Terminal.writeLine('');
-      Terminal.writeLine('cwm move-display - Move window to another display', 'highlight');
+      Terminal.writeLine('cwm move - Move window to position and/or display', 'highlight');
       Terminal.writeLine('');
-      Terminal.writeLine('Usage: cwm move-display <target> [--app <name>]');
+      Terminal.writeLine('Usage: cwm move [--to <pos>] [--display <target>] [--app <name>]');
       Terminal.writeLine('');
-      Terminal.writeLine('Targets:');
-      Terminal.writeLine('  next      Move to next display');
-      Terminal.writeLine('  prev      Move to previous display');
-      Terminal.writeLine('  <index>   Move to display by index (0-based)');
-      Terminal.writeLine('  <alias>   Move to display by alias');
+      Terminal.writeLine('Position (--to):');
+      Terminal.writeLine('  top-left, top, top-right, left, center, right...');
+      Terminal.writeLine('  50%,25%        Percentage of screen');
+      Terminal.writeLine('  100,200        Absolute coordinates');
       Terminal.writeLine('');
-      Terminal.writeLine('Built-in aliases:');
-      Terminal.writeLine('  builtin   Built-in display (MacBook screen)');
-      Terminal.writeLine('  external  Any external monitor');
-      Terminal.writeLine('  main      Primary display');
+      Terminal.writeLine('Display (--display):');
+      Terminal.writeLine('  next           Move to next display');
+      Terminal.writeLine('  prev           Move to previous display');
+      Terminal.writeLine('  <index>        Move to display by index');
+      Terminal.writeLine('  external       Any external monitor');
       Terminal.writeLine('');
       Terminal.writeLine('Examples:');
-      Terminal.writeLine('  cwm move-display next');
-      Terminal.writeLine('  cwm move-display external --app Safari');
+      Terminal.writeLine('  cwm move --display next');
+      Terminal.writeLine('  cwm move --to top-left --display external');
+      Terminal.writeLine('  cwm move --to 50%,50% --app Safari');
       Terminal.writeLine('');
       return;
     }
 
-    if (args.length === 0) {
-      Terminal.writeLine('Error: display target required', 'error');
-      Terminal.writeLine("Usage: cwm move-display <next|prev|index>", 'info');
-      return;
-    }
-
-    const target = args[0];
+    // parse --display argument
+    const displayIndex = args.findIndex(a => a === '--display' || a === '-d');
+    const target = displayIndex !== -1 ? args[displayIndex + 1] : null;
+    
+    // parse --to argument
+    const toIndex = args.findIndex(a => a === '--to' || a === '-t');
+    const position = toIndex !== -1 ? args[toIndex + 1] : null;
+    
+    // parse --app argument
     const appIndex = args.findIndex(a => a === '--app' || a === '-a');
     const appName = appIndex !== -1 ? args[appIndex + 1] : null;
 
+    if (!target && !position) {
+      Terminal.writeLine('Error: --to or --display required', 'error');
+      Terminal.writeLine("Usage: cwm move [--to <pos>] [--display <target>]", 'info');
+      return;
+    }
+
     Terminal.writeLine('');
-    Terminal.writeLine(`✓ Moved to display: ${target}`, 'success');
+    if (target && position) {
+      Terminal.writeLine(`✓ Moved to ${position} on display: ${target}`, 'success');
+    } else if (target) {
+      Terminal.writeLine(`✓ Moved to display: ${target}`, 'success');
+    } else {
+      Terminal.writeLine(`✓ Moved to position: ${position}`, 'success');
+    }
     Terminal.writeLine('');
 
-    // trigger preview animation
-    if (typeof Preview !== 'undefined') {
+    // trigger preview animation (only for display moves)
+    if (typeof Preview !== 'undefined' && target) {
       Preview.moveDisplay(target, appName?.toLowerCase());
     }
   }
@@ -463,36 +495,45 @@ const Commands = (function() {
   function cmdCwmResize(args) {
     if (args.includes('--help') || args.includes('-h')) {
       Terminal.writeLine('');
-      Terminal.writeLine('cwm resize - Resize window to percentage', 'highlight');
+      Terminal.writeLine('cwm resize - Resize window to target size', 'highlight');
       Terminal.writeLine('');
-      Terminal.writeLine('Usage: cwm resize <size> [--app <name>]');
+      Terminal.writeLine('Usage: cwm resize --to <size> [--app <name>]');
       Terminal.writeLine('');
-      Terminal.writeLine('Size:');
-      Terminal.writeLine('  <1-100>   Percentage of screen');
-      Terminal.writeLine('  full      100% (same as maximize)');
+      Terminal.writeLine('Size (--to):');
+      Terminal.writeLine('  75, 80%        Percentage of screen');
+      Terminal.writeLine('  1920px         Width in pixels');
+      Terminal.writeLine('  1920x1080px    Width and height in pixels');
+      Terminal.writeLine('  800pt          Width in points');
+      Terminal.writeLine('  full           100% (same as maximize)');
       Terminal.writeLine('');
       Terminal.writeLine('Options:');
       Terminal.writeLine('  --app, -a <name>  Target app (uses focused if omitted)');
       Terminal.writeLine('');
       Terminal.writeLine('Examples:');
-      Terminal.writeLine('  cwm resize 75');
-      Terminal.writeLine('  cwm resize full --app Safari');
+      Terminal.writeLine('  cwm resize --to 75');
+      Terminal.writeLine('  cwm resize --to 1920x1080px --app Safari');
       Terminal.writeLine('');
       return;
     }
 
-    if (args.length === 0) {
-      Terminal.writeLine('Error: size argument required', 'error');
-      Terminal.writeLine("Usage: cwm resize <percentage|full>", 'info');
+    // parse --to argument
+    const toIndex = args.findIndex(a => a === '--to' || a === '-t');
+    if (toIndex === -1 || !args[toIndex + 1]) {
+      Terminal.writeLine('Error: --to argument required', 'error');
+      Terminal.writeLine("Usage: cwm resize --to <size>", 'info');
       return;
     }
 
-    const size = args[0];
+    const size = args[toIndex + 1];
     const appIndex = args.findIndex(a => a === '--app' || a === '-a');
     const appName = appIndex !== -1 ? args[appIndex + 1] : null;
 
     Terminal.writeLine('');
-    Terminal.writeLine(`✓ Resized to ${size}%`, 'success');
+    if (size.includes('px') || size.includes('pt')) {
+      Terminal.writeLine(`✓ Resized to ${size}`, 'success');
+    } else {
+      Terminal.writeLine(`✓ Resized to ${size}%`, 'success');
+    }
     Terminal.writeLine('');
 
     // trigger preview animation
@@ -500,6 +541,231 @@ const Commands = (function() {
       const percent = size === 'full' ? 100 : parseInt(size, 10);
       Preview.resize(percent, appName?.toLowerCase());
     }
+  }
+
+  function cmdCwmList(args) {
+    if (args.includes('--help') || args.includes('-h')) {
+      Terminal.writeLine('');
+      Terminal.writeLine('cwm list - List resources', 'highlight');
+      Terminal.writeLine('');
+      Terminal.writeLine('Usage: cwm list <resource> [options]');
+      Terminal.writeLine('');
+      Terminal.writeLine('Resources:');
+      Terminal.writeLine('  apps       List running applications');
+      Terminal.writeLine('  displays   List available displays');
+      Terminal.writeLine('  aliases    List display aliases');
+      Terminal.writeLine('');
+      Terminal.writeLine('Options:');
+      Terminal.writeLine('  --json           Output as JSON');
+      Terminal.writeLine('  --names          One name per line (for piping)');
+      Terminal.writeLine('  --format <fmt>   Custom format string');
+      Terminal.writeLine('  --detailed       Include additional fields');
+      Terminal.writeLine('');
+      Terminal.writeLine('Examples:');
+      Terminal.writeLine('  cwm list apps --names');
+      Terminal.writeLine('  cwm list apps --names | fzf | xargs cwm focus --app');
+      Terminal.writeLine("  cwm list apps --format '{name} ({pid})'");
+      Terminal.writeLine('  cwm list displays --json');
+      Terminal.writeLine('');
+      return;
+    }
+
+    const resource = args[0];
+    
+    if (!resource) {
+      Terminal.writeLine('');
+      Terminal.writeLine('Available resources: apps, displays, aliases', 'info');
+      Terminal.writeLine("Run 'cwm list <resource> --help' for details", 'info');
+      Terminal.writeLine('');
+      return;
+    }
+
+    const hasNames = args.includes('--names');
+    const hasJson = args.includes('--json');
+    const formatIndex = args.findIndex(a => a === '--format');
+    const formatStr = formatIndex !== -1 ? args[formatIndex + 1] : null;
+
+    Terminal.writeLine('');
+
+    if (resource === 'apps') {
+      if (hasNames) {
+        Terminal.writeLine('Safari');
+        Terminal.writeLine('Mail');
+        Terminal.writeLine('Terminal');
+        Terminal.writeLine('VS Code');
+      } else if (hasJson) {
+        Terminal.writeLine('{"jsonrpc":"2.0","result":{"items":[', 'output');
+        Terminal.writeLine('  {"name":"Safari","pid":1234},', 'output');
+        Terminal.writeLine('  {"name":"Mail","pid":5678},', 'output');
+        Terminal.writeLine('  {"name":"Terminal","pid":9012},', 'output');
+        Terminal.writeLine('  {"name":"VS Code","pid":3456}', 'output');
+        Terminal.writeLine(']},"id":null}', 'output');
+      } else if (formatStr) {
+        // simulate format string output
+        Terminal.writeLine('Safari (1234)');
+        Terminal.writeLine('Mail (5678)');
+        Terminal.writeLine('Terminal (9012)');
+        Terminal.writeLine('VS Code (3456)');
+      } else {
+        Terminal.writeLine('Running Applications:', 'highlight');
+        Terminal.writeLine('  Safari      (PID: 1234)');
+        Terminal.writeLine('  Mail        (PID: 5678)');
+        Terminal.writeLine('  Terminal    (PID: 9012)');
+        Terminal.writeLine('  VS Code     (PID: 3456)');
+      }
+    } else if (resource === 'displays') {
+      if (hasNames) {
+        Terminal.writeLine('Built-in Retina Display');
+        Terminal.writeLine('LG UltraFine');
+      } else if (hasJson) {
+        Terminal.writeLine('{"jsonrpc":"2.0","result":{"items":[', 'output');
+        Terminal.writeLine('  {"index":0,"name":"Built-in Retina Display"},', 'output');
+        Terminal.writeLine('  {"index":1,"name":"LG UltraFine"}', 'output');
+        Terminal.writeLine(']},"id":null}', 'output');
+      } else {
+        Terminal.writeLine('Available Displays:', 'highlight');
+        Terminal.writeLine('  0: Built-in Retina Display (2560x1600)');
+        Terminal.writeLine('  1: LG UltraFine (3840x2160)');
+      }
+    } else if (resource === 'aliases') {
+      Terminal.writeLine('Display Aliases:', 'highlight');
+      Terminal.writeLine('  builtin    → Built-in display');
+      Terminal.writeLine('  external   → External monitors');
+      Terminal.writeLine('  main       → Primary display');
+    } else {
+      Terminal.writeLine(`Unknown resource: ${resource}`, 'error');
+      Terminal.writeLine('Available: apps, displays, aliases', 'info');
+    }
+
+    Terminal.writeLine('');
+  }
+
+  function cmdCwmGet(args) {
+    if (args.includes('--help') || args.includes('-h')) {
+      Terminal.writeLine('');
+      Terminal.writeLine('cwm get - Get window information', 'highlight');
+      Terminal.writeLine('');
+      Terminal.writeLine('Usage: cwm get <target> [options]');
+      Terminal.writeLine('');
+      Terminal.writeLine('Targets:');
+      Terminal.writeLine('  focused    Get info about focused window');
+      Terminal.writeLine('  window     Get info about specific app window');
+      Terminal.writeLine('');
+      Terminal.writeLine('Options:');
+      Terminal.writeLine('  --app <name>     Target app (for window)');
+      Terminal.writeLine('  --json           Output as JSON');
+      Terminal.writeLine('  --format <fmt>   Custom format string');
+      Terminal.writeLine('');
+      Terminal.writeLine('Examples:');
+      Terminal.writeLine('  cwm get focused');
+      Terminal.writeLine('  cwm get focused --json | jq .result.app.name');
+      Terminal.writeLine("  cwm get focused --format '{app.name}: {window.width}x{window.height}'");
+      Terminal.writeLine('  cwm get window --app Safari');
+      Terminal.writeLine('');
+      return;
+    }
+
+    const target = args[0];
+    const hasJson = args.includes('--json');
+    const formatIndex = args.findIndex(a => a === '--format');
+    const formatStr = formatIndex !== -1 ? args[formatIndex + 1] : null;
+
+    Terminal.writeLine('');
+
+    if (target === 'focused') {
+      if (hasJson) {
+        Terminal.writeLine('{"jsonrpc":"2.0","result":{', 'output');
+        Terminal.writeLine('  "app":{"name":"Safari","pid":1234},', 'output');
+        Terminal.writeLine('  "window":{"x":100,"y":50,"width":1200,"height":800}', 'output');
+        Terminal.writeLine('},"id":null}', 'output');
+      } else if (formatStr) {
+        Terminal.writeLine('Safari: 1200x800');
+      } else {
+        Terminal.writeLine('Focused Window:', 'highlight');
+        Terminal.writeLine('  App: Safari (PID: 1234)');
+        Terminal.writeLine('  Position: 100, 50');
+        Terminal.writeLine('  Size: 1200 x 800');
+      }
+    } else if (target === 'window') {
+      const appIndex = args.findIndex(a => a === '--app' || a === '-a');
+      const appName = appIndex !== -1 ? args[appIndex + 1] : 'Safari';
+      
+      Terminal.writeLine(`Window Info: ${appName}`, 'highlight');
+      Terminal.writeLine('  Position: 100, 50');
+      Terminal.writeLine('  Size: 1200 x 800');
+      Terminal.writeLine('  Display: 0 (Built-in)');
+    } else {
+      Terminal.writeLine('Error: target required (focused or window)', 'error');
+    }
+
+    Terminal.writeLine('');
+  }
+
+  // simulated pipe command handler
+  function handlePipeCommand(input) {
+    // detect pipe patterns and simulate output
+    if (input.includes('|')) {
+      const parts = input.split('|').map(p => p.trim());
+      
+      // cwm list apps --names | fzf | xargs cwm focus --app
+      if (parts[0].includes('list apps --names') && input.includes('fzf')) {
+        Terminal.writeLine('');
+        Terminal.writeLine('# (simulated fzf selection)', 'info');
+        Terminal.writeLine('> Safari', 'output');
+        Terminal.writeLine('✓ Focused: Safari', 'success');
+        Terminal.writeLine('');
+        if (typeof Preview !== 'undefined') {
+          Preview.focus('safari');
+        }
+        return true;
+      }
+      
+      // cwm get focused --json | jq .result.app.name
+      if (parts[0].includes('get focused --json') && input.includes('jq')) {
+        Terminal.writeLine('');
+        Terminal.writeLine('"Safari"', 'output');
+        Terminal.writeLine('');
+        return true;
+      }
+    }
+    
+    // cwm focus --app X && echo/cwm command
+    if (input.includes('&&')) {
+      const parts = input.split('&&').map(p => p.trim());
+      
+      if (parts[0].includes('cwm focus')) {
+        // extract app name
+        const match = parts[0].match(/--app\s+(\S+)/);
+        const appName = match ? match[1] : 'Safari';
+        
+        Terminal.writeLine('');
+        Terminal.writeLine(`✓ Focused: ${appName}`, 'success');
+        
+        if (typeof Preview !== 'undefined') {
+          Preview.focus(appName.toLowerCase());
+        }
+        
+        // handle second command
+        if (parts[1].includes('echo')) {
+          const echoMatch = parts[1].match(/echo\s+"?([^"]+)"?/);
+          if (echoMatch) {
+            Terminal.writeLine(echoMatch[1], 'output');
+          } else {
+            Terminal.writeLine('Focused!', 'output');
+          }
+        } else if (parts[1].includes('cwm maximize')) {
+          Terminal.writeLine('✓ Window maximized', 'success');
+          if (typeof Preview !== 'undefined') {
+            Preview.maximize();
+          }
+        }
+        
+        Terminal.writeLine('');
+        return true;
+      }
+    }
+    
+    return false;
   }
 
   // utility

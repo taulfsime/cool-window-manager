@@ -7,12 +7,35 @@ const Terminal = (function() {
   let outputEl = null;
   let inputEl = null;
   let terminalEl = null;
+  let mobileInputEl = null;
+  let embeddedOutputEl = null;
 
   // state
   let history = [];
   let historyIndex = -1;
   let isLocked = false;
   let soundEnabled = false;
+
+  // check if on mobile
+  function isMobile() {
+    return window.matchMedia('(max-width: 640px)').matches;
+  }
+
+  // get the current output element (embedded on mobile, regular on desktop)
+  function getOutputEl() {
+    if (isMobile() && embeddedOutputEl) {
+      return embeddedOutputEl;
+    }
+    return outputEl;
+  }
+
+  // get the current input element (mobile input on mobile, regular on desktop)
+  function getInputEl() {
+    if (isMobile() && mobileInputEl) {
+      return mobileInputEl;
+    }
+    return inputEl;
+  }
 
   // sound effects (base64 encoded short clicks)
   const sounds = {
@@ -66,16 +89,28 @@ const Terminal = (function() {
     outputEl = document.getElementById('terminal-output');
     inputEl = document.getElementById('terminal-input');
     terminalEl = document.getElementById('terminal');
+    mobileInputEl = document.getElementById('mobile-input');
+    embeddedOutputEl = document.getElementById('embedded-terminal-output');
 
     if (!outputEl || !inputEl || !terminalEl) {
       console.error('Terminal elements not found');
       return;
     }
 
-    // event listeners
+    // event listeners for desktop input
     inputEl.addEventListener('keydown', handleKeyDown);
     inputEl.addEventListener('input', handleInput);
     terminalEl.addEventListener('click', focusInput);
+
+    // event listeners for mobile input
+    if (mobileInputEl) {
+      mobileInputEl.addEventListener('keydown', handleMobileKeyDown);
+      
+      const mobileSubmit = document.getElementById('mobile-submit');
+      if (mobileSubmit) {
+        mobileSubmit.addEventListener('click', handleMobileSubmit);
+      }
+    }
 
     // sound toggle
     const soundToggle = document.getElementById('sound-toggle');
@@ -89,6 +124,28 @@ const Terminal = (function() {
 
     // focus input
     focusInput();
+  }
+
+  function handleMobileKeyDown(e) {
+    if (isLocked) {
+      e.preventDefault();
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleMobileSubmit();
+    }
+  }
+
+  function handleMobileSubmit() {
+    if (!mobileInputEl) return;
+    
+    const value = mobileInputEl.value.trim();
+    if (value) {
+      executeCommand(value);
+      mobileInputEl.value = '';
+    }
   }
 
   function handleKeyDown(e) {
@@ -152,7 +209,8 @@ const Terminal = (function() {
   }
 
   function focusInput() {
-    inputEl.focus();
+    const target = getInputEl();
+    if (target) target.focus();
   }
 
   function navigateHistory(direction) {
@@ -172,12 +230,14 @@ const Terminal = (function() {
   }
 
   function autocomplete() {
-    const input = inputEl.value.trim();
+    const currentInput = getInputEl();
+    const input = currentInput.value.trim();
     if (!input) return;
 
     // simple autocomplete for cwm commands
     const commands = ['help', 'install', 'demo', 'features', 'why', 'github', 'clear', 'cwm'];
-    const cwmSubcommands = ['focus', 'maximize', 'move-display', 'resize', '--help'];
+    const cwmSubcommands = ['focus', 'maximize', 'move', 'resize', 'list', 'get', '--help'];
+    const cwmFlags = ['--app', '--to', '--display', '--json', '--names', '--format', '--help'];
 
     const parts = input.split(/\s+/);
     const lastPart = parts[parts.length - 1].toLowerCase();
@@ -187,12 +247,16 @@ const Terminal = (function() {
     if (parts.length === 1) {
       matches = commands.filter(c => c.startsWith(lastPart));
     } else if (parts[0] === 'cwm') {
-      matches = cwmSubcommands.filter(c => c.startsWith(lastPart));
+      if (parts.length === 2) {
+        matches = cwmSubcommands.filter(c => c.startsWith(lastPart));
+      } else if (lastPart.startsWith('-')) {
+        matches = cwmFlags.filter(c => c.startsWith(lastPart));
+      }
     }
 
     if (matches.length === 1) {
       parts[parts.length - 1] = matches[0];
-      inputEl.value = parts.join(' ');
+      currentInput.value = parts.join(' ');
     } else if (matches.length > 1) {
       // show possible completions
       writeLine(`  ${matches.join('  ')}`, 'info');
@@ -234,10 +298,13 @@ const Terminal = (function() {
 
   // output methods
   function writeCommand(cmd) {
+    const target = getOutputEl();
+    if (!target) return;
+    
     const line = document.createElement('div');
     line.className = 'terminal-line command';
     line.innerHTML = formatCommand(cmd);
-    outputEl.appendChild(line);
+    target.appendChild(line);
     scrollToBottom();
   }
 
@@ -260,18 +327,24 @@ const Terminal = (function() {
   }
 
   function writeLine(text, className = 'output') {
+    const target = getOutputEl();
+    if (!target) return;
+    
     const line = document.createElement('div');
     line.className = `terminal-line ${className}`;
     line.textContent = text;
-    outputEl.appendChild(line);
+    target.appendChild(line);
     scrollToBottom();
   }
 
   function writeHtml(html, className = 'output') {
+    const target = getOutputEl();
+    if (!target) return;
+    
     const line = document.createElement('div');
     line.className = `terminal-line ${className}`;
     line.innerHTML = html;
-    outputEl.appendChild(line);
+    target.appendChild(line);
     scrollToBottom();
   }
 
@@ -282,25 +355,31 @@ const Terminal = (function() {
   }
 
   function clear() {
-    outputEl.innerHTML = '';
+    if (outputEl) outputEl.innerHTML = '';
+    if (embeddedOutputEl) embeddedOutputEl.innerHTML = '';
   }
 
   function scrollToBottom() {
     // scroll output container to bottom
+    const target = getOutputEl();
+    if (!target) return;
+    
     requestAnimationFrame(() => {
-      outputEl.scrollTop = outputEl.scrollHeight;
+      target.scrollTop = target.scrollHeight;
     });
   }
 
   // lock/unlock for demo mode
   function lock() {
     isLocked = true;
-    inputEl.disabled = true;
+    if (inputEl) inputEl.disabled = true;
+    if (mobileInputEl) mobileInputEl.disabled = true;
   }
 
   function unlock() {
     isLocked = false;
-    inputEl.disabled = false;
+    if (inputEl) inputEl.disabled = false;
+    if (mobileInputEl) mobileInputEl.disabled = false;
     focusInput();
   }
 

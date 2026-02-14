@@ -16,7 +16,7 @@ const Preview = (function() {
   const initialPositions = {
     safari: { top: 8, left: 5, width: 50, height: 45, display: 1 },
     mail: { top: 15, left: 20, width: 45, height: 40, display: 1 },
-    vscode: { top: 25, left: 35, width: 50, height: 50, display: 1 },
+    vscode: { top: 20, left: 30, width: 55, height: 50, display: 1 },
     terminal: { top: 50, left: 45, width: 45, height: 35, display: 1 }
   };
 
@@ -174,8 +174,22 @@ const Preview = (function() {
     win.element.classList.add('maximized');
   }
 
+  // check if on mobile
+  function isMobile() {
+    return window.matchMedia('(max-width: 640px)').matches;
+  }
+
   // move window to another display
   function moveDisplay(target, app) {
+    // on mobile, skip display moves (Display 2 is the terminal)
+    if (isMobile()) {
+      // just focus the window instead
+      if (app) {
+        focus(app);
+      }
+      return;
+    }
+
     // use focused app if not specified
     if (!app) {
       app = focusedApp;
@@ -345,21 +359,31 @@ const Preview = (function() {
     
     // common aliases and fuzzy matches
     const aliases = {
+      // browser aliases
       'chrome': 'safari',
       'browser': 'safari',
       'web': 'safari',
       'safri': 'safari',
       'safarri': 'safari',
       'saffari': 'safari',
+      // terminal aliases
       'term': 'terminal',
       'iterm': 'terminal',
       'console': 'terminal',
+      'shell': 'terminal',
       'termnial': 'terminal',
       'terminl': 'terminal',
+      // mail aliases
       'email': 'mail',
       'outlook': 'mail',
       'mai': 'mail',
-      'maill': 'mail'
+      'maill': 'mail',
+      // vscode aliases
+      'code': 'vscode',
+      'vs': 'vscode',
+      'vscode': 'vscode',
+      'editor': 'vscode',
+      'visual': 'vscode'
     };
     
     if (aliases[input]) return aliases[input];
