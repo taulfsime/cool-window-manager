@@ -130,27 +130,10 @@ pub enum Commands {
         verbose: bool,
     },
 
-    /// Record a keyboard shortcut
-    RecordShortcut {
-        /// Action to bind (focus, maximize, move_display:next, etc.)
-        #[arg(long)]
-        action: Option<String>,
-
-        /// Target app name
-        #[arg(long)]
-        app: Option<String>,
-
-        /// Set launch_if_not_running to true
-        #[arg(long, conflicts_with = "no_launch")]
-        launch: bool,
-
-        /// Set launch_if_not_running to false
-        #[arg(long, conflicts_with = "launch")]
-        no_launch: bool,
-
-        /// Skip confirmation prompt
-        #[arg(short, long)]
-        yes: bool,
+    /// Record keyboard shortcuts or window layouts
+    Record {
+        #[command(subcommand)]
+        command: RecordCommands,
     },
 
     /// Daemon management
@@ -363,6 +346,43 @@ pub enum GetCommands {
         /// Custom output format using {field} placeholders
         #[arg(long)]
         format: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RecordCommands {
+    /// Record a keyboard shortcut
+    Shortcut {
+        /// Action to bind (focus, maximize, move_display:next, etc.)
+        #[arg(long)]
+        action: Option<String>,
+
+        /// Target app name
+        #[arg(long)]
+        app: Option<String>,
+
+        /// Set launch_if_not_running to true
+        #[arg(long, conflicts_with = "no_launch")]
+        launch: bool,
+
+        /// Set launch_if_not_running to false
+        #[arg(long, conflicts_with = "launch")]
+        no_launch: bool,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Record current window layout for selected apps
+    Layout {
+        /// Target app name(s) to record (can be specified multiple times)
+        #[arg(short, long, action = clap::ArgAction::Append)]
+        app: Vec<String>,
+
+        /// Only record windows on this display (index, alias, or unique ID)
+        #[arg(short = 'd', long)]
+        display: Option<String>,
     },
 }
 
@@ -647,105 +667,117 @@ pub fn execute(cli: Cli) -> Result<()> {
             }
         }
 
-        Commands::RecordShortcut {
-            action,
-            app,
-            launch,
-            no_launch,
-            yes,
-        } => {
-            // record the hotkey
-            let keys = hotkeys::record_hotkey()?;
-            println!("\nDetected: {}", keys);
+        Commands::Record { command } => match command {
+            RecordCommands::Shortcut {
+                action,
+                app,
+                launch,
+                no_launch,
+                yes,
+            } => {
+                // record the hotkey
+                let keys = hotkeys::record_hotkey()?;
+                println!("\nDetected: {}", keys);
 
-            // if no action specified, just print the keys and exit
-            if action.is_none() {
-                println!("\nTo save this shortcut, run with --action:");
-                println!("  cwm record-shortcut --action focus --app \"AppName\"");
-                return Ok(());
-            }
-
-            let action = action.unwrap();
-
-            // validate action
-            let valid_actions = ["focus", "maximize"];
-            let is_valid = valid_actions.contains(&action.as_str())
-                || action.starts_with("move_display:")
-                || action.starts_with("resize:");
-
-            if !is_valid {
-                return Err(anyhow!(
-                    "Invalid action: '{}'. Valid actions: focus, maximize, move_display:next, move_display:prev, move_display:N, resize:N, resize:full",
-                    action
-                ));
-            }
-
-            // focus requires app
-            if action == "focus" && app.is_none() {
-                return Err(anyhow!("Action 'focus' requires --app to be specified"));
-            }
-
-            // build the shortcut
-            let mut shortcut = Shortcut {
-                keys: keys.clone(),
-                action: action.clone(),
-                app: app.clone(),
-                launch: None,
-            };
-
-            if launch {
-                shortcut.launch = Some(true);
-            } else if no_launch {
-                shortcut.launch = Some(false);
-            }
-
-            // show what will be added
-            let json =
-                serde_json::to_string_pretty(&shortcut).context("Failed to serialize shortcut")?;
-            println!("\nShortcut to add:\n{}", json);
-
-            // load config and check for duplicates
-            let mut config = config::load_with_override(config_path)?;
-            let existing = config
-                .shortcuts
-                .iter()
-                .position(|s| s.keys.to_lowercase() == keys.to_lowercase());
-
-            if let Some(idx) = existing {
-                let existing_shortcut = &config.shortcuts[idx];
-                println!(
-                    "\nWarning: '{}' is already bound to '{}'",
-                    keys, existing_shortcut.action
-                );
-
-                if !yes {
-                    print!("Overwrite? [y/N]: ");
-                    use std::io::{self, Write};
-                    io::stdout().flush()?;
-
-                    let mut input = String::new();
-                    io::stdin().read_line(&mut input)?;
-
-                    if !input.trim().eq_ignore_ascii_case("y") {
-                        println!("Cancelled.");
-                        return Ok(());
-                    }
+                // if no action specified, just print the keys and exit
+                if action.is_none() {
+                    println!("\nTo save this shortcut, run with --action:");
+                    println!("  cwm record shortcut --action focus --app \"AppName\"");
+                    return Ok(());
                 }
 
-                config.shortcuts[idx] = shortcut;
-            } else {
-                config.shortcuts.push(shortcut);
+                let action = action.unwrap();
+
+                // validate action
+                let valid_actions = ["focus", "maximize"];
+                let is_valid = valid_actions.contains(&action.as_str())
+                    || action.starts_with("move_display:")
+                    || action.starts_with("resize:");
+
+                if !is_valid {
+                    return Err(anyhow!(
+                        "Invalid action: '{}'. Valid actions: focus, maximize, move_display:next, move_display:prev, move_display:N, resize:N, resize:full",
+                        action
+                    ));
+                }
+
+                // focus requires app
+                if action == "focus" && app.is_none() {
+                    return Err(anyhow!("Action 'focus' requires --app to be specified"));
+                }
+
+                // build the shortcut
+                let mut shortcut = Shortcut {
+                    keys: keys.clone(),
+                    action: action.clone(),
+                    app: app.clone(),
+                    launch: None,
+                };
+
+                if launch {
+                    shortcut.launch = Some(true);
+                } else if no_launch {
+                    shortcut.launch = Some(false);
+                }
+
+                // show what will be added
+                let json = serde_json::to_string_pretty(&shortcut)
+                    .context("Failed to serialize shortcut")?;
+                println!("\nShortcut to add:\n{}", json);
+
+                // load config and check for duplicates
+                let mut config = config::load_with_override(config_path)?;
+                let existing = config
+                    .shortcuts
+                    .iter()
+                    .position(|s| s.keys.to_lowercase() == keys.to_lowercase());
+
+                if let Some(idx) = existing {
+                    let existing_shortcut = &config.shortcuts[idx];
+                    println!(
+                        "\nWarning: '{}' is already bound to '{}'",
+                        keys, existing_shortcut.action
+                    );
+
+                    if !yes {
+                        print!("Overwrite? [y/N]: ");
+                        use std::io::{self, Write};
+                        io::stdout().flush()?;
+
+                        let mut input = String::new();
+                        io::stdin().read_line(&mut input)?;
+
+                        if !input.trim().eq_ignore_ascii_case("y") {
+                            println!("Cancelled.");
+                            return Ok(());
+                        }
+                    }
+
+                    config.shortcuts[idx] = shortcut;
+                } else {
+                    config.shortcuts.push(shortcut);
+                }
+
+                // save config
+                config::save_with_override(&config, config_path)?;
+                println!(
+                    "\nSaved to {}",
+                    config::get_config_path_with_override(config_path)?.display()
+                );
+
+                Ok(())
             }
 
-            // save config
-            config::save_with_override(&config, config_path)?;
-            println!(
-                "\nSaved to {}",
-                config::get_config_path_with_override(config_path)?.display()
-            );
+            RecordCommands::Layout { app, display } => {
+                use crate::actions::handlers::record;
 
-            Ok(())
-        }
+                let config = config::load_with_override(config_path)?;
+                let apps = resolve_app_names(&app)?;
+
+                record::execute_record_layout(&apps, display.as_deref(), &config, output_mode)?;
+                Ok(())
+            }
+        },
 
         Commands::Daemon { command } => {
             let config = config::load_with_override(config_path)?;
@@ -2057,23 +2089,26 @@ mod tests {
     #[test]
     fn test_cli_parse_record_shortcut() {
         use clap::Parser;
-        let cli = Cli::try_parse_from(["cwm", "record-shortcut"]).unwrap();
+        let cli = Cli::try_parse_from(["cwm", "record", "shortcut"]).unwrap();
 
         match cli.command {
-            Commands::RecordShortcut {
-                action,
-                app,
-                launch,
-                no_launch,
-                yes,
-            } => {
-                assert!(action.is_none());
-                assert!(app.is_none());
-                assert!(!launch);
-                assert!(!no_launch);
-                assert!(!yes);
-            }
-            _ => panic!("Expected RecordShortcut command"),
+            Commands::Record { command } => match command {
+                RecordCommands::Shortcut {
+                    action,
+                    app,
+                    launch,
+                    no_launch,
+                    yes,
+                } => {
+                    assert!(action.is_none());
+                    assert!(app.is_none());
+                    assert!(!launch);
+                    assert!(!no_launch);
+                    assert!(!yes);
+                }
+                _ => panic!("Expected Shortcut subcommand"),
+            },
+            _ => panic!("Expected Record command"),
         }
     }
 
@@ -2081,34 +2116,109 @@ mod tests {
     fn test_cli_parse_record_shortcut_with_action() {
         use clap::Parser;
         let cli = Cli::try_parse_from([
-            "cwm",
-            "record-shortcut",
-            "--action",
-            "focus",
-            "--app",
-            "Safari",
+            "cwm", "record", "shortcut", "--action", "focus", "--app", "Safari",
         ])
         .unwrap();
 
         match cli.command {
-            Commands::RecordShortcut { action, app, .. } => {
-                assert_eq!(action, Some("focus".to_string()));
-                assert_eq!(app, Some("Safari".to_string()));
-            }
-            _ => panic!("Expected RecordShortcut command"),
+            Commands::Record { command } => match command {
+                RecordCommands::Shortcut { action, app, .. } => {
+                    assert_eq!(action, Some("focus".to_string()));
+                    assert_eq!(app, Some("Safari".to_string()));
+                }
+                _ => panic!("Expected Shortcut subcommand"),
+            },
+            _ => panic!("Expected Record command"),
         }
     }
 
     #[test]
     fn test_cli_parse_record_shortcut_with_yes() {
         use clap::Parser;
-        let cli = Cli::try_parse_from(["cwm", "record-shortcut", "-y"]).unwrap();
+        let cli = Cli::try_parse_from(["cwm", "record", "shortcut", "-y"]).unwrap();
 
         match cli.command {
-            Commands::RecordShortcut { yes, .. } => {
-                assert!(yes);
-            }
-            _ => panic!("Expected RecordShortcut command"),
+            Commands::Record { command } => match command {
+                RecordCommands::Shortcut { yes, .. } => {
+                    assert!(yes);
+                }
+                _ => panic!("Expected Shortcut subcommand"),
+            },
+            _ => panic!("Expected Record command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_record_layout() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "record", "layout"]).unwrap();
+
+        match cli.command {
+            Commands::Record { command } => match command {
+                RecordCommands::Layout { app, display } => {
+                    assert!(app.is_empty());
+                    assert!(display.is_none());
+                }
+                _ => panic!("Expected Layout subcommand"),
+            },
+            _ => panic!("Expected Record command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_record_layout_with_apps() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "cwm", "record", "layout", "--app", "Safari", "--app", "Chrome",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Record { command } => match command {
+                RecordCommands::Layout { app, display } => {
+                    assert_eq!(app, vec!["Safari".to_string(), "Chrome".to_string()]);
+                    assert!(display.is_none());
+                }
+                _ => panic!("Expected Layout subcommand"),
+            },
+            _ => panic!("Expected Record command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_record_layout_with_display() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "record", "layout", "--display", "1"]).unwrap();
+
+        match cli.command {
+            Commands::Record { command } => match command {
+                RecordCommands::Layout { app, display } => {
+                    assert!(app.is_empty());
+                    assert_eq!(display, Some("1".to_string()));
+                }
+                _ => panic!("Expected Layout subcommand"),
+            },
+            _ => panic!("Expected Record command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_record_layout_with_app_and_display() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "cwm", "record", "layout", "--app", "Safari", "-d", "external",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Record { command } => match command {
+                RecordCommands::Layout { app, display } => {
+                    assert_eq!(app, vec!["Safari".to_string()]);
+                    assert_eq!(display, Some("external".to_string()));
+                }
+                _ => panic!("Expected Layout subcommand"),
+            },
+            _ => panic!("Expected Record command"),
         }
     }
 

@@ -229,9 +229,12 @@ impl JsonRpcRequest {
                 prerelease: params.get_bool_or("prerelease", false),
             }),
 
-            // ==================== Interactive Commands ====================
+            // ==================== Interactive/CLI-only Commands ====================
             "record_shortcut" => Err(ActionError::not_supported(
                 "record_shortcut is interactive and not available via IPC",
+            )),
+            "record_layout" => Err(ActionError::not_supported(
+                "record_layout is a CLI-only command",
             )),
 
             // ==================== Unknown ====================
@@ -859,6 +862,16 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("interactive"));
+    }
+
+    #[test]
+    fn test_parse_record_layout_rejected() {
+        let req = JsonRpcRequest::parse(r#"{"method":"record_layout"}"#).unwrap();
+        let result = req.to_command();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("CLI-only"));
     }
 
     #[test]

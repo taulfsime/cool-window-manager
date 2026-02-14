@@ -89,7 +89,7 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
     let config = config::load()?;
 
     if config.shortcuts.is_empty() {
-        log("No shortcuts configured. Add shortcuts with 'cwm record-shortcut'");
+        log("No shortcuts configured. Add shortcuts with 'cwm record shortcut'");
     } else {
         log(&format!("Loaded {} shortcut(s)", config.shortcuts.len()));
     }

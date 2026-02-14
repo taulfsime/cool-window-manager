@@ -193,7 +193,7 @@ cwm config set settings.update.check_frequency manual
 | `cwm config <subcommand>` | Manage configuration |
 | `cwm daemon <subcommand>` | Manage background daemon |
 | `cwm spotlight <subcommand>` | Manage Spotlight integration |
-| `cwm record-shortcut` | Record a keyboard shortcut |
+| `cwm record <shortcut\|layout>` | Record keyboard shortcuts or window layouts |
 | `cwm install` | Install cwm to system PATH |
 | `cwm uninstall` | Remove cwm from system |
 | `cwm update` | Update to latest version |
@@ -497,14 +497,35 @@ Config keys:
 - `settings.update.channels.beta` - Enable beta channel (true/false)
 - `settings.update.channels.stable` - Enable stable channel (true/false)
 
-### record-shortcut
+### record
 
-Record a keyboard shortcut for use in config.
+Record keyboard shortcuts or window layouts for use in config.
+
+#### record shortcut
+
+Record a keyboard shortcut:
 
 ```bash
-cwm record-shortcut              # just print the keys
-cwm record-shortcut --action focus --app "Slack"  # save to config
+cwm record shortcut              # just print the keys
+cwm record shortcut --action focus --app "Slack"  # save to config
 ```
+
+#### record layout
+
+Record current window positions and sizes to generate app_rules config:
+
+```bash
+cwm record layout                              # record all visible windows
+cwm record layout --app Safari --app Chrome    # record specific apps only
+cwm record layout --display 1                  # record windows on display 1
+cwm record layout --app Safari --display 0     # record Safari if on display 0
+```
+
+The command outputs multiple config variants:
+- **Full**: position + size rules
+- **Position only**: just move rules
+- **Display only**: move to display aliases (portable across setups)
+- **Size only**: just resize rules
 
 ### daemon
 

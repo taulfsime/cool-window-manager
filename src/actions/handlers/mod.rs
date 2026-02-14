@@ -9,6 +9,7 @@ pub mod install;
 pub mod list;
 pub mod maximize;
 pub mod move_window;
+pub mod record;
 pub mod resize;
 pub mod spotlight;
 pub mod system;

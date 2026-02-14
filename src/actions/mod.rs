@@ -7,12 +7,12 @@
 mod command;
 mod context;
 mod error;
-mod handlers;
+pub mod handlers;
 mod parse;
 mod result;
 
 pub use command::{
-    Command, ConfigCommand, DaemonCommand, GetTarget, ListResource, SpotlightCommand,
+    Command, ConfigCommand, DaemonCommand, GetTarget, ListResource, RecordCommand, SpotlightCommand,
 };
 pub use context::ExecutionContext;
 pub use error::ActionError;
@@ -66,12 +66,16 @@ pub fn execute(cmd: Command, ctx: &ExecutionContext) -> Result<ActionResult, Act
         Command::CheckPermissions { prompt } => {
             handlers::system::execute_check_permissions(prompt, ctx)
         }
-        Command::RecordShortcut { .. } => {
-            // record_shortcut is always interactive, handled by CLI directly
-            Err(ActionError::not_supported(
+        Command::Record(record_cmd) => match record_cmd {
+            // record shortcut is always interactive, handled by CLI directly
+            RecordCommand::Shortcut { .. } => Err(ActionError::not_supported(
                 "record_shortcut requires interactive input (CLI only)",
-            ))
-        }
+            )),
+            // record layout is also handled by CLI directly (needs OutputMode)
+            RecordCommand::Layout { .. } => Err(ActionError::not_supported(
+                "record_layout should be called via CLI handler directly",
+            )),
+        },
 
         // daemon commands
         Command::Daemon(daemon_cmd) => match daemon_cmd {

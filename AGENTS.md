@@ -241,10 +241,11 @@ Unified action layer providing consistent behavior across CLI, IPC, and future H
 | `config.rs` | config show/path/verify/default (set/reset are CLI-only) |
 | `spotlight.rs` | spotlight list/example (install/remove are CLI-only) |
 | `install.rs` | update_check (install/uninstall/update are CLI-only) |
+| `record.rs` | record layout handler (record shortcut is CLI-only) |
 
 **Key types:**
 
-- `Command`: Unified enum for all commands (Focus, Maximize, Resize, MoveDisplay, List, Get, Ping, Status, Version, CheckPermissions, RecordShortcut, Daemon, Config, Spotlight, Install, Uninstall, Update)
+- `Command`: Unified enum for all commands (Focus, Maximize, Resize, Move, List, Get, Ping, Status, Version, CheckPermissions, Record, Daemon, Config, Spotlight, Install, Uninstall, Update)
 - `ExecutionContext`: Contains config reference, verbose flag, and `is_cli` flag
 - `ActionResult`: Serializable result with action name and typed data
 - `ActionError`: Error with exit code, message, and optional suggestions
@@ -269,7 +270,7 @@ Handles command-line argument parsing and command execution.
 | `exit_codes.rs` | exit code constants for scripting (SUCCESS, ERROR, APP_NOT_FOUND, etc.) |
 | `output.rs` | output formatting: `OutputMode` enum, JSON-RPC 2.0 response types, `format_template()` for custom format strings |
 
-Commands defined: `focus`, `maximize`, `move`, `resize`, `list`, `get`, `check-permissions`, `record-shortcut`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
+Commands defined: `focus`, `maximize`, `move`, `resize`, `list`, `get`, `check-permissions`, `record`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
 
 **CLI Command Reference:**
 
@@ -282,7 +283,7 @@ Commands defined: `focus`, `maximize`, `move`, `resize`, `list`, `get`, `check-p
 | `list` | `cwm list <apps\|displays\|aliases> [--json] [--names] [--format] [--detailed]` | List resources |
 | `get` | `cwm get <focused\|window> [--app <name>] [--format]` | Get window information |
 | `check-permissions` | `cwm check-permissions [--prompt]` | Check accessibility permissions |
-| `record-shortcut` | `cwm record-shortcut [--action <action>] [--app <name>]` | Record a keyboard shortcut |
+| `record` | `cwm record <shortcut\|layout> [OPTIONS]` | Record keyboard shortcuts or window layouts |
 | `config` | `cwm config <show\|path\|set\|reset\|default\|verify>` | Manage configuration |
 | `daemon` | `cwm daemon <start\|stop\|status\|install\|uninstall>` | Manage background daemon |
 | `spotlight` | `cwm spotlight <install\|list\|remove\|example>` | Manage Spotlight integration |

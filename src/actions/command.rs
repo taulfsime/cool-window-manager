@@ -87,19 +87,11 @@ pub enum Command {
     /// show version information
     Version,
 
-    /// record a keyboard shortcut (interactive - CLI only)
-    /// note: this variant exists for IPC rejection, CLI handles it directly
+    /// record commands (shortcuts, layouts)
+    /// note: these variants exist for IPC rejection and is_interactive checks
+    /// the actual implementation is in CLI handlers
     #[allow(dead_code)]
-    RecordShortcut {
-        /// action to bind
-        action: Option<String>,
-        /// target app name
-        app: Option<String>,
-        /// launch behavior
-        launch: Option<bool>,
-        /// skip confirmation prompt
-        yes: bool,
-    },
+    Record(RecordCommand),
 
     // ==================== Daemon Commands ====================
     /// daemon management
@@ -240,12 +232,40 @@ pub enum SpotlightCommand {
     Example,
 }
 
+/// record subcommands
+/// note: these variants exist for IPC rejection and is_interactive checks
+/// the actual implementation is in CLI handlers
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum RecordCommand {
+    /// record a keyboard shortcut (interactive - CLI only)
+    Shortcut {
+        /// action to bind
+        action: Option<String>,
+        /// target app name
+        app: Option<String>,
+        /// launch behavior
+        launch: Option<bool>,
+        /// skip confirmation prompt
+        yes: bool,
+    },
+    /// record current window layout
+    Layout {
+        /// target app name(s) to record (empty = all visible windows)
+        app: Vec<String>,
+        /// only record windows on this display
+        display: Option<String>,
+    },
+}
+
 impl Command {
     /// check if this command requires interactive input (CLI only)
     pub fn is_interactive(&self) -> bool {
         match self {
-            // record-shortcut without --yes requires user input
-            Command::RecordShortcut { yes: false, .. } => true,
+            // record shortcut without --yes requires user input
+            Command::Record(RecordCommand::Shortcut { yes: false, .. }) => true,
+            // record layout is not interactive (just reads window state)
+            Command::Record(RecordCommand::Layout { .. }) => false,
             // install without path requires interactive selection (unless completions_only)
             Command::Install {
                 path: None,
@@ -269,7 +289,8 @@ impl Command {
             Command::Status => "status",
             Command::CheckPermissions { .. } => "check_permissions",
             Command::Version => "version",
-            Command::RecordShortcut { .. } => "record_shortcut",
+            Command::Record(RecordCommand::Shortcut { .. }) => "record_shortcut",
+            Command::Record(RecordCommand::Layout { .. }) => "record_layout",
             Command::Daemon(_) => "daemon",
             Command::Config(_) => "config",
             Command::Spotlight(_) => "spotlight",
@@ -312,22 +333,29 @@ mod tests {
 
     #[test]
     fn test_command_is_interactive() {
-        // record_shortcut without yes is interactive
-        assert!(Command::RecordShortcut {
+        // record shortcut without yes is interactive
+        assert!(Command::Record(RecordCommand::Shortcut {
             action: None,
             app: None,
             launch: None,
             yes: false,
-        }
+        })
         .is_interactive());
 
-        // record_shortcut with yes is not interactive
-        assert!(!Command::RecordShortcut {
+        // record shortcut with yes is not interactive
+        assert!(!Command::Record(RecordCommand::Shortcut {
             action: None,
             app: None,
             launch: None,
             yes: true,
-        }
+        })
+        .is_interactive());
+
+        // record layout is not interactive
+        assert!(!Command::Record(RecordCommand::Layout {
+            app: vec![],
+            display: None,
+        })
         .is_interactive());
 
         // install without path is interactive (unless completions_only)
