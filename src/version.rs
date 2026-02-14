@@ -238,4 +238,188 @@ mod tests {
         assert_eq!(parsed.install_path, info.install_path);
         assert_eq!(parsed.schema_version, info.schema_version);
     }
+
+    // ========================================================================
+    // Additional Version tests
+    // ========================================================================
+
+    #[test]
+    fn test_version_dirty_marker() {
+        // test version_string with dirty flag
+        let mut version = Version::parse_from_string("stable-a3f2b1c4-20240211").unwrap();
+        version.dirty = true;
+
+        let version_str = version.version_string();
+        assert!(version_str.contains(" *"));
+    }
+
+    #[test]
+    fn test_version_clean_no_marker() {
+        let mut version = Version::parse_from_string("stable-a3f2b1c4-20240211").unwrap();
+        version.dirty = false;
+
+        let version_str = version.version_string();
+        assert!(!version_str.contains(" *"));
+    }
+
+    #[test]
+    fn test_version_is_newer_than_same_timestamp() {
+        let v1 = Version::parse_from_string("stable-a3f2b1c4-20240211").unwrap();
+        let v2 = Version::parse_from_string("beta-12345678-20240211").unwrap();
+
+        // same date, neither is newer
+        assert!(!v1.is_newer_than(&v2));
+        assert!(!v2.is_newer_than(&v1));
+    }
+
+    #[test]
+    fn test_version_parse_from_string_with_extra_dashes() {
+        // version string with extra dashes (e.g., commit hash with dashes)
+        let result = Version::parse_from_string("stable-a3f2-b1c4-20240211");
+        // this should fail because the date parsing will fail
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_version_parse_from_string_invalid_date() {
+        let result = Version::parse_from_string("stable-a3f2b1c4-99999999");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_version_full_version_string_format() {
+        let version = Version::parse_from_string("beta-12345678-20240315").unwrap();
+        let full = version.full_version_string();
+
+        // should be in format: channel-commit-date
+        assert!(full.starts_with("beta-"));
+        assert!(full.contains("12345678"));
+        assert!(full.ends_with("20240315"));
+    }
+
+    #[test]
+    fn test_version_clone() {
+        let v1 = Version::parse_from_string("stable-a3f2b1c4-20240211").unwrap();
+        let v2 = v1.clone();
+
+        assert_eq!(v1.channel, v2.channel);
+        assert_eq!(v1.commit, v2.commit);
+        assert_eq!(v1.short_commit, v2.short_commit);
+        assert_eq!(v1.timestamp, v2.timestamp);
+    }
+
+    #[test]
+    fn test_version_debug() {
+        let version = Version::parse_from_string("stable-a3f2b1c4-20240211").unwrap();
+        let debug_str = format!("{:?}", version);
+
+        assert!(debug_str.contains("Version"));
+        assert!(debug_str.contains("channel"));
+        assert!(debug_str.contains("stable"));
+    }
+
+    // ========================================================================
+    // Additional VersionInfo tests
+    // ========================================================================
+
+    #[test]
+    fn test_version_info_default() {
+        let info = VersionInfo::default();
+
+        assert!(!info.current.is_empty());
+        assert!(info.previous.is_none());
+        assert!(info.last_seen_available.is_none());
+        assert!(info.schema_version.is_none());
+    }
+
+    #[test]
+    fn test_version_info_serialization_without_optional_fields() {
+        let info = VersionInfo {
+            current: "dev-12345678-20240101".to_string(),
+            previous: None,
+            last_seen_available: None,
+            install_date: Utc::now(),
+            install_path: PathBuf::from("/usr/local/bin/cwm"),
+            schema_version: None,
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: VersionInfo = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.current, info.current);
+        assert!(parsed.previous.is_none());
+        assert!(parsed.last_seen_available.is_none());
+        assert!(parsed.schema_version.is_none());
+    }
+
+    #[test]
+    fn test_version_info_serialization_with_all_fields() {
+        let info = VersionInfo {
+            current: "stable-a3f2b1c4-20240211".to_string(),
+            previous: Some("stable-00000000-20240210".to_string()),
+            last_seen_available: Some("stable-b4c5d6e7-20240212".to_string()),
+            install_date: Utc::now(),
+            install_path: PathBuf::from("/usr/local/bin/cwm"),
+            schema_version: Some("stable-a3f2b1c4-20240211".to_string()),
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: VersionInfo = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.last_seen_available, info.last_seen_available);
+    }
+
+    #[test]
+    fn test_version_info_path() {
+        let path = VersionInfo::path();
+        let path_str = path.to_string_lossy();
+
+        assert!(path_str.contains(".cwm"));
+        assert!(path_str.ends_with("version.json"));
+    }
+
+    #[test]
+    fn test_version_info_clone() {
+        let info = VersionInfo {
+            current: "stable-a3f2b1c4-20240211".to_string(),
+            previous: Some("stable-00000000-20240210".to_string()),
+            last_seen_available: None,
+            install_date: Utc::now(),
+            install_path: PathBuf::from("/usr/local/bin/cwm"),
+            schema_version: None,
+        };
+
+        let cloned = info.clone();
+
+        assert_eq!(info.current, cloned.current);
+        assert_eq!(info.previous, cloned.previous);
+        assert_eq!(info.install_path, cloned.install_path);
+    }
+
+    #[test]
+    fn test_version_info_debug() {
+        let info = VersionInfo::default();
+        let debug_str = format!("{:?}", info);
+
+        assert!(debug_str.contains("VersionInfo"));
+        assert!(debug_str.contains("current"));
+        assert!(debug_str.contains("install_path"));
+    }
+
+    #[test]
+    fn test_version_info_deserialize_without_schema_version() {
+        // test backward compatibility - older version.json files won't have schema_version
+        let json = r#"{
+            "current": "stable-a3f2b1c4-20240211",
+            "previous": null,
+            "last_seen_available": null,
+            "install_date": "2024-02-11T00:00:00Z",
+            "install_path": "/usr/local/bin/cwm"
+        }"#;
+
+        let parsed: VersionInfo = serde_json::from_str(json).unwrap();
+
+        assert_eq!(parsed.current, "stable-a3f2b1c4-20240211");
+        assert!(parsed.schema_version.is_none()); // default value
+    }
 }

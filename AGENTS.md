@@ -112,7 +112,8 @@ cool-window-mng/
 │   ├── release-beta.sh     # helper script to create beta releases
 │   ├── release-stable.sh   # helper script to create stable releases
 │   ├── list-releases.sh    # helper script to list all releases
-│   └── coverage.sh         # generate test coverage report
+│   ├── coverage.sh         # generate test coverage report
+│   └── manual-test.sh      # interactive manual testing guide
 ├── docs/                   # landing page (GitHub Pages at cwm.taulfsime.com)
 │   ├── index.html          # main page with terminal + preview
 │   ├── CNAME               # custom domain configuration
@@ -565,6 +566,15 @@ The build.rs script automatically embeds:
 ```bash
 # run all tests (unit + integration)
 cargo test
+
+# run only unit tests
+cargo test --lib
+
+# run only integration tests
+cargo test --test integration
+
+# generate coverage report
+./scripts/coverage.sh
 ```
 
 #### Unit Tests
@@ -573,32 +583,73 @@ Tests are located in `#[cfg(test)]` modules within:
 
 | File | Test Coverage |
 |------|---------------|
-| `src/cli/commands.rs` | ListResource enum parsing, JSON serialization structs (AppSummary, AppDetailed, DisplaySummary, DisplayDetailed, AliasSummary, AliasDetailed, ListResponse) |
+| `src/cli/commands.rs` | ListResource enum parsing, JSON serialization structs, CLI argument parsing, helper functions (resolve_app_name, match_result_to_data, app_info_to_data) |
 | `src/config/mod.rs` | config value parsing, key setting, JSONC parsing, multi-extension support, config path override |
 | `src/config/schema.rs` | `should_launch` priority logic, update settings serialization, `$schema` field |
 | `src/config/json_schema.rs` | schema validity, required definitions, file writing |
 | `src/display/mod.rs` | display target parsing, resolution with wraparound |
 | `src/window/matching.rs` | name matching (exact, prefix, fuzzy), title matching (exact, prefix, fuzzy) |
-| `src/window/manager.rs` | ResizeTarget parsing (percent, decimal, pixels, points, dimensions) |
-| `src/daemon/hotkeys.rs` | hotkey string parsing |
+| `src/window/manager.rs` | ResizeTarget parsing, find_display_for_point, WindowData/DisplayDataInfo serialization |
+| `src/daemon/mod.rs` | parse_shortcuts, find_shortcut_launch, handle_ipc_request |
+| `src/daemon/hotkeys.rs` | hotkey string parsing, keycode conversion, modifier extraction |
+| `src/daemon/launchd.rs` | plist generation |
+| `src/daemon/ipc.rs` | IPC request parsing, response formatting |
 | `src/version.rs` | version parsing, comparison, serialization |
 | `src/installer/paths.rs` | path detection, writability checks, PATH detection |
 | `src/installer/github.rs` | release parsing, architecture detection |
+| `src/installer/update.rs` | checksum verification |
 | `src/spotlight/generator.rs` | shell escaping, Info.plist generation, shell script generation |
 
 #### Integration Tests
 
-Integration tests for install, update, rollback, and list features:
+Integration tests for CLI commands, install, update, and rollback:
 
 | File | Test Coverage |
 |------|---------------|
+| `tests/integration_tests/test_cli_config.rs` | config show/path/set/reset/default/verify commands |
+| `tests/integration_tests/test_cli_focus.rs` | focus command with various flags |
+| `tests/integration_tests/test_cli_resize.rs` | resize command with various size formats |
+| `tests/integration_tests/test_cli_maximize.rs` | maximize command with various flags |
+| `tests/integration_tests/test_cli_move_display.rs` | move-display command with various targets |
+| `tests/integration_tests/test_cli_get.rs` | get focused/window commands |
+| `tests/integration_tests/test_cli_daemon.rs` | daemon status/stop commands |
+| `tests/integration_tests/test_cli_version.rs` | version command |
+| `tests/integration_tests/test_spotlight.rs` | spotlight install/list/remove/example commands |
+| `tests/integration_tests/test_list.rs` | list apps/displays/aliases with various output formats |
 | `tests/integration_tests/test_install.rs` | fresh install, directory creation, permissions, force overwrite |
-| `tests/integration_tests/test_list.rs` | list apps/displays/aliases, text and JSON output, --detailed flag, error handling |
 | `tests/integration_tests/test_update.rs` | version checking, download, checksum verification, binary replacement |
 | `tests/integration_tests/test_rollback.rs` | backup creation, test failure rollback, checksum mismatch, corrupt download |
 | `tests/integration_tests/test_channels.rs` | dev/beta/stable channels, channel priority, upgrade paths |
 
 Note: Some integration tests require a mock GitHub API server and are skipped when not available.
+
+#### Manual Tests
+
+Interactive testing guide for visual verification:
+
+```bash
+./scripts/manual-test.sh
+```
+
+This script guides you through testing features that require visual verification:
+- Focus command (app switching)
+- Maximize command (window fills screen)
+- Resize command (various sizes)
+- Move-display command (multi-monitor)
+- Get window info
+- Spotlight integration
+
+#### Test Coverage
+
+Current coverage: ~56% overall
+
+Files with macOS API dependencies (0% coverage, acceptable):
+- `src/window/accessibility.rs` - Pure Accessibility API calls
+- `src/daemon/app_watcher.rs` - NSWorkspace notifications
+- `src/installer/install.rs` - File system operations with sudo
+- `src/installer/rollback.rs` - File system operations
+- `src/main.rs` - Entry point
+- `src/spotlight/mod.rs` - Entry point
 
 ### Run
 

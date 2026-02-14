@@ -747,3 +747,447 @@ fn handle_ipc_request(
 fn stop_socket_listener() {
     SOCKET_SHOULD_STOP.store(true, Ordering::SeqCst);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Settings, Shortcut};
+
+    fn create_test_config(shortcuts: Vec<Shortcut>) -> Config {
+        Config {
+            shortcuts,
+            app_rules: vec![],
+            spotlight: vec![],
+            display_aliases: std::collections::HashMap::new(),
+            settings: Settings::default(),
+            schema: None,
+        }
+    }
+
+    // ========================================================================
+    // parse_shortcuts tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_shortcuts_empty() {
+        let config = create_test_config(vec![]);
+        let result = parse_shortcuts(&config).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_shortcuts_single_valid() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+alt+s".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: None,
+        }]);
+
+        let result = parse_shortcuts(&config).unwrap();
+        assert_eq!(result.len(), 1);
+
+        let (hotkey, action) = &result[0];
+        assert!(hotkey.modifiers.ctrl);
+        assert!(hotkey.modifiers.alt);
+        assert_eq!(hotkey.keys, vec!["s"]);
+        assert_eq!(action, "focus:Safari");
+    }
+
+    #[test]
+    fn test_parse_shortcuts_without_app() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+alt+m".to_string(),
+            action: "maximize".to_string(),
+            app: None,
+            launch: None,
+        }]);
+
+        let result = parse_shortcuts(&config).unwrap();
+        assert_eq!(result.len(), 1);
+
+        let (_, action) = &result[0];
+        assert_eq!(action, "maximize");
+    }
+
+    #[test]
+    fn test_parse_shortcuts_multiple() {
+        let config = create_test_config(vec![
+            Shortcut {
+                keys: "ctrl+alt+s".to_string(),
+                action: "focus".to_string(),
+                app: Some("Safari".to_string()),
+                launch: Some(true),
+            },
+            Shortcut {
+                keys: "ctrl+alt+m".to_string(),
+                action: "maximize".to_string(),
+                app: None,
+                launch: None,
+            },
+            Shortcut {
+                keys: "ctrl+alt+n".to_string(),
+                action: "move_display".to_string(),
+                app: Some("next".to_string()),
+                launch: None,
+            },
+        ]);
+
+        let result = parse_shortcuts(&config).unwrap();
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_shortcuts_invalid_key_skipped() {
+        let config = create_test_config(vec![
+            Shortcut {
+                keys: "ctrl+alt+".to_string(), // invalid - no key
+                action: "focus".to_string(),
+                app: Some("Safari".to_string()),
+                launch: None,
+            },
+            Shortcut {
+                keys: "ctrl+alt+m".to_string(), // valid
+                action: "maximize".to_string(),
+                app: None,
+                launch: None,
+            },
+        ]);
+
+        let result = parse_shortcuts(&config).unwrap();
+        // invalid shortcut should be skipped, valid one should be included
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].1, "maximize");
+    }
+
+    // ========================================================================
+    // find_shortcut_launch tests
+    // ========================================================================
+
+    #[test]
+    fn test_find_shortcut_launch_found_with_launch_true() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+alt+s".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: Some(true),
+        }]);
+
+        let result = find_shortcut_launch(&config, "focus:Safari");
+        assert_eq!(result, Some(true));
+    }
+
+    #[test]
+    fn test_find_shortcut_launch_found_with_launch_false() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+alt+s".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: Some(false),
+        }]);
+
+        let result = find_shortcut_launch(&config, "focus:Safari");
+        assert_eq!(result, Some(false));
+    }
+
+    #[test]
+    fn test_find_shortcut_launch_found_without_launch_field() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+alt+s".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: None,
+        }]);
+
+        let result = find_shortcut_launch(&config, "focus:Safari");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_find_shortcut_launch_not_found() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+alt+s".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: Some(true),
+        }]);
+
+        let result = find_shortcut_launch(&config, "focus:Chrome");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_find_shortcut_launch_action_without_app() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+alt+m".to_string(),
+            action: "maximize".to_string(),
+            app: None,
+            launch: None,
+        }]);
+
+        let result = find_shortcut_launch(&config, "maximize");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_find_shortcut_launch_multiple_shortcuts() {
+        let config = create_test_config(vec![
+            Shortcut {
+                keys: "ctrl+alt+s".to_string(),
+                action: "focus".to_string(),
+                app: Some("Safari".to_string()),
+                launch: Some(true),
+            },
+            Shortcut {
+                keys: "ctrl+alt+c".to_string(),
+                action: "focus".to_string(),
+                app: Some("Chrome".to_string()),
+                launch: Some(false),
+            },
+        ]);
+
+        assert_eq!(find_shortcut_launch(&config, "focus:Safari"), Some(true));
+        assert_eq!(find_shortcut_launch(&config, "focus:Chrome"), Some(false));
+        assert_eq!(find_shortcut_launch(&config, "focus:Firefox"), None);
+    }
+
+    // ========================================================================
+    // parse_shortcuts edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_parse_shortcuts_with_move_display_action() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+alt+n".to_string(),
+            action: "move_display".to_string(),
+            app: Some("next".to_string()),
+            launch: None,
+        }]);
+
+        let result = parse_shortcuts(&config).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].1, "move_display:next");
+    }
+
+    #[test]
+    fn test_parse_shortcuts_with_resize_action() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+alt+r".to_string(),
+            action: "resize".to_string(),
+            app: Some("80".to_string()),
+            launch: None,
+        }]);
+
+        let result = parse_shortcuts(&config).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].1, "resize:80");
+    }
+
+    #[test]
+    fn test_parse_shortcuts_all_modifiers() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+alt+shift+cmd+s".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: None,
+        }]);
+
+        let result = parse_shortcuts(&config).unwrap();
+        assert_eq!(result.len(), 1);
+
+        let (hotkey, _) = &result[0];
+        assert!(hotkey.modifiers.ctrl);
+        assert!(hotkey.modifiers.alt);
+        assert!(hotkey.modifiers.shift);
+        assert!(hotkey.modifiers.cmd);
+    }
+
+    #[test]
+    fn test_parse_shortcuts_function_key() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+f1".to_string(),
+            action: "maximize".to_string(),
+            app: None,
+            launch: None,
+        }]);
+
+        let result = parse_shortcuts(&config).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0.keys, vec!["f1"]);
+    }
+
+    #[test]
+    fn test_parse_shortcuts_special_keys() {
+        let config = create_test_config(vec![
+            Shortcut {
+                keys: "ctrl+space".to_string(),
+                action: "maximize".to_string(),
+                app: None,
+                launch: None,
+            },
+            Shortcut {
+                keys: "ctrl+tab".to_string(),
+                action: "focus".to_string(),
+                app: Some("Safari".to_string()),
+                launch: None,
+            },
+        ]);
+
+        let result = parse_shortcuts(&config).unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    // ========================================================================
+    // find_shortcut_launch edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_find_shortcut_launch_case_sensitive_action() {
+        let config = create_test_config(vec![Shortcut {
+            keys: "ctrl+alt+s".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: Some(true),
+        }]);
+
+        // action matching is case-sensitive
+        assert_eq!(find_shortcut_launch(&config, "focus:Safari"), Some(true));
+        assert_eq!(find_shortcut_launch(&config, "Focus:Safari"), None);
+        assert_eq!(find_shortcut_launch(&config, "focus:safari"), None);
+    }
+
+    #[test]
+    fn test_find_shortcut_launch_empty_config() {
+        let config = create_test_config(vec![]);
+
+        assert_eq!(find_shortcut_launch(&config, "focus:Safari"), None);
+        assert_eq!(find_shortcut_launch(&config, "maximize"), None);
+    }
+
+    #[test]
+    fn test_find_shortcut_launch_first_match_wins() {
+        let config = create_test_config(vec![
+            Shortcut {
+                keys: "ctrl+alt+s".to_string(),
+                action: "focus".to_string(),
+                app: Some("Safari".to_string()),
+                launch: Some(true),
+            },
+            Shortcut {
+                keys: "ctrl+shift+s".to_string(),
+                action: "focus".to_string(),
+                app: Some("Safari".to_string()),
+                launch: Some(false),
+            },
+        ]);
+
+        // first matching shortcut wins
+        assert_eq!(find_shortcut_launch(&config, "focus:Safari"), Some(true));
+    }
+
+    // ========================================================================
+    // IpcRequest handling tests (via handle_ipc_request)
+    // ========================================================================
+
+    #[test]
+    fn test_handle_ipc_request_ping() {
+        let config = create_test_config(vec![]);
+        let request = IpcRequest::parse(r#"{"method": "ping"}"#).unwrap();
+
+        let result = handle_ipc_request(&request, &config);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), serde_json::json!("pong"));
+    }
+
+    #[test]
+    fn test_handle_ipc_request_status() {
+        let config = create_test_config(vec![
+            Shortcut {
+                keys: "ctrl+alt+s".to_string(),
+                action: "focus".to_string(),
+                app: Some("Safari".to_string()),
+                launch: None,
+            },
+            Shortcut {
+                keys: "ctrl+alt+m".to_string(),
+                action: "maximize".to_string(),
+                app: None,
+                launch: None,
+            },
+        ]);
+        let request = IpcRequest::parse(r#"{"method": "status"}"#).unwrap();
+
+        let result = handle_ipc_request(&request, &config);
+        assert!(result.is_ok());
+
+        let value = result.unwrap();
+        assert_eq!(value["running"], true);
+        assert_eq!(value["shortcuts"], 2);
+        assert_eq!(value["app_rules"], 0);
+    }
+
+    #[test]
+    fn test_handle_ipc_request_unknown_method() {
+        let config = create_test_config(vec![]);
+        let request = IpcRequest::parse(r#"{"method": "unknown_method"}"#).unwrap();
+
+        let result = handle_ipc_request(&request, &config);
+        assert!(result.is_err());
+
+        let (code, msg) = result.unwrap_err();
+        assert_eq!(code, exit_codes::INVALID_ARGS);
+        assert!(msg.contains("Unknown method"));
+    }
+
+    #[test]
+    fn test_handle_ipc_request_focus_missing_app() {
+        let config = create_test_config(vec![]);
+        let request = IpcRequest::parse(r#"{"method": "focus"}"#).unwrap();
+
+        let result = handle_ipc_request(&request, &config);
+        assert!(result.is_err());
+
+        let (code, msg) = result.unwrap_err();
+        assert_eq!(code, exit_codes::INVALID_ARGS);
+        assert!(msg.contains("app"));
+    }
+
+    #[test]
+    fn test_handle_ipc_request_resize_missing_to() {
+        let config = create_test_config(vec![]);
+        let request = IpcRequest::parse(r#"{"method": "resize"}"#).unwrap();
+
+        let result = handle_ipc_request(&request, &config);
+        assert!(result.is_err());
+
+        let (code, msg) = result.unwrap_err();
+        assert_eq!(code, exit_codes::INVALID_ARGS);
+        assert!(msg.contains("to"));
+    }
+
+    #[test]
+    fn test_handle_ipc_request_move_display_missing_target() {
+        let config = create_test_config(vec![]);
+        let request = IpcRequest::parse(r#"{"method": "move_display"}"#).unwrap();
+
+        let result = handle_ipc_request(&request, &config);
+        assert!(result.is_err());
+
+        let (code, msg) = result.unwrap_err();
+        assert_eq!(code, exit_codes::INVALID_ARGS);
+        assert!(msg.contains("target"));
+    }
+
+    #[test]
+    fn test_handle_ipc_request_action_missing_action() {
+        let config = create_test_config(vec![]);
+        let request = IpcRequest::parse(r#"{"method": "action"}"#).unwrap();
+
+        let result = handle_ipc_request(&request, &config);
+        assert!(result.is_err());
+
+        let (code, msg) = result.unwrap_err();
+        assert_eq!(code, exit_codes::INVALID_ARGS);
+        assert!(msg.contains("action"));
+    }
+}

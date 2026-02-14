@@ -307,3 +307,199 @@ fn test_binary(binary_path: &Path) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_verify_checksum_valid() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // create a test file
+        let file_path = temp_dir.path().join("test_file.bin");
+        let file_content = b"Hello, World!";
+        fs::write(&file_path, file_content).unwrap();
+
+        // calculate expected checksum
+        let mut hasher = Sha256::new();
+        hasher.update(file_content);
+        let expected_checksum = hex::encode(hasher.finalize());
+
+        // create checksum file
+        let checksum_path = temp_dir.path().join("checksum.sha256");
+        fs::write(
+            &checksum_path,
+            format!("{}  test_file.bin\n", expected_checksum),
+        )
+        .unwrap();
+
+        // verify should succeed
+        let result = verify_checksum(&file_path, &checksum_path);
+        assert!(result.is_ok(), "checksum verification should succeed");
+    }
+
+    #[test]
+    fn test_verify_checksum_invalid() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // create a test file
+        let file_path = temp_dir.path().join("test_file.bin");
+        fs::write(&file_path, b"Hello, World!").unwrap();
+
+        // create checksum file with wrong checksum
+        let checksum_path = temp_dir.path().join("checksum.sha256");
+        fs::write(
+            &checksum_path,
+            "0000000000000000000000000000000000000000000000000000000000000000  test_file.bin\n",
+        )
+        .unwrap();
+
+        // verify should fail
+        let result = verify_checksum(&file_path, &checksum_path);
+        assert!(result.is_err(), "checksum verification should fail");
+
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Checksum verification failed"),
+            "error should mention checksum failure"
+        );
+    }
+
+    #[test]
+    fn test_verify_checksum_empty_checksum_file() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // create a test file
+        let file_path = temp_dir.path().join("test_file.bin");
+        fs::write(&file_path, b"Hello, World!").unwrap();
+
+        // create empty checksum file
+        let checksum_path = temp_dir.path().join("checksum.sha256");
+        fs::write(&checksum_path, "").unwrap();
+
+        // verify should fail
+        let result = verify_checksum(&file_path, &checksum_path);
+        assert!(result.is_err(), "empty checksum file should fail");
+
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Invalid checksum file format"),
+            "error should mention invalid format"
+        );
+    }
+
+    #[test]
+    fn test_verify_checksum_whitespace_only() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // create a test file
+        let file_path = temp_dir.path().join("test_file.bin");
+        fs::write(&file_path, b"Hello, World!").unwrap();
+
+        // create checksum file with only whitespace
+        let checksum_path = temp_dir.path().join("checksum.sha256");
+        fs::write(&checksum_path, "   \n\t  \n").unwrap();
+
+        // verify should fail
+        let result = verify_checksum(&file_path, &checksum_path);
+        assert!(result.is_err(), "whitespace-only checksum file should fail");
+    }
+
+    #[test]
+    fn test_verify_checksum_file_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let file_path = temp_dir.path().join("nonexistent.bin");
+        let checksum_path = temp_dir.path().join("checksum.sha256");
+        fs::write(&checksum_path, "abc123  nonexistent.bin\n").unwrap();
+
+        // verify should fail because file doesn't exist
+        let result = verify_checksum(&file_path, &checksum_path);
+        assert!(result.is_err(), "missing file should fail");
+    }
+
+    #[test]
+    fn test_verify_checksum_checksum_file_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let file_path = temp_dir.path().join("test_file.bin");
+        fs::write(&file_path, b"Hello, World!").unwrap();
+
+        let checksum_path = temp_dir.path().join("nonexistent.sha256");
+
+        // verify should fail because checksum file doesn't exist
+        let result = verify_checksum(&file_path, &checksum_path);
+        assert!(result.is_err(), "missing checksum file should fail");
+    }
+
+    #[test]
+    fn test_verify_checksum_large_file() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // create a larger test file (100KB)
+        let file_path = temp_dir.path().join("large_file.bin");
+        let mut file = File::create(&file_path).unwrap();
+        let data = vec![0xABu8; 100 * 1024];
+        file.write_all(&data).unwrap();
+
+        // calculate expected checksum
+        let mut hasher = Sha256::new();
+        hasher.update(&data);
+        let expected_checksum = hex::encode(hasher.finalize());
+
+        // create checksum file
+        let checksum_path = temp_dir.path().join("checksum.sha256");
+        fs::write(&checksum_path, format!("{}\n", expected_checksum)).unwrap();
+
+        // verify should succeed
+        let result = verify_checksum(&file_path, &checksum_path);
+        assert!(result.is_ok(), "large file checksum should verify");
+    }
+
+    #[test]
+    fn test_verify_checksum_format_with_filename() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // create a test file
+        let file_path = temp_dir.path().join("test.bin");
+        let content = b"test content";
+        fs::write(&file_path, content).unwrap();
+
+        // calculate checksum
+        let mut hasher = Sha256::new();
+        hasher.update(content);
+        let checksum = hex::encode(hasher.finalize());
+
+        // test format: "checksum  filename" (two spaces, common format)
+        let checksum_path = temp_dir.path().join("checksum.sha256");
+        fs::write(&checksum_path, format!("{}  test.bin\n", checksum)).unwrap();
+
+        let result = verify_checksum(&file_path, &checksum_path);
+        assert!(result.is_ok(), "checksum with filename should work");
+    }
+
+    #[test]
+    fn test_verify_checksum_format_checksum_only() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // create a test file
+        let file_path = temp_dir.path().join("test.bin");
+        let content = b"test content";
+        fs::write(&file_path, content).unwrap();
+
+        // calculate checksum
+        let mut hasher = Sha256::new();
+        hasher.update(content);
+        let checksum = hex::encode(hasher.finalize());
+
+        // test format: just the checksum
+        let checksum_path = temp_dir.path().join("checksum.sha256");
+        fs::write(&checksum_path, format!("{}\n", checksum)).unwrap();
+
+        let result = verify_checksum(&file_path, &checksum_path);
+        assert!(result.is_ok(), "checksum-only format should work");
+    }
+}

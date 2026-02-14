@@ -497,4 +497,323 @@ mod tests {
         };
         assert_eq!(build_ipc_command(&shortcut), "resize:50:Notes");
     }
+
+    // ========================================================================
+    // generate_info_plist edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_generate_info_plist_special_characters_in_name() {
+        let shortcut = SpotlightShortcut {
+            name: "Focus \"Safari\" & Chrome".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: None,
+        };
+
+        let plist = generate_info_plist(&shortcut);
+
+        // should contain the name (XML escaping handled by format!)
+        assert!(plist.contains("cwm: Focus \"Safari\" & Chrome"));
+        assert!(plist.contains("CFBundleExecutable"));
+        assert!(plist.contains("<string>run</string>"));
+    }
+
+    #[test]
+    fn test_generate_info_plist_maximize_action() {
+        let shortcut = SpotlightShortcut {
+            name: "Maximize Window".to_string(),
+            action: "maximize".to_string(),
+            app: None,
+            launch: None,
+        };
+
+        let plist = generate_info_plist(&shortcut);
+
+        assert!(plist.contains("cwm: Maximize Window"));
+        assert!(plist.contains("com.cwm.spotlight.maximize-window"));
+        assert!(plist.contains("<key>LSBackgroundOnly</key>"));
+    }
+
+    #[test]
+    fn test_generate_info_plist_move_display_action() {
+        let shortcut = SpotlightShortcut {
+            name: "Move to Next".to_string(),
+            action: "move_display:next".to_string(),
+            app: None,
+            launch: None,
+        };
+
+        let plist = generate_info_plist(&shortcut);
+
+        assert!(plist.contains("cwm: Move to Next"));
+        assert!(plist.contains("com.cwm.spotlight.move-to-next"));
+    }
+
+    #[test]
+    fn test_generate_info_plist_resize_action() {
+        let shortcut = SpotlightShortcut {
+            name: "Resize 75%".to_string(),
+            action: "resize:75".to_string(),
+            app: None,
+            launch: None,
+        };
+
+        let plist = generate_info_plist(&shortcut);
+
+        assert!(plist.contains("cwm: Resize 75%"));
+        // identifier converts % to empty
+        assert!(plist.contains("com.cwm.spotlight.resize-75"));
+    }
+
+    #[test]
+    fn test_generate_info_plist_unicode_name() {
+        let shortcut = SpotlightShortcut {
+            name: "Focus 日本語App".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: None,
+        };
+
+        let plist = generate_info_plist(&shortcut);
+
+        assert!(plist.contains("cwm: Focus 日本語App"));
+    }
+
+    // ========================================================================
+    // generate_shell_script edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_generate_shell_script_maximize_no_app() {
+        let shortcut = SpotlightShortcut {
+            name: "Maximize".to_string(),
+            action: "maximize".to_string(),
+            app: None,
+            launch: None,
+        };
+
+        let script = generate_shell_script(&shortcut);
+
+        assert!(script.contains("COMMAND=\"maximize\""));
+        assert!(script.contains("#!/bin/bash"));
+    }
+
+    #[test]
+    fn test_generate_shell_script_maximize_with_app() {
+        let shortcut = SpotlightShortcut {
+            name: "Maximize Terminal".to_string(),
+            action: "maximize".to_string(),
+            app: Some("Terminal".to_string()),
+            launch: None,
+        };
+
+        let script = generate_shell_script(&shortcut);
+
+        assert!(script.contains("COMMAND=\"maximize:Terminal\""));
+    }
+
+    #[test]
+    fn test_generate_shell_script_move_display_prev() {
+        let shortcut = SpotlightShortcut {
+            name: "Move Prev".to_string(),
+            action: "move_display:prev".to_string(),
+            app: None,
+            launch: None,
+        };
+
+        let script = generate_shell_script(&shortcut);
+
+        assert!(script.contains("COMMAND=\"move_display:prev\""));
+    }
+
+    #[test]
+    fn test_generate_shell_script_move_display_with_app() {
+        let shortcut = SpotlightShortcut {
+            name: "Move Safari Next".to_string(),
+            action: "move_display:next".to_string(),
+            app: Some("Safari".to_string()),
+            launch: None,
+        };
+
+        let script = generate_shell_script(&shortcut);
+
+        assert!(script.contains("COMMAND=\"move_display:next:Safari\""));
+    }
+
+    #[test]
+    fn test_generate_shell_script_resize_default() {
+        // resize without explicit size should default to 80
+        let shortcut = SpotlightShortcut {
+            name: "Resize Default".to_string(),
+            action: "resize".to_string(),
+            app: None,
+            launch: None,
+        };
+
+        let script = generate_shell_script(&shortcut);
+
+        // default size is 80
+        assert!(script.contains("COMMAND=\"resize:80\""));
+    }
+
+    #[test]
+    fn test_generate_shell_script_move_display_default() {
+        // move_display without explicit target should default to next
+        let shortcut = SpotlightShortcut {
+            name: "Move Default".to_string(),
+            action: "move_display".to_string(),
+            app: None,
+            launch: None,
+        };
+
+        let script = generate_shell_script(&shortcut);
+
+        // default target is next
+        assert!(script.contains("COMMAND=\"move_display:next\""));
+    }
+
+    #[test]
+    fn test_generate_shell_script_unknown_action() {
+        // unknown actions should pass through as-is
+        let shortcut = SpotlightShortcut {
+            name: "Custom Action".to_string(),
+            action: "custom:arg1:arg2".to_string(),
+            app: None,
+            launch: None,
+        };
+
+        let script = generate_shell_script(&shortcut);
+
+        assert!(script.contains("COMMAND=\"custom:arg1:arg2\""));
+    }
+
+    #[test]
+    fn test_generate_shell_script_error_notification() {
+        let shortcut = SpotlightShortcut {
+            name: "Test Action".to_string(),
+            action: "focus".to_string(),
+            app: Some("Safari".to_string()),
+            launch: None,
+        };
+
+        let script = generate_shell_script(&shortcut);
+
+        // should contain error notification with proper title
+        assert!(script.contains("cwm: Test Action Error"));
+        assert!(script.contains("display notification"));
+    }
+
+    #[test]
+    fn test_generate_shell_script_daemon_not_running_dialog() {
+        let shortcut = SpotlightShortcut {
+            name: "Test".to_string(),
+            action: "maximize".to_string(),
+            app: None,
+            launch: None,
+        };
+
+        let script = generate_shell_script(&shortcut);
+
+        // should contain daemon not running dialog
+        assert!(script.contains("cwm daemon is not running"));
+        assert!(script.contains("cwm daemon start"));
+        assert!(script.contains("cwm daemon install"));
+    }
+
+    // ========================================================================
+    // build_ipc_command edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_build_ipc_command_maximize_no_app() {
+        let shortcut = SpotlightShortcut {
+            name: "Test".to_string(),
+            action: "maximize".to_string(),
+            app: None,
+            launch: None,
+        };
+        assert_eq!(build_ipc_command(&shortcut), "maximize");
+    }
+
+    #[test]
+    fn test_build_ipc_command_move_display_default_target() {
+        // move_display without target should default to "next"
+        let shortcut = SpotlightShortcut {
+            name: "Test".to_string(),
+            action: "move_display".to_string(),
+            app: None,
+            launch: None,
+        };
+        assert_eq!(build_ipc_command(&shortcut), "move_display:next");
+    }
+
+    #[test]
+    fn test_build_ipc_command_resize_default_size() {
+        // resize without size should default to "80"
+        let shortcut = SpotlightShortcut {
+            name: "Test".to_string(),
+            action: "resize".to_string(),
+            app: None,
+            launch: None,
+        };
+        assert_eq!(build_ipc_command(&shortcut), "resize:80");
+    }
+
+    #[test]
+    fn test_build_ipc_command_unknown_action_passthrough() {
+        let shortcut = SpotlightShortcut {
+            name: "Test".to_string(),
+            action: "unknown_action:with:args".to_string(),
+            app: None,
+            launch: None,
+        };
+        // unknown actions pass through unchanged
+        assert_eq!(build_ipc_command(&shortcut), "unknown_action:with:args");
+    }
+
+    #[test]
+    fn test_build_ipc_command_focus_with_spaces() {
+        let shortcut = SpotlightShortcut {
+            name: "Test".to_string(),
+            action: "focus".to_string(),
+            app: Some("Visual Studio Code".to_string()),
+            launch: None,
+        };
+        assert_eq!(build_ipc_command(&shortcut), "focus:Visual Studio Code");
+    }
+
+    #[test]
+    fn test_build_ipc_command_move_display_numeric() {
+        let shortcut = SpotlightShortcut {
+            name: "Test".to_string(),
+            action: "move_display:2".to_string(),
+            app: None,
+            launch: None,
+        };
+        assert_eq!(build_ipc_command(&shortcut), "move_display:2");
+    }
+
+    #[test]
+    fn test_build_ipc_command_resize_full() {
+        let shortcut = SpotlightShortcut {
+            name: "Test".to_string(),
+            action: "resize:full".to_string(),
+            app: None,
+            launch: None,
+        };
+        assert_eq!(build_ipc_command(&shortcut), "resize:full");
+    }
+
+    // ========================================================================
+    // get_apps_directory test
+    // ========================================================================
+
+    #[test]
+    fn test_get_apps_directory() {
+        let dir = get_apps_directory();
+        // should be ~/Applications/cwm
+        assert!(dir.to_string_lossy().contains("Applications"));
+        assert!(dir.to_string_lossy().contains("cwm"));
+    }
 }

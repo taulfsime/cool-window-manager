@@ -165,3 +165,171 @@ pub fn uninstall() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_plist_basic() {
+        let plist = generate_plist("/usr/local/bin/cwm", None);
+
+        // should contain XML declaration
+        assert!(plist.contains("<?xml version=\"1.0\""));
+        // should contain plist DOCTYPE
+        assert!(plist.contains("<!DOCTYPE plist"));
+        // should contain the label
+        assert!(plist.contains(LAUNCHD_LABEL));
+        // should contain the binary path
+        assert!(plist.contains("/usr/local/bin/cwm"));
+        // should contain daemon and run-foreground arguments
+        assert!(plist.contains("<string>daemon</string>"));
+        assert!(plist.contains("<string>run-foreground</string>"));
+        // should have RunAtLoad true
+        assert!(plist.contains("<key>RunAtLoad</key>"));
+        assert!(plist.contains("<true/>"));
+        // should have KeepAlive false
+        assert!(plist.contains("<key>KeepAlive</key>"));
+        assert!(plist.contains("<false/>"));
+    }
+
+    #[test]
+    fn test_generate_plist_with_log_path() {
+        let plist = generate_plist("/usr/local/bin/cwm", Some("/var/log/cwm.log"));
+
+        // should contain the log arguments
+        assert!(plist.contains("<string>--log</string>"));
+        assert!(plist.contains("<string>/var/log/cwm.log</string>"));
+    }
+
+    #[test]
+    fn test_generate_plist_without_log_path() {
+        let plist = generate_plist("/usr/local/bin/cwm", None);
+
+        // should NOT contain log arguments
+        assert!(!plist.contains("--log"));
+    }
+
+    #[test]
+    fn test_generate_plist_valid_xml_structure() {
+        let plist = generate_plist("/usr/local/bin/cwm", Some("/tmp/cwm.log"));
+
+        // check basic XML structure
+        assert!(plist.starts_with("<?xml"));
+        assert!(plist.contains("<plist version=\"1.0\">"));
+        assert!(plist.contains("</plist>"));
+        assert!(plist.contains("<dict>"));
+        assert!(plist.contains("</dict>"));
+        assert!(plist.contains("<array>"));
+        assert!(plist.contains("</array>"));
+    }
+
+    #[test]
+    fn test_generate_plist_contains_label() {
+        let plist = generate_plist("/path/to/cwm", None);
+
+        // should contain the Label key and value
+        assert!(plist.contains("<key>Label</key>"));
+        assert!(plist.contains(&format!("<string>{}</string>", LAUNCHD_LABEL)));
+    }
+
+    #[test]
+    fn test_generate_plist_program_arguments_order() {
+        let plist = generate_plist("/usr/local/bin/cwm", Some("/tmp/log.txt"));
+
+        // verify the order of arguments in ProgramArguments
+        let binary_pos = plist.find("/usr/local/bin/cwm").unwrap();
+        let daemon_pos = plist.find("<string>daemon</string>").unwrap();
+        let foreground_pos = plist.find("<string>run-foreground</string>").unwrap();
+        let log_flag_pos = plist.find("<string>--log</string>").unwrap();
+        let log_path_pos = plist.find("<string>/tmp/log.txt</string>").unwrap();
+
+        // binary should come first, then daemon, then run-foreground, then --log, then log path
+        assert!(binary_pos < daemon_pos);
+        assert!(daemon_pos < foreground_pos);
+        assert!(foreground_pos < log_flag_pos);
+        assert!(log_flag_pos < log_path_pos);
+    }
+
+    #[test]
+    fn test_launchd_label_constant() {
+        assert_eq!(LAUNCHD_LABEL, "com.cwm.daemon");
+    }
+
+    #[test]
+    fn test_generate_plist_special_characters_in_path() {
+        let plist = generate_plist("/Users/test user/bin/cwm", None);
+
+        // should contain the path with space
+        assert!(plist.contains("/Users/test user/bin/cwm"));
+    }
+
+    #[test]
+    fn test_generate_plist_log_path_with_spaces() {
+        let plist = generate_plist(
+            "/usr/local/bin/cwm",
+            Some("/Users/test/Library/Logs/cwm log.txt"),
+        );
+
+        assert!(plist.contains("/Users/test/Library/Logs/cwm log.txt"));
+    }
+
+    #[test]
+    fn test_generate_plist_absolute_paths() {
+        let plist = generate_plist("/absolute/path/to/cwm", Some("/var/log/cwm.log"));
+
+        assert!(plist.contains("/absolute/path/to/cwm"));
+        assert!(plist.contains("/var/log/cwm.log"));
+    }
+
+    #[test]
+    fn test_generate_plist_no_keep_alive() {
+        let plist = generate_plist("/usr/local/bin/cwm", None);
+
+        // KeepAlive should be false - daemon manages its own lifecycle
+        assert!(plist.contains("<key>KeepAlive</key>"));
+        assert!(plist.contains("<false/>"));
+        // should NOT have KeepAlive true
+        let keep_alive_pos = plist.find("<key>KeepAlive</key>").unwrap();
+        let after_keep_alive = &plist[keep_alive_pos..];
+        assert!(after_keep_alive.contains("<false/>"));
+    }
+
+    #[test]
+    fn test_generate_plist_run_at_load() {
+        let plist = generate_plist("/usr/local/bin/cwm", None);
+
+        // RunAtLoad should be true
+        assert!(plist.contains("<key>RunAtLoad</key>"));
+        let run_at_load_pos = plist.find("<key>RunAtLoad</key>").unwrap();
+        let after_run_at_load = &plist[run_at_load_pos..];
+        assert!(after_run_at_load.contains("<true/>"));
+    }
+
+    #[test]
+    fn test_get_plist_path() {
+        let path = get_plist_path().unwrap();
+        let path_str = path.to_string_lossy();
+
+        // should be in LaunchAgents
+        assert!(path_str.contains("LaunchAgents"));
+        // should have the correct filename
+        assert!(path_str.ends_with("com.cwm.daemon.plist"));
+    }
+
+    #[test]
+    fn test_generate_plist_daemon_argument() {
+        let plist = generate_plist("/usr/local/bin/cwm", None);
+
+        // should have daemon as first argument
+        assert!(plist.contains("<string>daemon</string>"));
+    }
+
+    #[test]
+    fn test_generate_plist_run_foreground_argument() {
+        let plist = generate_plist("/usr/local/bin/cwm", None);
+
+        // should have run-foreground as second argument
+        assert!(plist.contains("<string>run-foreground</string>"));
+    }
+}

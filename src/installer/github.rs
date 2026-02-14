@@ -463,4 +463,145 @@ mod tests {
         let client = GitHubClient::new("taulfsime/cool-window-manager");
         assert!(client.is_ok());
     }
+
+    #[test]
+    fn test_release_info_checksum_url() {
+        let release = create_test_release("stable-a3f2b1c4", "stable", "aarch64-apple-darwin");
+
+        let info = ReleaseInfo::from_github_release(&release, "aarch64-apple-darwin").unwrap();
+
+        // checksum URL should be download URL + .sha256
+        assert!(info.checksum_url.ends_with(".sha256"));
+        assert!(info.checksum_url.starts_with(&info.download_url));
+    }
+
+    #[test]
+    fn test_release_info_size() {
+        let release = create_test_release("stable-a3f2b1c4", "stable", "aarch64-apple-darwin");
+
+        let info = ReleaseInfo::from_github_release(&release, "aarch64-apple-darwin").unwrap();
+
+        assert_eq!(info.size, 1024 * 1024); // 1MB from test helper
+    }
+
+    #[test]
+    fn test_release_info_release_notes() {
+        let release = create_test_release("stable-a3f2b1c4", "stable", "aarch64-apple-darwin");
+
+        let info = ReleaseInfo::from_github_release(&release, "aarch64-apple-darwin").unwrap();
+
+        assert_eq!(info.release_notes, Some("Test release notes".to_string()));
+    }
+
+    #[test]
+    fn test_release_info_date_format() {
+        let release = create_test_release("stable-a3f2b1c4", "stable", "aarch64-apple-darwin");
+
+        let info = ReleaseInfo::from_github_release(&release, "aarch64-apple-darwin").unwrap();
+
+        // date should be in YYYYMMDD format
+        assert_eq!(info.date.len(), 8);
+        assert!(info.date.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn test_release_info_invalid_channel() {
+        let mut release =
+            create_test_release("invalid-a3f2b1c4", "invalid", "aarch64-apple-darwin");
+        release.tag_name = "invalid-a3f2b1c4".to_string();
+
+        let result = ReleaseInfo::from_github_release(&release, "aarch64-apple-darwin");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_release_info_empty_assets() {
+        let release = GitHubRelease {
+            tag_name: "stable-a3f2b1c4".to_string(),
+            name: "Release".to_string(),
+            body: None,
+            prerelease: false,
+            created_at: Utc::now(),
+            assets: vec![],
+        };
+
+        let result = ReleaseInfo::from_github_release(&release, "aarch64-apple-darwin");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_release_info_wrong_asset_extension() {
+        let release = GitHubRelease {
+            tag_name: "stable-a3f2b1c4".to_string(),
+            name: "Release".to_string(),
+            body: None,
+            prerelease: false,
+            created_at: Utc::now(),
+            assets: vec![GitHubAsset {
+                name: "cwm-stable-aarch64-apple-darwin.zip".to_string(), // wrong extension
+                browser_download_url: "https://example.com/cwm.zip".to_string(),
+                size: 1024,
+            }],
+        };
+
+        let result = ReleaseInfo::from_github_release(&release, "aarch64-apple-darwin");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_github_release_deserialization() {
+        let json = r#"{
+            "tag_name": "stable-abc123",
+            "name": "Release v1.0",
+            "body": "Release notes here",
+            "prerelease": false,
+            "created_at": "2024-01-15T10:30:00Z",
+            "assets": [
+                {
+                    "name": "cwm-stable-aarch64-apple-darwin.tar.gz",
+                    "browser_download_url": "https://example.com/cwm.tar.gz",
+                    "size": 2048
+                }
+            ]
+        }"#;
+
+        let release: GitHubRelease = serde_json::from_str(json).unwrap();
+        assert_eq!(release.tag_name, "stable-abc123");
+        assert_eq!(release.assets.len(), 1);
+        assert_eq!(release.assets[0].size, 2048);
+    }
+
+    #[test]
+    fn test_github_asset_deserialization() {
+        let json = r#"{
+            "name": "cwm-dev-x86_64-apple-darwin.tar.gz",
+            "browser_download_url": "https://github.com/download/cwm.tar.gz",
+            "size": 5242880
+        }"#;
+
+        let asset: GitHubAsset = serde_json::from_str(json).unwrap();
+        assert_eq!(asset.name, "cwm-dev-x86_64-apple-darwin.tar.gz");
+        assert_eq!(asset.size, 5242880);
+    }
+
+    #[test]
+    fn test_release_info_clone() {
+        let release = create_test_release("beta-12345678", "beta", "aarch64-apple-darwin");
+        let info = ReleaseInfo::from_github_release(&release, "aarch64-apple-darwin").unwrap();
+
+        let cloned = info.clone();
+        assert_eq!(cloned.version, info.version);
+        assert_eq!(cloned.channel, info.channel);
+        assert_eq!(cloned.commit, info.commit);
+    }
+
+    #[test]
+    fn test_release_info_debug() {
+        let release = create_test_release("dev-abcdef12", "dev", "aarch64-apple-darwin");
+        let info = ReleaseInfo::from_github_release(&release, "aarch64-apple-darwin").unwrap();
+
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("ReleaseInfo"));
+        assert!(debug_str.contains("dev"));
+    }
 }

@@ -21,9 +21,9 @@ pub fn default_apps_directory() -> std::path::PathBuf {
         .join("cwm")
 }
 
-/// prints example spotlight configuration
-pub fn print_example_config() {
-    let examples = vec![
+/// returns example spotlight shortcuts for documentation
+pub fn get_example_shortcuts() -> Vec<SpotlightShortcut> {
+    vec![
         SpotlightShortcut {
             name: "Focus Safari".to_string(),
             action: "focus".to_string(),
@@ -66,7 +66,12 @@ pub fn print_example_config() {
             app: None,
             launch: None,
         },
-    ];
+    ]
+}
+
+/// prints example spotlight configuration
+pub fn print_example_config() {
+    let examples = get_example_shortcuts();
 
     println!("Add the following to your ~/.cwm/config.json:\n");
     println!(r#""spotlight": "#);
@@ -77,4 +82,99 @@ pub fn print_example_config() {
     println!("\nAfter adding, run: cwm spotlight install");
     println!("\nShortcuts will appear in Spotlight with the \"cwm: \" prefix.");
     println!("For example, search for \"cwm: Focus Safari\" in Spotlight.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shortcut_prefix_constant() {
+        assert_eq!(SHORTCUT_PREFIX, "cwm: ");
+    }
+
+    #[test]
+    fn test_bundle_id_prefix_constant() {
+        assert_eq!(BUNDLE_ID_PREFIX, "com.cwm.spotlight");
+    }
+
+    #[test]
+    fn test_default_apps_directory() {
+        let dir = default_apps_directory();
+        let path_str = dir.to_string_lossy();
+
+        // should be in home directory
+        assert!(path_str.contains("Applications"));
+        assert!(path_str.contains("cwm"));
+    }
+
+    #[test]
+    fn test_get_example_shortcuts_count() {
+        let shortcuts = get_example_shortcuts();
+        assert_eq!(shortcuts.len(), 7);
+    }
+
+    #[test]
+    fn test_get_example_shortcuts_has_focus() {
+        let shortcuts = get_example_shortcuts();
+        let focus_count = shortcuts.iter().filter(|s| s.action == "focus").count();
+        assert_eq!(focus_count, 2);
+    }
+
+    #[test]
+    fn test_get_example_shortcuts_has_maximize() {
+        let shortcuts = get_example_shortcuts();
+        let has_maximize = shortcuts.iter().any(|s| s.action == "maximize");
+        assert!(has_maximize);
+    }
+
+    #[test]
+    fn test_get_example_shortcuts_has_move_display() {
+        let shortcuts = get_example_shortcuts();
+        let move_count = shortcuts
+            .iter()
+            .filter(|s| s.action.starts_with("move_display"))
+            .count();
+        assert_eq!(move_count, 2);
+    }
+
+    #[test]
+    fn test_get_example_shortcuts_has_resize() {
+        let shortcuts = get_example_shortcuts();
+        let resize_count = shortcuts
+            .iter()
+            .filter(|s| s.action.starts_with("resize"))
+            .count();
+        assert_eq!(resize_count, 2);
+    }
+
+    #[test]
+    fn test_get_example_shortcuts_focus_has_app() {
+        let shortcuts = get_example_shortcuts();
+        for shortcut in shortcuts.iter().filter(|s| s.action == "focus") {
+            assert!(shortcut.app.is_some(), "Focus shortcuts should have app");
+            assert!(
+                shortcut.launch.is_some(),
+                "Focus shortcuts should have launch"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_example_shortcuts_non_focus_no_app() {
+        let shortcuts = get_example_shortcuts();
+        for shortcut in shortcuts.iter().filter(|s| s.action != "focus") {
+            assert!(
+                shortcut.app.is_none(),
+                "Non-focus shortcuts should not have app"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_example_shortcuts_serializable() {
+        let shortcuts = get_example_shortcuts();
+        let json = serde_json::to_string(&shortcuts);
+        assert!(json.is_ok());
+    }
 }

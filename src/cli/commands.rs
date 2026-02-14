@@ -1988,4 +1988,892 @@ mod tests {
         let json = serde_json::to_string(&response).unwrap();
         assert_eq!(json, "{\"items\":[]}");
     }
+
+    // ========================================================================
+    // resolve_app_name tests
+    // ========================================================================
+
+    #[test]
+    fn test_resolve_app_name_normal() {
+        let result = resolve_app_name("Safari").unwrap();
+        assert_eq!(result, "Safari");
+    }
+
+    #[test]
+    fn test_resolve_app_name_with_spaces() {
+        let result = resolve_app_name("Visual Studio Code").unwrap();
+        assert_eq!(result, "Visual Studio Code");
+    }
+
+    #[test]
+    fn test_resolve_app_name_empty() {
+        let result = resolve_app_name("");
+        // empty string is valid (not stdin)
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "");
+    }
+
+    // ========================================================================
+    // match_result_to_data tests
+    // ========================================================================
+
+    #[test]
+    fn test_match_result_to_data_exact() {
+        let app = matching::AppInfo {
+            name: "Safari".to_string(),
+            pid: 1234,
+            bundle_id: Some("com.apple.Safari".to_string()),
+            titles: vec![],
+        };
+        let result = matching::MatchResult {
+            app,
+            match_type: matching::MatchType::Exact,
+        };
+
+        let data = match_result_to_data(&result, "Safari");
+        assert_eq!(data.match_type, "exact");
+        assert_eq!(data.query, "Safari");
+        // exact matches don't have a distance
+        assert_eq!(data.distance, None);
+    }
+
+    #[test]
+    fn test_match_result_to_data_fuzzy() {
+        let app = matching::AppInfo {
+            name: "Safari".to_string(),
+            pid: 1234,
+            bundle_id: None,
+            titles: vec![],
+        };
+        let result = matching::MatchResult {
+            app,
+            match_type: matching::MatchType::Fuzzy { distance: 2 },
+        };
+
+        let data = match_result_to_data(&result, "Safar");
+        assert_eq!(data.match_type, "fuzzy { distance: 2 }");
+        assert_eq!(data.query, "Safar");
+        assert_eq!(data.distance, Some(2));
+    }
+
+    #[test]
+    fn test_match_result_to_data_prefix() {
+        let app = matching::AppInfo {
+            name: "Safari".to_string(),
+            pid: 1234,
+            bundle_id: None,
+            titles: vec![],
+        };
+        let result = matching::MatchResult {
+            app,
+            match_type: matching::MatchType::Prefix,
+        };
+
+        let data = match_result_to_data(&result, "Saf");
+        assert_eq!(data.match_type, "prefix");
+        assert_eq!(data.query, "Saf");
+    }
+
+    // ========================================================================
+    // app_info_to_data tests
+    // ========================================================================
+
+    #[test]
+    fn test_app_info_to_data_with_bundle_id() {
+        let app = matching::AppInfo {
+            name: "Safari".to_string(),
+            pid: 1234,
+            bundle_id: Some("com.apple.Safari".to_string()),
+            titles: vec!["GitHub".to_string()],
+        };
+
+        let data = app_info_to_data(&app);
+        assert_eq!(data.name, "Safari");
+        assert_eq!(data.pid, 1234);
+        assert_eq!(data.bundle_id, Some("com.apple.Safari".to_string()));
+    }
+
+    #[test]
+    fn test_app_info_to_data_without_bundle_id() {
+        let app = matching::AppInfo {
+            name: "Test App".to_string(),
+            pid: 5678,
+            bundle_id: None,
+            titles: vec![],
+        };
+
+        let data = app_info_to_data(&app);
+        assert_eq!(data.name, "Test App");
+        assert_eq!(data.pid, 5678);
+        assert_eq!(data.bundle_id, None);
+    }
+
+    // ========================================================================
+    // CLI parsing tests (using clap)
+    // ========================================================================
+
+    #[test]
+    fn test_cli_parse_focus_single_app() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "focus", "--app", "Safari"]).unwrap();
+
+        match cli.command {
+            Commands::Focus {
+                app,
+                launch,
+                no_launch,
+                verbose,
+            } => {
+                assert_eq!(app, vec!["Safari"]);
+                assert!(!launch);
+                assert!(!no_launch);
+                assert!(!verbose);
+            }
+            _ => panic!("Expected Focus command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_focus_multiple_apps() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "cwm", "focus", "--app", "Safari", "--app", "Chrome", "--app", "Firefox",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Focus { app, .. } => {
+                assert_eq!(app, vec!["Safari", "Chrome", "Firefox"]);
+            }
+            _ => panic!("Expected Focus command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_focus_with_launch() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "focus", "--app", "Safari", "--launch"]).unwrap();
+
+        match cli.command {
+            Commands::Focus {
+                launch, no_launch, ..
+            } => {
+                assert!(launch);
+                assert!(!no_launch);
+            }
+            _ => panic!("Expected Focus command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_maximize_without_app() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "maximize"]).unwrap();
+
+        match cli.command {
+            Commands::Maximize { app, .. } => {
+                assert!(app.is_none());
+            }
+            _ => panic!("Expected Maximize command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_maximize_with_app() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "maximize", "--app", "Safari"]).unwrap();
+
+        match cli.command {
+            Commands::Maximize { app, .. } => {
+                assert_eq!(app, Some("Safari".to_string()));
+            }
+            _ => panic!("Expected Maximize command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_resize_percent() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "resize", "--to", "80"]).unwrap();
+
+        match cli.command {
+            Commands::Resize {
+                to, app, overflow, ..
+            } => {
+                assert_eq!(to, "80");
+                assert!(app.is_none());
+                assert!(!overflow);
+            }
+            _ => panic!("Expected Resize command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_resize_with_overflow() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "resize", "--to", "80", "--overflow"]).unwrap();
+
+        match cli.command {
+            Commands::Resize { overflow, .. } => {
+                assert!(overflow);
+            }
+            _ => panic!("Expected Resize command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_move_display() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "move-display", "next"]).unwrap();
+
+        match cli.command {
+            Commands::MoveDisplay { target, app, .. } => {
+                assert_eq!(target, "next");
+                assert!(app.is_none());
+            }
+            _ => panic!("Expected MoveDisplay command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_move_display_with_app() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "move-display", "prev", "--app", "Safari"]).unwrap();
+
+        match cli.command {
+            Commands::MoveDisplay { target, app, .. } => {
+                assert_eq!(target, "prev");
+                assert_eq!(app, Some("Safari".to_string()));
+            }
+            _ => panic!("Expected MoveDisplay command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_list_apps() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "list", "apps"]).unwrap();
+
+        match cli.command {
+            Commands::List {
+                resource,
+                json,
+                detailed,
+                ..
+            } => {
+                assert!(matches!(resource, Some(ListResource::Apps)));
+                assert!(!json);
+                assert!(!detailed);
+            }
+            _ => panic!("Expected List command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_list_with_json() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "list", "displays", "--json"]).unwrap();
+
+        match cli.command {
+            Commands::List { resource, json, .. } => {
+                assert!(matches!(resource, Some(ListResource::Displays)));
+                assert!(json);
+            }
+            _ => panic!("Expected List command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_list_with_detailed() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "list", "aliases", "--detailed"]).unwrap();
+
+        match cli.command {
+            Commands::List {
+                resource, detailed, ..
+            } => {
+                assert!(matches!(resource, Some(ListResource::Aliases)));
+                assert!(detailed);
+            }
+            _ => panic!("Expected List command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_global_json_flag() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "--json", "list", "apps"]).unwrap();
+
+        assert!(cli.json);
+        assert!(!cli.no_json);
+    }
+
+    #[test]
+    fn test_cli_parse_global_quiet_flag() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "--quiet", "maximize"]).unwrap();
+
+        assert!(cli.quiet);
+    }
+
+    #[test]
+    fn test_cli_parse_config_override() {
+        use clap::Parser;
+        let cli =
+            Cli::try_parse_from(["cwm", "--config", "/tmp/config.json", "list", "apps"]).unwrap();
+
+        assert_eq!(
+            cli.config,
+            Some(std::path::PathBuf::from("/tmp/config.json"))
+        );
+    }
+
+    // ========================================================================
+    // Additional CLI parsing tests
+    // ========================================================================
+
+    #[test]
+    fn test_cli_parse_record_shortcut() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "record-shortcut"]).unwrap();
+
+        match cli.command {
+            Commands::RecordShortcut {
+                action,
+                app,
+                launch,
+                no_launch,
+                yes,
+            } => {
+                assert!(action.is_none());
+                assert!(app.is_none());
+                assert!(!launch);
+                assert!(!no_launch);
+                assert!(!yes);
+            }
+            _ => panic!("Expected RecordShortcut command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_record_shortcut_with_action() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "cwm",
+            "record-shortcut",
+            "--action",
+            "focus",
+            "--app",
+            "Safari",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::RecordShortcut { action, app, .. } => {
+                assert_eq!(action, Some("focus".to_string()));
+                assert_eq!(app, Some("Safari".to_string()));
+            }
+            _ => panic!("Expected RecordShortcut command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_record_shortcut_with_yes() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "record-shortcut", "-y"]).unwrap();
+
+        match cli.command {
+            Commands::RecordShortcut { yes, .. } => {
+                assert!(yes);
+            }
+            _ => panic!("Expected RecordShortcut command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_check_permissions() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "check-permissions"]).unwrap();
+
+        match cli.command {
+            Commands::CheckPermissions { prompt } => {
+                assert!(!prompt);
+            }
+            _ => panic!("Expected CheckPermissions command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_check_permissions_with_prompt() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "check-permissions", "--prompt"]).unwrap();
+
+        match cli.command {
+            Commands::CheckPermissions { prompt } => {
+                assert!(prompt);
+            }
+            _ => panic!("Expected CheckPermissions command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_install() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "install"]).unwrap();
+
+        match cli.command {
+            Commands::Install {
+                path,
+                force,
+                no_sudo,
+            } => {
+                assert!(path.is_none());
+                assert!(!force);
+                assert!(!no_sudo);
+            }
+            _ => panic!("Expected Install command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_install_with_options() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "cwm",
+            "install",
+            "--path",
+            "/usr/local/bin",
+            "--force",
+            "--no-sudo",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Install {
+                path,
+                force,
+                no_sudo,
+            } => {
+                assert_eq!(path, Some(std::path::PathBuf::from("/usr/local/bin")));
+                assert!(force);
+                assert!(no_sudo);
+            }
+            _ => panic!("Expected Install command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_uninstall() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "uninstall"]).unwrap();
+
+        match cli.command {
+            Commands::Uninstall { path } => {
+                assert!(path.is_none());
+            }
+            _ => panic!("Expected Uninstall command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_uninstall_with_path() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "uninstall", "--path", "/usr/local/bin"]).unwrap();
+
+        match cli.command {
+            Commands::Uninstall { path } => {
+                assert_eq!(path, Some(std::path::PathBuf::from("/usr/local/bin")));
+            }
+            _ => panic!("Expected Uninstall command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_update() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "update"]).unwrap();
+
+        match cli.command {
+            Commands::Update {
+                check,
+                force,
+                prerelease,
+            } => {
+                assert!(!check);
+                assert!(!force);
+                assert!(!prerelease);
+            }
+            _ => panic!("Expected Update command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_update_with_options() {
+        use clap::Parser;
+        let cli =
+            Cli::try_parse_from(["cwm", "update", "--check", "--force", "--prerelease"]).unwrap();
+
+        match cli.command {
+            Commands::Update {
+                check,
+                force,
+                prerelease,
+            } => {
+                assert!(check);
+                assert!(force);
+                assert!(prerelease);
+            }
+            _ => panic!("Expected Update command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_spotlight_install() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "spotlight", "install"]).unwrap();
+
+        match cli.command {
+            Commands::Spotlight { command } => match command {
+                SpotlightCommands::Install { name, force } => {
+                    assert!(name.is_none());
+                    assert!(!force);
+                }
+                _ => panic!("Expected Install subcommand"),
+            },
+            _ => panic!("Expected Spotlight command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_spotlight_install_with_options() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "cwm",
+            "spotlight",
+            "install",
+            "--name",
+            "Focus Safari",
+            "--force",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Spotlight { command } => match command {
+                SpotlightCommands::Install { name, force } => {
+                    assert_eq!(name, Some("Focus Safari".to_string()));
+                    assert!(force);
+                }
+                _ => panic!("Expected Install subcommand"),
+            },
+            _ => panic!("Expected Spotlight command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_spotlight_remove() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "spotlight", "remove", "Focus Safari"]).unwrap();
+
+        match cli.command {
+            Commands::Spotlight { command } => match command {
+                SpotlightCommands::Remove { name, all } => {
+                    assert_eq!(name, Some("Focus Safari".to_string()));
+                    assert!(!all);
+                }
+                _ => panic!("Expected Remove subcommand"),
+            },
+            _ => panic!("Expected Spotlight command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_spotlight_remove_all() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "spotlight", "remove", "--all"]).unwrap();
+
+        match cli.command {
+            Commands::Spotlight { command } => match command {
+                SpotlightCommands::Remove { name, all } => {
+                    assert!(name.is_none());
+                    assert!(all);
+                }
+                _ => panic!("Expected Remove subcommand"),
+            },
+            _ => panic!("Expected Spotlight command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_daemon_start() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "daemon", "start"]).unwrap();
+
+        match cli.command {
+            Commands::Daemon { command } => match command {
+                DaemonCommands::Start { log, foreground } => {
+                    assert!(log.is_none());
+                    assert!(!foreground);
+                }
+                _ => panic!("Expected Start subcommand"),
+            },
+            _ => panic!("Expected Daemon command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_daemon_start_with_options() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "cwm",
+            "daemon",
+            "start",
+            "--log",
+            "/tmp/cwm.log",
+            "--foreground",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Daemon { command } => match command {
+                DaemonCommands::Start { log, foreground } => {
+                    assert_eq!(log, Some("/tmp/cwm.log".to_string()));
+                    assert!(foreground);
+                }
+                _ => panic!("Expected Start subcommand"),
+            },
+            _ => panic!("Expected Daemon command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_daemon_install() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "daemon", "install"]).unwrap();
+
+        match cli.command {
+            Commands::Daemon { command } => match command {
+                DaemonCommands::Install { bin, log } => {
+                    assert!(bin.is_none());
+                    assert!(log.is_none());
+                }
+                _ => panic!("Expected Install subcommand"),
+            },
+            _ => panic!("Expected Daemon command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_daemon_install_with_options() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "cwm",
+            "daemon",
+            "install",
+            "--bin",
+            "/usr/local/bin/cwm",
+            "--log",
+            "/tmp/cwm.log",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Daemon { command } => match command {
+                DaemonCommands::Install { bin, log } => {
+                    assert_eq!(bin, Some("/usr/local/bin/cwm".to_string()));
+                    assert_eq!(log, Some("/tmp/cwm.log".to_string()));
+                }
+                _ => panic!("Expected Install subcommand"),
+            },
+            _ => panic!("Expected Daemon command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_get_focused() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "get", "focused"]).unwrap();
+
+        match cli.command {
+            Commands::Get { command } => match command {
+                GetCommands::Focused { format } => {
+                    assert!(format.is_none());
+                }
+                _ => panic!("Expected Focused subcommand"),
+            },
+            _ => panic!("Expected Get command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_get_focused_with_format() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "get", "focused", "--format", "{app.name}"]).unwrap();
+
+        match cli.command {
+            Commands::Get { command } => match command {
+                GetCommands::Focused { format } => {
+                    assert_eq!(format, Some("{app.name}".to_string()));
+                }
+                _ => panic!("Expected Focused subcommand"),
+            },
+            _ => panic!("Expected Get command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_get_window() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "get", "window", "--app", "Safari"]).unwrap();
+
+        match cli.command {
+            Commands::Get { command } => match command {
+                GetCommands::Window { app, format } => {
+                    assert_eq!(app, "Safari");
+                    assert!(format.is_none());
+                }
+                _ => panic!("Expected Window subcommand"),
+            },
+            _ => panic!("Expected Get command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_config_set() {
+        use clap::Parser;
+        let cli =
+            Cli::try_parse_from(["cwm", "config", "set", "settings.fuzzy_threshold", "3"]).unwrap();
+
+        match cli.command {
+            Commands::Config { command } => match command {
+                ConfigCommands::Set { key, value } => {
+                    assert_eq!(key, "settings.fuzzy_threshold");
+                    assert_eq!(value, "3");
+                }
+                _ => panic!("Expected Set subcommand"),
+            },
+            _ => panic!("Expected Config command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_list_with_names() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["cwm", "list", "apps", "--names"]).unwrap();
+
+        match cli.command {
+            Commands::List { names, .. } => {
+                assert!(names);
+            }
+            _ => panic!("Expected List command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_list_with_format() {
+        use clap::Parser;
+        let cli =
+            Cli::try_parse_from(["cwm", "list", "apps", "--format", "{name} ({pid})"]).unwrap();
+
+        match cli.command {
+            Commands::List { format, .. } => {
+                assert_eq!(format, Some("{name} ({pid})".to_string()));
+            }
+            _ => panic!("Expected List command"),
+        }
+    }
+
+    // ========================================================================
+    // resolve_app_names tests
+    // ========================================================================
+
+    #[test]
+    fn test_resolve_app_names_single() {
+        let apps = vec!["Safari".to_string()];
+        let result = resolve_app_names(&apps).unwrap();
+        assert_eq!(result, vec!["Safari"]);
+    }
+
+    #[test]
+    fn test_resolve_app_names_multiple() {
+        let apps = vec![
+            "Safari".to_string(),
+            "Chrome".to_string(),
+            "Firefox".to_string(),
+        ];
+        let result = resolve_app_names(&apps).unwrap();
+        assert_eq!(result, vec!["Safari", "Chrome", "Firefox"]);
+    }
+
+    #[test]
+    fn test_resolve_app_names_empty() {
+        let apps: Vec<String> = vec![];
+        let result = resolve_app_names(&apps).unwrap();
+        assert!(result.is_empty());
+    }
+
+    // ========================================================================
+    // match_result_to_data tests for title matches
+    // ========================================================================
+
+    #[test]
+    fn test_match_result_to_data_title_exact() {
+        let app = matching::AppInfo {
+            name: "Safari".to_string(),
+            pid: 1234,
+            bundle_id: None,
+            titles: vec!["GitHub".to_string()],
+        };
+        let result = matching::MatchResult {
+            app,
+            match_type: matching::MatchType::TitleExact {
+                title: "GitHub".to_string(),
+            },
+        };
+
+        let data = match_result_to_data(&result, "GitHub");
+        assert!(data.match_type.contains("titleexact"));
+        assert_eq!(data.query, "GitHub");
+    }
+
+    #[test]
+    fn test_match_result_to_data_title_prefix() {
+        let app = matching::AppInfo {
+            name: "Safari".to_string(),
+            pid: 1234,
+            bundle_id: None,
+            titles: vec!["GitHub - taulfsime".to_string()],
+        };
+        let result = matching::MatchResult {
+            app,
+            match_type: matching::MatchType::TitlePrefix {
+                title: "GitHub - taulfsime".to_string(),
+            },
+        };
+
+        let data = match_result_to_data(&result, "GitHub");
+        assert!(data.match_type.contains("titleprefix"));
+        assert_eq!(data.query, "GitHub");
+    }
+
+    #[test]
+    fn test_match_result_to_data_title_fuzzy() {
+        let app = matching::AppInfo {
+            name: "Safari".to_string(),
+            pid: 1234,
+            bundle_id: None,
+            titles: vec!["GitHub".to_string()],
+        };
+        let result = matching::MatchResult {
+            app,
+            match_type: matching::MatchType::TitleFuzzy {
+                title: "GitHub".to_string(),
+                distance: 1,
+            },
+        };
+
+        let data = match_result_to_data(&result, "GitHb");
+        assert!(data.match_type.contains("titlefuzzy"));
+        assert_eq!(data.query, "GitHb");
+        assert_eq!(data.distance, Some(1));
+    }
 }

@@ -429,4 +429,286 @@ mod tests {
         assert_eq!(result.app.name, "Slack");
         assert!(matches!(result.match_type, MatchType::Exact));
     }
+
+    // ========================================================================
+    // Additional matching tests
+    // ========================================================================
+
+    #[test]
+    fn test_empty_query_matches_first_app() {
+        let apps = test_apps();
+        let result = find_app("", &apps, 2);
+        // empty query matches first app as prefix (empty string is prefix of everything)
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_no_match_empty_apps() {
+        let apps: Vec<AppInfo> = vec![];
+        let result = find_app("Safari", &apps, 2);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_prefix_match_case_insensitive() {
+        let apps = test_apps();
+        let result = find_app("goo", &apps, 2).unwrap();
+        assert_eq!(result.app.name, "Google Chrome");
+        assert!(matches!(result.match_type, MatchType::Prefix));
+    }
+
+    #[test]
+    fn test_fuzzy_match_threshold_zero() {
+        let apps = test_apps();
+        // with threshold 0, only exact matches should work
+        let result = find_app("Slakc", &apps, 0);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_fuzzy_match_threshold_one() {
+        let apps = test_apps();
+        // "Slakc" is 2 edits from "Slack", so threshold 1 should not match
+        let result = find_app("Slakc", &apps, 1);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_fuzzy_match_at_threshold() {
+        let apps = test_apps();
+        // "Slak" is 1 edit from "Slack"
+        let result = find_app("Slak", &apps, 1).unwrap();
+        assert_eq!(result.app.name, "Slack");
+    }
+
+    #[test]
+    fn test_match_result_describe_exact() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Safari".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::Exact,
+        };
+        let desc = result.describe();
+        assert!(desc.contains("Safari"));
+        assert!(desc.contains("exact"));
+    }
+
+    #[test]
+    fn test_match_result_describe_prefix() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Safari".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::Prefix,
+        };
+        let desc = result.describe();
+        assert!(desc.contains("Safari"));
+        assert!(desc.contains("prefix"));
+    }
+
+    #[test]
+    fn test_match_result_describe_fuzzy() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Safari".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::Fuzzy { distance: 2 },
+        };
+        let desc = result.describe();
+        assert!(desc.contains("Safari"));
+        assert!(desc.contains("fuzzy"));
+        assert!(desc.contains("2"));
+    }
+
+    #[test]
+    fn test_match_result_describe_title_exact() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Chrome".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::TitleExact {
+                title: "New Tab".to_string(),
+            },
+        };
+        let desc = result.describe();
+        assert!(desc.contains("Chrome"));
+        assert!(desc.contains("title exact"));
+        assert!(desc.contains("New Tab"));
+    }
+
+    #[test]
+    fn test_match_result_describe_title_prefix() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Safari".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::TitlePrefix {
+                title: "GitHub - taulfsime".to_string(),
+            },
+        };
+        let desc = result.describe();
+        assert!(desc.contains("Safari"));
+        assert!(desc.contains("title prefix"));
+    }
+
+    #[test]
+    fn test_match_result_describe_title_fuzzy() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Chrome".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::TitleFuzzy {
+                title: "New Tab".to_string(),
+                distance: 1,
+            },
+        };
+        let desc = result.describe();
+        assert!(desc.contains("Chrome"));
+        assert!(desc.contains("title fuzzy"));
+        assert!(desc.contains("1"));
+    }
+
+    #[test]
+    fn test_match_result_distance_exact() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Safari".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::Exact,
+        };
+        assert_eq!(result.distance(), None);
+    }
+
+    #[test]
+    fn test_match_result_distance_fuzzy() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Safari".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::Fuzzy { distance: 3 },
+        };
+        assert_eq!(result.distance(), Some(3));
+    }
+
+    #[test]
+    fn test_match_result_distance_title_fuzzy() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Chrome".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::TitleFuzzy {
+                title: "Tab".to_string(),
+                distance: 2,
+            },
+        };
+        assert_eq!(result.distance(), Some(2));
+    }
+
+    #[test]
+    fn test_app_info_clone() {
+        let app = AppInfo {
+            name: "Safari".to_string(),
+            pid: 123,
+            bundle_id: Some("com.apple.Safari".to_string()),
+            titles: vec!["Title 1".to_string(), "Title 2".to_string()],
+        };
+        let cloned = app.clone();
+
+        assert_eq!(cloned.name, app.name);
+        assert_eq!(cloned.pid, app.pid);
+        assert_eq!(cloned.bundle_id, app.bundle_id);
+        assert_eq!(cloned.titles, app.titles);
+    }
+
+    #[test]
+    fn test_match_type_clone() {
+        let mt = MatchType::Fuzzy { distance: 5 };
+        let cloned = mt.clone();
+
+        assert!(matches!(cloned, MatchType::Fuzzy { distance: 5 }));
+    }
+
+    #[test]
+    fn test_match_result_clone() {
+        let result = MatchResult {
+            app: AppInfo {
+                name: "Test".to_string(),
+                pid: 1,
+                bundle_id: None,
+                titles: vec![],
+            },
+            match_type: MatchType::Exact,
+        };
+        let cloned = result.clone();
+
+        assert_eq!(cloned.app.name, result.app.name);
+    }
+
+    #[test]
+    fn test_multiple_title_matches_first_wins() {
+        let apps = vec![AppInfo {
+            name: "Chrome".to_string(),
+            pid: 1,
+            bundle_id: None,
+            titles: vec![
+                "Tab One".to_string(),
+                "Tab Two".to_string(),
+                "Tab Three".to_string(),
+            ],
+        }];
+
+        let result = find_app("Tab One", &apps, 2).unwrap();
+        assert!(matches!(result.match_type, MatchType::TitleExact { .. }));
+    }
+
+    #[test]
+    fn test_app_with_no_titles() {
+        let apps = vec![AppInfo {
+            name: "Finder".to_string(),
+            pid: 1,
+            bundle_id: None,
+            titles: vec![],
+        }];
+
+        // should still match by name
+        let result = find_app("Finder", &apps, 2).unwrap();
+        assert_eq!(result.app.name, "Finder");
+        assert!(matches!(result.match_type, MatchType::Exact));
+    }
+
+    #[test]
+    fn test_levenshtein_distance_used() {
+        // verify we're using levenshtein distance correctly
+        // "kitten" -> "sitting" has distance 3
+        let distance = levenshtein("kitten", "sitting");
+        assert_eq!(distance, 3);
+    }
 }

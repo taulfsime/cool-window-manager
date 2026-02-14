@@ -556,4 +556,244 @@ mod tests {
         assert!(format_success_response(&req, "done").is_none());
         assert!(format_error(&req, "error").is_none());
     }
+
+    // ========================================================================
+    // Additional parsing edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_parse_json_with_whitespace() {
+        let input = r#"  {  "method" : "ping"  }  "#;
+        let req = IpcRequest::parse(input).unwrap();
+
+        assert_eq!(req.method, "ping");
+        assert_eq!(req.format, InputFormat::Json);
+    }
+
+    #[test]
+    fn test_parse_json_invalid() {
+        let input = r#"{"method": }"#;
+        let result = IpcRequest::parse(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_json_missing_method() {
+        // serde will fail if method is missing
+        let input = r#"{"params": {"app": "Safari"}}"#;
+        let result = IpcRequest::parse(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_text_empty() {
+        let input = "";
+        let req = IpcRequest::parse(input).unwrap();
+
+        assert_eq!(req.method, "");
+        assert!(req.params.is_empty());
+        assert_eq!(req.format, InputFormat::Text);
+    }
+
+    #[test]
+    fn test_parse_text_whitespace_only() {
+        let input = "   ";
+        let req = IpcRequest::parse(input).unwrap();
+
+        assert_eq!(req.method, "");
+        assert!(req.params.is_empty());
+    }
+
+    #[test]
+    fn test_parse_text_maximize() {
+        let input = "maximize:Safari";
+        let req = IpcRequest::parse(input).unwrap();
+
+        assert_eq!(req.method, "maximize");
+        assert_eq!(req.params.get("app"), Some(&"Safari".to_string()));
+    }
+
+    #[test]
+    fn test_parse_text_generic_action() {
+        let input = "custom_action:some_value";
+        let req = IpcRequest::parse(input).unwrap();
+
+        assert_eq!(req.method, "custom_action");
+        // generic actions use "arg" as the key
+        assert_eq!(req.params.get("arg"), Some(&"some_value".to_string()));
+    }
+
+    #[test]
+    fn test_parse_text_colon_in_value() {
+        // resize:80:Safari should parse correctly
+        let input = "resize:80:Safari";
+        let req = IpcRequest::parse(input).unwrap();
+
+        assert_eq!(req.method, "resize");
+        assert_eq!(req.params.get("to"), Some(&"80".to_string()));
+        assert_eq!(req.params.get("app"), Some(&"Safari".to_string()));
+    }
+
+    #[test]
+    fn test_parse_json_null_id() {
+        let input = r#"{"method":"ping","id":null}"#;
+        let req = IpcRequest::parse(input).unwrap();
+
+        assert_eq!(req.method, "ping");
+        // explicit null id is treated as None by serde's Option deserialization
+        // this means it's a notification (no response expected)
+        assert!(req.id.is_none());
+    }
+
+    #[test]
+    fn test_parse_json_numeric_id() {
+        let input = r#"{"method":"ping","id":42}"#;
+        let req = IpcRequest::parse(input).unwrap();
+
+        assert_eq!(req.method, "ping");
+        assert!(req.id.is_some());
+        assert_eq!(req.id.unwrap(), serde_json::json!(42));
+    }
+
+    #[test]
+    fn test_parse_json_empty_params() {
+        let input = r#"{"method":"status","params":{},"id":1}"#;
+        let req = IpcRequest::parse(input).unwrap();
+
+        assert_eq!(req.method, "status");
+        assert!(req.params.is_empty());
+    }
+
+    // ========================================================================
+    // is_notification edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_text_request_not_notification() {
+        // text requests are never notifications
+        let req = IpcRequest::parse("ping").unwrap();
+        assert!(!req.is_notification());
+    }
+
+    #[test]
+    fn test_json_with_id_not_notification() {
+        let input = r#"{"method":"ping","id":"abc"}"#;
+        let req = IpcRequest::parse(input).unwrap();
+        assert!(!req.is_notification());
+    }
+
+    // ========================================================================
+    // Response formatting edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_format_success_json_complex_result() {
+        let input = r#"{"method":"status","id":1}"#;
+        let req = IpcRequest::parse(input).unwrap();
+
+        let result = serde_json::json!({
+            "running": true,
+            "pid": 12345,
+            "shortcuts": 5
+        });
+
+        let response = format_success_response(&req, result).unwrap();
+
+        assert!(response.contains("\"running\":true"));
+        assert!(response.contains("\"pid\":12345"));
+        assert!(response.contains("\"shortcuts\":5"));
+    }
+
+    #[test]
+    fn test_format_error_response_with_string_id() {
+        let input = r#"{"method":"focus","id":"request-123"}"#;
+        let req = IpcRequest::parse(input).unwrap();
+
+        let response = format_error_response(&req, exit_codes::ERROR, "Something failed").unwrap();
+
+        assert!(response.contains("\"id\":\"request-123\""));
+        assert!(response.contains("\"message\":\"Something failed\""));
+    }
+
+    #[test]
+    fn test_format_error_text_mode() {
+        let req = IpcRequest::parse("invalid_command").unwrap();
+        let response = format_error(&req, "Unknown command").unwrap();
+
+        assert_eq!(response, "ERROR: Unknown command");
+    }
+
+    #[test]
+    fn test_format_success_text_mode() {
+        let req = IpcRequest::parse("ping").unwrap();
+        let response = format_success_response(&req, "pong").unwrap();
+
+        assert_eq!(response, "OK");
+    }
+
+    // ========================================================================
+    // Path functions
+    // ========================================================================
+
+    #[test]
+    fn test_get_pid_file_path() {
+        let path = get_pid_file_path();
+        assert_eq!(path.to_string_lossy(), "/tmp/cwm.pid");
+    }
+
+    #[test]
+    fn test_get_socket_path() {
+        let path = get_socket_path();
+        // should be in ~/.cwm/cwm.sock
+        assert!(path.to_string_lossy().contains(".cwm"));
+        assert!(path.to_string_lossy().ends_with("cwm.sock"));
+    }
+
+    // ========================================================================
+    // InputFormat tests
+    // ========================================================================
+
+    #[test]
+    fn test_input_format_equality() {
+        assert_eq!(InputFormat::Json, InputFormat::Json);
+        assert_eq!(InputFormat::Text, InputFormat::Text);
+        assert_ne!(InputFormat::Json, InputFormat::Text);
+    }
+
+    #[test]
+    fn test_input_format_clone() {
+        let fmt = InputFormat::Json;
+        let cloned = fmt.clone();
+        assert_eq!(fmt, cloned);
+    }
+
+    #[test]
+    fn test_input_format_debug() {
+        let fmt = InputFormat::Json;
+        let debug_str = format!("{:?}", fmt);
+        assert!(debug_str.contains("Json"));
+    }
+
+    // ========================================================================
+    // IpcRequest clone and debug
+    // ========================================================================
+
+    #[test]
+    fn test_ipc_request_clone() {
+        let req = IpcRequest::parse(r#"{"method":"ping","id":1}"#).unwrap();
+        let cloned = req.clone();
+
+        assert_eq!(req.method, cloned.method);
+        assert_eq!(req.format, cloned.format);
+    }
+
+    #[test]
+    fn test_ipc_request_debug() {
+        let req = IpcRequest::parse("ping").unwrap();
+        let debug_str = format!("{:?}", req);
+
+        assert!(debug_str.contains("IpcRequest"));
+        assert!(debug_str.contains("method"));
+        assert!(debug_str.contains("ping"));
+    }
 }

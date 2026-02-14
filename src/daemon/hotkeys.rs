@@ -738,6 +738,147 @@ mod macos {
             }
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_extract_modifiers_none() {
+            let mods = extract_modifiers(0);
+            assert!(!mods.ctrl);
+            assert!(!mods.alt);
+            assert!(!mods.cmd);
+            assert!(!mods.shift);
+        }
+
+        #[test]
+        fn test_extract_modifiers_ctrl_only() {
+            let mods = extract_modifiers(K_CG_EVENT_FLAG_MASK_CONTROL);
+            assert!(mods.ctrl);
+            assert!(!mods.alt);
+            assert!(!mods.cmd);
+            assert!(!mods.shift);
+        }
+
+        #[test]
+        fn test_extract_modifiers_alt_only() {
+            let mods = extract_modifiers(K_CG_EVENT_FLAG_MASK_ALTERNATE);
+            assert!(!mods.ctrl);
+            assert!(mods.alt);
+            assert!(!mods.cmd);
+            assert!(!mods.shift);
+        }
+
+        #[test]
+        fn test_extract_modifiers_cmd_only() {
+            let mods = extract_modifiers(K_CG_EVENT_FLAG_MASK_COMMAND);
+            assert!(!mods.ctrl);
+            assert!(!mods.alt);
+            assert!(mods.cmd);
+            assert!(!mods.shift);
+        }
+
+        #[test]
+        fn test_extract_modifiers_shift_only() {
+            let mods = extract_modifiers(K_CG_EVENT_FLAG_MASK_SHIFT);
+            assert!(!mods.ctrl);
+            assert!(!mods.alt);
+            assert!(!mods.cmd);
+            assert!(mods.shift);
+        }
+
+        #[test]
+        fn test_extract_modifiers_all() {
+            let flags = K_CG_EVENT_FLAG_MASK_CONTROL
+                | K_CG_EVENT_FLAG_MASK_ALTERNATE
+                | K_CG_EVENT_FLAG_MASK_COMMAND
+                | K_CG_EVENT_FLAG_MASK_SHIFT;
+            let mods = extract_modifiers(flags);
+            assert!(mods.ctrl);
+            assert!(mods.alt);
+            assert!(mods.cmd);
+            assert!(mods.shift);
+        }
+
+        #[test]
+        fn test_extract_modifiers_ctrl_alt() {
+            let flags = K_CG_EVENT_FLAG_MASK_CONTROL | K_CG_EVENT_FLAG_MASK_ALTERNATE;
+            let mods = extract_modifiers(flags);
+            assert!(mods.ctrl);
+            assert!(mods.alt);
+            assert!(!mods.cmd);
+            assert!(!mods.shift);
+        }
+
+        #[test]
+        fn test_build_display_string_empty() {
+            let mods = Modifiers::default();
+            let keys = BTreeSet::new();
+            assert_eq!(build_display_string(&mods, &keys), "(press keys...)");
+        }
+
+        #[test]
+        fn test_build_display_string_modifiers_only() {
+            let mods = Modifiers {
+                ctrl: true,
+                alt: true,
+                cmd: false,
+                shift: false,
+            };
+            let keys = BTreeSet::new();
+            assert_eq!(build_display_string(&mods, &keys), "ctrl+alt");
+        }
+
+        #[test]
+        fn test_build_display_string_keys_only() {
+            let mods = Modifiers::default();
+            let mut keys = BTreeSet::new();
+            keys.insert("s".to_string());
+            assert_eq!(build_display_string(&mods, &keys), "s");
+        }
+
+        #[test]
+        fn test_build_display_string_full_combo() {
+            let mods = Modifiers {
+                ctrl: true,
+                alt: true,
+                cmd: false,
+                shift: false,
+            };
+            let mut keys = BTreeSet::new();
+            keys.insert("s".to_string());
+            assert_eq!(build_display_string(&mods, &keys), "ctrl+alt+s");
+        }
+
+        #[test]
+        fn test_build_display_string_multiple_keys() {
+            let mods = Modifiers {
+                ctrl: true,
+                alt: false,
+                cmd: false,
+                shift: false,
+            };
+            let mut keys = BTreeSet::new();
+            keys.insert("s".to_string());
+            keys.insert("f".to_string());
+            // keys are sorted alphabetically
+            assert_eq!(build_display_string(&mods, &keys), "ctrl+f+s");
+        }
+
+        #[test]
+        fn test_build_display_string_all_modifiers() {
+            let mods = Modifiers {
+                ctrl: true,
+                alt: true,
+                cmd: true,
+                shift: true,
+            };
+            let mut keys = BTreeSet::new();
+            keys.insert("a".to_string());
+            assert_eq!(build_display_string(&mods, &keys), "ctrl+alt+cmd+shift+a");
+        }
+    }
 }
 
 /// Record a single keypress and return the hotkey string
@@ -762,6 +903,114 @@ pub fn stop_hotkey_listener() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ========================================================================
+    // keycode_to_string tests
+    // ========================================================================
+
+    #[test]
+    fn test_keycode_to_string_letters() {
+        // test a few letter keycodes
+        assert_eq!(keycode_to_string(0), Some("a".to_string()));
+        assert_eq!(keycode_to_string(1), Some("s".to_string()));
+        assert_eq!(keycode_to_string(2), Some("d".to_string()));
+        assert_eq!(keycode_to_string(3), Some("f".to_string()));
+        assert_eq!(keycode_to_string(12), Some("q".to_string()));
+        assert_eq!(keycode_to_string(13), Some("w".to_string()));
+        assert_eq!(keycode_to_string(14), Some("e".to_string()));
+        assert_eq!(keycode_to_string(15), Some("r".to_string()));
+    }
+
+    #[test]
+    fn test_keycode_to_string_numbers() {
+        assert_eq!(keycode_to_string(18), Some("1".to_string()));
+        assert_eq!(keycode_to_string(19), Some("2".to_string()));
+        assert_eq!(keycode_to_string(20), Some("3".to_string()));
+        assert_eq!(keycode_to_string(21), Some("4".to_string()));
+        assert_eq!(keycode_to_string(23), Some("5".to_string()));
+        assert_eq!(keycode_to_string(22), Some("6".to_string()));
+        assert_eq!(keycode_to_string(26), Some("7".to_string()));
+        assert_eq!(keycode_to_string(28), Some("8".to_string()));
+        assert_eq!(keycode_to_string(25), Some("9".to_string()));
+        assert_eq!(keycode_to_string(29), Some("0".to_string()));
+    }
+
+    #[test]
+    fn test_keycode_to_string_special_keys() {
+        assert_eq!(keycode_to_string(36), Some("return".to_string()));
+        assert_eq!(keycode_to_string(48), Some("tab".to_string()));
+        assert_eq!(keycode_to_string(49), Some("space".to_string()));
+        assert_eq!(keycode_to_string(51), Some("backspace".to_string()));
+        assert_eq!(keycode_to_string(53), Some("escape".to_string()));
+    }
+
+    #[test]
+    fn test_keycode_to_string_function_keys() {
+        assert_eq!(keycode_to_string(122), Some("f1".to_string()));
+        assert_eq!(keycode_to_string(120), Some("f2".to_string()));
+        assert_eq!(keycode_to_string(99), Some("f3".to_string()));
+        assert_eq!(keycode_to_string(118), Some("f4".to_string()));
+        assert_eq!(keycode_to_string(96), Some("f5".to_string()));
+        assert_eq!(keycode_to_string(111), Some("f12".to_string()));
+    }
+
+    #[test]
+    fn test_keycode_to_string_arrow_keys() {
+        assert_eq!(keycode_to_string(123), Some("left".to_string()));
+        assert_eq!(keycode_to_string(124), Some("right".to_string()));
+        assert_eq!(keycode_to_string(125), Some("down".to_string()));
+        assert_eq!(keycode_to_string(126), Some("up".to_string()));
+    }
+
+    #[test]
+    fn test_keycode_to_string_modifier_keys() {
+        assert_eq!(keycode_to_string(55), Some("cmd".to_string()));
+        assert_eq!(keycode_to_string(56), Some("shift".to_string()));
+        assert_eq!(keycode_to_string(57), Some("capslock".to_string()));
+        assert_eq!(keycode_to_string(58), Some("alt".to_string()));
+        assert_eq!(keycode_to_string(59), Some("ctrl".to_string()));
+    }
+
+    #[test]
+    fn test_keycode_to_string_unknown() {
+        // unknown keycodes should return None
+        assert_eq!(keycode_to_string(200), None);
+        assert_eq!(keycode_to_string(255), None);
+        assert_eq!(keycode_to_string(-1), None);
+    }
+
+    // ========================================================================
+    // is_modifier_key tests
+    // ========================================================================
+
+    #[test]
+    fn test_is_modifier_key_true() {
+        // modifier keys are in range 55..=63
+        assert!(is_modifier_key(55)); // cmd
+        assert!(is_modifier_key(56)); // shift
+        assert!(is_modifier_key(57)); // capslock
+        assert!(is_modifier_key(58)); // alt
+        assert!(is_modifier_key(59)); // ctrl
+        assert!(is_modifier_key(60)); // right shift
+        assert!(is_modifier_key(61)); // right alt
+        assert!(is_modifier_key(62)); // right ctrl
+        assert!(is_modifier_key(63)); // fn
+    }
+
+    #[test]
+    fn test_is_modifier_key_false() {
+        // regular keys should not be modifiers
+        assert!(!is_modifier_key(0)); // a
+        assert!(!is_modifier_key(1)); // s
+        assert!(!is_modifier_key(36)); // return
+        assert!(!is_modifier_key(49)); // space
+        assert!(!is_modifier_key(54)); // just before modifier range
+        assert!(!is_modifier_key(64)); // just after modifier range
+    }
+
+    // ========================================================================
+    // Hotkey parsing tests (existing)
+    // ========================================================================
 
     #[test]
     fn test_parse_simple_hotkey() {
@@ -831,5 +1080,194 @@ mod tests {
     fn test_parse_invalid_hotkey() {
         assert!(Hotkey::parse("").is_err());
         assert!(Hotkey::parse("ctrl+alt").is_err()); // no keys
+    }
+
+    // ========================================================================
+    // Additional Hotkey parsing tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_hotkey_case_insensitive() {
+        let hk = Hotkey::parse("CTRL+ALT+S").unwrap();
+        assert!(hk.modifiers.ctrl);
+        assert!(hk.modifiers.alt);
+        assert_eq!(hk.keys, vec!["s"]);
+    }
+
+    #[test]
+    fn test_parse_hotkey_mixed_case() {
+        let hk = Hotkey::parse("Ctrl+Alt+S").unwrap();
+        assert!(hk.modifiers.ctrl);
+        assert!(hk.modifiers.alt);
+        assert_eq!(hk.keys, vec!["s"]);
+    }
+
+    #[test]
+    fn test_parse_hotkey_with_spaces() {
+        let hk = Hotkey::parse("  ctrl + alt + s  ").unwrap();
+        assert!(hk.modifiers.ctrl);
+        assert!(hk.modifiers.alt);
+        assert_eq!(hk.keys, vec!["s"]);
+    }
+
+    #[test]
+    fn test_parse_hotkey_meta_alias() {
+        let hk = Hotkey::parse("meta+a").unwrap();
+        assert!(hk.modifiers.cmd);
+        assert_eq!(hk.keys, vec!["a"]);
+    }
+
+    #[test]
+    fn test_parse_hotkey_super_alias() {
+        let hk = Hotkey::parse("super+a").unwrap();
+        assert!(hk.modifiers.cmd);
+        assert_eq!(hk.keys, vec!["a"]);
+    }
+
+    #[test]
+    fn test_parse_hotkey_opt_alias() {
+        let hk = Hotkey::parse("opt+a").unwrap();
+        assert!(hk.modifiers.alt);
+        assert_eq!(hk.keys, vec!["a"]);
+    }
+
+    #[test]
+    fn test_parse_hotkey_function_key() {
+        let hk = Hotkey::parse("ctrl+f1").unwrap();
+        assert!(hk.modifiers.ctrl);
+        assert_eq!(hk.keys, vec!["f1"]);
+    }
+
+    #[test]
+    fn test_parse_hotkey_all_modifiers() {
+        let hk = Hotkey::parse("ctrl+alt+cmd+shift+a").unwrap();
+        assert!(hk.modifiers.ctrl);
+        assert!(hk.modifiers.alt);
+        assert!(hk.modifiers.cmd);
+        assert!(hk.modifiers.shift);
+        assert_eq!(hk.keys, vec!["a"]);
+    }
+
+    #[test]
+    fn test_parse_hotkey_no_modifiers() {
+        let hk = Hotkey::parse("a").unwrap();
+        assert!(!hk.modifiers.ctrl);
+        assert!(!hk.modifiers.alt);
+        assert!(!hk.modifiers.cmd);
+        assert!(!hk.modifiers.shift);
+        assert_eq!(hk.keys, vec!["a"]);
+    }
+
+    #[test]
+    fn test_hotkey_display_all_modifiers() {
+        let hk = Hotkey {
+            modifiers: Modifiers {
+                ctrl: true,
+                alt: true,
+                cmd: true,
+                shift: true,
+            },
+            keys: vec!["a".to_string()],
+        };
+        assert_eq!(hk.to_string(), "ctrl+alt+cmd+shift+a");
+    }
+
+    #[test]
+    fn test_hotkey_display_no_modifiers() {
+        let hk = Hotkey {
+            modifiers: Modifiers::default(),
+            keys: vec!["space".to_string()],
+        };
+        assert_eq!(hk.to_string(), "space");
+    }
+
+    #[test]
+    fn test_modifiers_default() {
+        let mods = Modifiers::default();
+        assert!(!mods.ctrl);
+        assert!(!mods.alt);
+        assert!(!mods.cmd);
+        assert!(!mods.shift);
+    }
+
+    #[test]
+    fn test_modifiers_equality() {
+        let m1 = Modifiers {
+            ctrl: true,
+            alt: true,
+            cmd: false,
+            shift: false,
+        };
+        let m2 = Modifiers {
+            ctrl: true,
+            alt: true,
+            cmd: false,
+            shift: false,
+        };
+        let m3 = Modifiers {
+            ctrl: true,
+            alt: false,
+            cmd: false,
+            shift: false,
+        };
+
+        assert_eq!(m1, m2);
+        assert_ne!(m1, m3);
+    }
+
+    #[test]
+    fn test_hotkey_equality() {
+        let h1 = Hotkey::parse("ctrl+alt+s").unwrap();
+        let h2 = Hotkey::parse("ctrl+alt+s").unwrap();
+        let h3 = Hotkey::parse("ctrl+s").unwrap();
+
+        assert_eq!(h1, h2);
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn test_hotkey_clone() {
+        let h1 = Hotkey::parse("ctrl+alt+s").unwrap();
+        let h2 = h1.clone();
+
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_modifiers_clone() {
+        let m1 = Modifiers {
+            ctrl: true,
+            alt: true,
+            cmd: false,
+            shift: true,
+        };
+        let m2 = m1;
+
+        assert_eq!(m1, m2);
+    }
+
+    #[test]
+    fn test_hotkey_debug() {
+        let hk = Hotkey::parse("ctrl+a").unwrap();
+        let debug_str = format!("{:?}", hk);
+
+        assert!(debug_str.contains("Hotkey"));
+        assert!(debug_str.contains("modifiers"));
+        assert!(debug_str.contains("keys"));
+    }
+
+    #[test]
+    fn test_modifiers_debug() {
+        let mods = Modifiers {
+            ctrl: true,
+            alt: false,
+            cmd: true,
+            shift: false,
+        };
+        let debug_str = format!("{:?}", mods);
+
+        assert!(debug_str.contains("Modifiers"));
+        assert!(debug_str.contains("ctrl: true"));
+        assert!(debug_str.contains("alt: false"));
     }
 }

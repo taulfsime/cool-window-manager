@@ -1307,4 +1307,272 @@ mod tests {
             }
         );
     }
+
+    // ========================================================================
+    // find_display_for_point tests
+    // ========================================================================
+
+    fn create_test_displays() -> Vec<crate::display::DisplayInfo> {
+        vec![
+            crate::display::DisplayInfo {
+                index: 0,
+                name: "Main Display".to_string(),
+                width: 1920,
+                height: 1080,
+                x: 0,
+                y: 0,
+                is_main: true,
+                is_builtin: true,
+                display_id: 1,
+                vendor_id: None,
+                model_id: None,
+                serial_number: None,
+                unit_number: 0,
+            },
+            crate::display::DisplayInfo {
+                index: 1,
+                name: "External Display".to_string(),
+                width: 2560,
+                height: 1440,
+                x: 1920,
+                y: 0,
+                is_main: false,
+                is_builtin: false,
+                display_id: 2,
+                vendor_id: Some(1234),
+                model_id: Some(5678),
+                serial_number: Some(9999),
+                unit_number: 1,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_find_display_for_point_on_main_display() {
+        let displays = create_test_displays();
+
+        // center of main display
+        assert_eq!(find_display_for_point(960.0, 540.0, &displays), 0);
+
+        // top-left corner of main display
+        assert_eq!(find_display_for_point(0.0, 0.0, &displays), 0);
+
+        // bottom-right corner of main display (just inside)
+        assert_eq!(find_display_for_point(1919.0, 1079.0, &displays), 0);
+    }
+
+    #[test]
+    fn test_find_display_for_point_on_external_display() {
+        let displays = create_test_displays();
+
+        // center of external display
+        assert_eq!(find_display_for_point(3200.0, 720.0, &displays), 1);
+
+        // top-left corner of external display
+        assert_eq!(find_display_for_point(1920.0, 0.0, &displays), 1);
+
+        // bottom-right corner of external display (just inside)
+        assert_eq!(find_display_for_point(4479.0, 1439.0, &displays), 1);
+    }
+
+    #[test]
+    fn test_find_display_for_point_outside_all_displays() {
+        let displays = create_test_displays();
+
+        // point outside all displays defaults to 0
+        assert_eq!(find_display_for_point(-100.0, -100.0, &displays), 0);
+        assert_eq!(find_display_for_point(10000.0, 10000.0, &displays), 0);
+    }
+
+    #[test]
+    fn test_find_display_for_point_empty_displays() {
+        let displays: Vec<crate::display::DisplayInfo> = vec![];
+
+        // with no displays, defaults to 0
+        assert_eq!(find_display_for_point(100.0, 100.0, &displays), 0);
+    }
+
+    #[test]
+    fn test_find_display_for_point_on_boundary() {
+        let displays = create_test_displays();
+
+        // exactly on the boundary between displays (x=1920 is external)
+        assert_eq!(find_display_for_point(1920.0, 500.0, &displays), 1);
+
+        // just before boundary (x=1919 is main)
+        assert_eq!(find_display_for_point(1919.0, 500.0, &displays), 0);
+    }
+
+    // ========================================================================
+    // WindowData serialization tests
+    // ========================================================================
+
+    #[test]
+    fn test_window_data_serialization_with_title() {
+        let data = WindowData {
+            title: Some("Test Window".to_string()),
+            x: 100,
+            y: 200,
+            width: 800,
+            height: 600,
+        };
+
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["title"], "Test Window");
+        assert_eq!(json["x"], 100);
+        assert_eq!(json["y"], 200);
+        assert_eq!(json["width"], 800);
+        assert_eq!(json["height"], 600);
+    }
+
+    #[test]
+    fn test_window_data_serialization_without_title() {
+        let data = WindowData {
+            title: None,
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+
+        let json = serde_json::to_value(&data).unwrap();
+        // title should be skipped when None
+        assert!(json.get("title").is_none());
+        assert_eq!(json["x"], 0);
+        assert_eq!(json["y"], 0);
+        assert_eq!(json["width"], 1920);
+        assert_eq!(json["height"], 1080);
+    }
+
+    #[test]
+    fn test_window_data_serialization_negative_coords() {
+        let data = WindowData {
+            title: None,
+            x: -100,
+            y: -50,
+            width: 800,
+            height: 600,
+        };
+
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["x"], -100);
+        assert_eq!(json["y"], -50);
+    }
+
+    // ========================================================================
+    // DisplayDataInfo serialization tests
+    // ========================================================================
+
+    #[test]
+    fn test_display_data_info_serialization() {
+        let data = DisplayDataInfo {
+            index: 0,
+            name: "Built-in Display".to_string(),
+        };
+
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["index"], 0);
+        assert_eq!(json["name"], "Built-in Display");
+    }
+
+    #[test]
+    fn test_display_data_info_serialization_external() {
+        let data = DisplayDataInfo {
+            index: 1,
+            name: "LG UltraWide".to_string(),
+        };
+
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["index"], 1);
+        assert_eq!(json["name"], "LG UltraWide");
+    }
+
+    // ========================================================================
+    // ResizeTarget debug/clone tests
+    // ========================================================================
+
+    #[test]
+    fn test_resize_target_debug() {
+        let target = ResizeTarget::Percent(80);
+        let debug_str = format!("{:?}", target);
+        assert!(debug_str.contains("Percent"));
+        assert!(debug_str.contains("80"));
+    }
+
+    #[test]
+    fn test_resize_target_clone() {
+        let target = ResizeTarget::Pixels {
+            width: 1920,
+            height: Some(1080),
+        };
+        let cloned = target.clone();
+        assert_eq!(target, cloned);
+    }
+
+    #[test]
+    fn test_resize_target_partial_eq() {
+        let a = ResizeTarget::Percent(50);
+        let b = ResizeTarget::Percent(50);
+        let c = ResizeTarget::Percent(60);
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    // ========================================================================
+    // Additional edge cases for parse_dimensions
+    // ========================================================================
+
+    #[test]
+    fn test_resize_target_parse_dimensions_multiple_x() {
+        // multiple x separators should fail
+        assert!(ResizeTarget::parse("100x200x300px").is_err());
+    }
+
+    #[test]
+    fn test_resize_target_parse_very_large_values() {
+        // very large pixel values should work
+        let target = ResizeTarget::parse("10000x10000px").unwrap();
+        assert_eq!(
+            target,
+            ResizeTarget::Pixels {
+                width: 10000,
+                height: Some(10000)
+            }
+        );
+    }
+
+    #[test]
+    fn test_resize_target_parse_single_digit() {
+        assert_eq!(ResizeTarget::parse("1").unwrap(), ResizeTarget::Percent(1));
+        assert_eq!(
+            ResizeTarget::parse("1px").unwrap(),
+            ResizeTarget::Pixels {
+                width: 1,
+                height: None
+            }
+        );
+        assert_eq!(
+            ResizeTarget::parse("1pt").unwrap(),
+            ResizeTarget::Points {
+                width: 1,
+                height: None
+            }
+        );
+    }
+
+    #[test]
+    fn test_resize_target_parse_decimal_edge_cases() {
+        // very small decimal rounds to 0, but clamped to 1
+        assert_eq!(
+            ResizeTarget::parse("0.001").unwrap(),
+            ResizeTarget::Percent(1)
+        );
+
+        // decimal that rounds up
+        assert_eq!(
+            ResizeTarget::parse("0.995").unwrap(),
+            ResizeTarget::Percent(100)
+        );
+    }
 }

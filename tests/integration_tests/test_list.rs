@@ -39,12 +39,21 @@ fn create_test_config(test_dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// helper to run cwm list command and get output
+/// note: if args contains --json, JSON output is used; otherwise --no-json is added
+/// to prevent auto-JSON when stdout is piped
 fn run_list(args: &[&str]) -> std::process::Output {
     let test_dir = create_test_dir(&unique_test_name("list"));
     let config_path = create_test_config(&test_dir);
 
     let binary = cwm_binary_path();
-    let mut cmd_args = vec!["--config", config_path.to_str().unwrap(), "list"];
+    let has_json_flag = args.iter().any(|a| *a == "--json" || *a == "-j");
+
+    let mut cmd_args = vec!["--config", config_path.to_str().unwrap()];
+    // add --no-json for text output tests (stdout is piped, which auto-enables JSON)
+    if !has_json_flag {
+        cmd_args.push("--no-json");
+    }
+    cmd_args.push("list");
     cmd_args.extend(args);
 
     let output = Command::new(&binary)
@@ -58,11 +67,18 @@ fn run_list(args: &[&str]) -> std::process::Output {
     output
 }
 
-/// helper to parse JSON output
+/// helper to parse JSON output (handles JSON-RPC wrapper)
 fn parse_json_output(output: &std::process::Output) -> serde_json::Value {
     let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("Failed to parse JSON output: {}\nOutput was: {}", e, stdout))
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("Failed to parse JSON output: {}\nOutput was: {}", e, stdout));
+
+    // if it's a JSON-RPC response, extract the result
+    if json.get("jsonrpc").is_some() && json.get("result").is_some() {
+        json["result"].clone()
+    } else {
+        json
+    }
 }
 
 // ============================================================================
@@ -409,16 +425,19 @@ fn test_list_invalid_resource() {
 }
 
 #[test]
-fn test_list_missing_resource() {
+fn test_list_missing_resource_shows_help() {
     let binary = cwm_binary_path();
     let output = Command::new(&binary)
         .args(["list"])
         .output()
         .expect("Failed to run cwm");
 
+    // list without resource now shows help and succeeds
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !output.status.success(),
-        "list without resource should fail"
+        stdout.contains("Available resources") || stdout.contains("Usage"),
+        "list without resource should show help: {}",
+        stdout
     );
 }
 
