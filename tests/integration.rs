@@ -38,6 +38,9 @@ mod test_install;
 #[path = "integration_tests/test_list.rs"]
 mod test_list;
 
+#[path = "integration_tests/test_man_page.rs"]
+mod test_man_page;
+
 #[path = "integration_tests/test_rollback.rs"]
 mod test_rollback;
 
