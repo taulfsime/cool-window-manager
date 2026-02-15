@@ -470,6 +470,7 @@ impl Event {
     }
 
     /// create display.connected event
+    #[allow(clippy::too_many_arguments)]
     pub fn display_connected(
         index: usize,
         name: String,
@@ -491,6 +492,7 @@ impl Event {
     }
 
     /// create display.disconnected event
+    #[allow(clippy::too_many_arguments)]
     pub fn display_disconnected(
         index: usize,
         name: String,

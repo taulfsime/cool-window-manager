@@ -109,6 +109,7 @@ cool-window-mng/
 │   └── workflows/
 │       └── ci.yml          # GitHub Actions CI/CD workflow
 ├── scripts/
+│   ├── ci.sh               # run CI checks locally (test, fmt, clippy)
 │   ├── release-beta.sh     # helper script to create beta releases
 │   ├── release-stable.sh   # helper script to create stable releases
 │   ├── list-releases.sh    # helper script to list all releases
@@ -715,6 +716,9 @@ man man/cwm.1
 ### Test
 
 ```bash
+# run all CI checks locally (test, fmt, clippy)
+./scripts/ci.sh
+
 # run all tests (unit + integration)
 cargo test
 
@@ -727,6 +731,11 @@ cargo test --test integration
 # generate coverage report
 ./scripts/coverage.sh
 ```
+
+**Important:** Always run `./scripts/ci.sh` before pushing to ensure CI will pass. This runs the same checks as GitHub Actions:
+- `cargo test --all-features`
+- `cargo fmt -- --check`
+- `cargo clippy -- -D warnings`
 
 #### Unit Tests
 
