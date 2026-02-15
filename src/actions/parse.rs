@@ -99,6 +99,26 @@ impl JsonRpcRequest {
                 })
             }
 
+            "kill" => {
+                let app = params.get_string_array("app")?;
+                if app.is_empty() {
+                    return Err(ActionError::invalid_args("kill requires 'app' parameter"));
+                }
+                Ok(Command::Kill {
+                    app,
+                    force: params.get_bool_or("force", false),
+                    wait: params.get_bool_or("wait", false),
+                })
+            }
+
+            "close" => {
+                let app = params.get_string_array("app")?;
+                if app.is_empty() {
+                    return Err(ActionError::invalid_args("close requires 'app' parameter"));
+                }
+                Ok(Command::Close { app })
+            }
+
             // ==================== Query Commands ====================
             "list" => {
                 let resource_str = params.get_string("resource")?;

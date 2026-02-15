@@ -25,6 +25,9 @@ pub enum EventType {
     /// application was focused by cwm
     #[serde(rename = "app.focused")]
     AppFocused,
+    /// application was terminated by cwm
+    #[serde(rename = "app.terminated")]
+    AppTerminated,
     /// window was maximized by cwm
     #[serde(rename = "window.maximized")]
     WindowMaximized,
@@ -34,6 +37,9 @@ pub enum EventType {
     /// window was moved by cwm
     #[serde(rename = "window.moved")]
     WindowMoved,
+    /// window was closed by cwm
+    #[serde(rename = "window.closed")]
+    WindowClosed,
     /// display was connected
     #[serde(rename = "display.connected")]
     DisplayConnected,
@@ -48,9 +54,11 @@ impl EventType {
         match self {
             EventType::AppLaunched => "app.launched",
             EventType::AppFocused => "app.focused",
+            EventType::AppTerminated => "app.terminated",
             EventType::WindowMaximized => "window.maximized",
             EventType::WindowResized => "window.resized",
             EventType::WindowMoved => "window.moved",
+            EventType::WindowClosed => "window.closed",
             EventType::DisplayConnected => "display.connected",
             EventType::DisplayDisconnected => "display.disconnected",
         }
@@ -61,9 +69,11 @@ impl EventType {
         &[
             EventType::AppLaunched,
             EventType::AppFocused,
+            EventType::AppTerminated,
             EventType::WindowMaximized,
             EventType::WindowResized,
             EventType::WindowMoved,
+            EventType::WindowClosed,
             EventType::DisplayConnected,
             EventType::DisplayDisconnected,
         ]
@@ -74,9 +84,11 @@ impl EventType {
         match self {
             EventType::AppLaunched => "Application was launched (detected by app watcher)",
             EventType::AppFocused => "Application was focused by cwm",
+            EventType::AppTerminated => "Application was terminated by cwm",
             EventType::WindowMaximized => "Window was maximized by cwm",
             EventType::WindowResized => "Window was resized by cwm",
             EventType::WindowMoved => "Window was moved by cwm",
+            EventType::WindowClosed => "Window was closed by cwm",
             EventType::DisplayConnected => "Display was connected",
             EventType::DisplayDisconnected => "Display was disconnected",
         }
@@ -87,9 +99,11 @@ impl EventType {
         match s {
             "app.launched" => Some(EventType::AppLaunched),
             "app.focused" => Some(EventType::AppFocused),
+            "app.terminated" => Some(EventType::AppTerminated),
             "window.maximized" => Some(EventType::WindowMaximized),
             "window.resized" => Some(EventType::WindowResized),
             "window.moved" => Some(EventType::WindowMoved),
+            "window.closed" => Some(EventType::WindowClosed),
             "display.connected" => Some(EventType::DisplayConnected),
             "display.disconnected" => Some(EventType::DisplayDisconnected),
             _ => None,
@@ -137,6 +151,9 @@ pub enum EventData {
         match_type: Option<String>,
     },
 
+    /// app terminated event data
+    AppTerminated { app: String, pid: i32, force: bool },
+
     /// window event data (window.maximized, window.resized, window.moved)
     Window {
         app: String,
@@ -153,6 +170,8 @@ pub enum EventData {
         y: Option<i32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         display: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        windows_closed: Option<usize>,
     },
 
     /// display event data (display.connected, display.disconnected)
@@ -207,6 +226,11 @@ impl EventData {
         }
     }
 
+    /// create app terminated event data
+    pub fn app_terminated(app: String, pid: i32, force: bool) -> Self {
+        EventData::AppTerminated { app, pid, force }
+    }
+
     /// create window maximized event data
     pub fn window_maximized(app: String, pid: i32, titles: Option<Vec<String>>) -> Self {
         EventData::Window {
@@ -218,6 +242,7 @@ impl EventData {
             x: None,
             y: None,
             display: None,
+            windows_closed: None,
         }
     }
 
@@ -238,6 +263,7 @@ impl EventData {
             x: None,
             y: None,
             display: None,
+            windows_closed: None,
         }
     }
 
@@ -259,6 +285,27 @@ impl EventData {
             x: Some(x),
             y: Some(y),
             display,
+            windows_closed: None,
+        }
+    }
+
+    /// create window closed event data
+    pub fn window_closed(
+        app: String,
+        pid: i32,
+        titles: Option<Vec<String>>,
+        windows_closed: usize,
+    ) -> Self {
+        EventData::Window {
+            app,
+            pid,
+            titles,
+            width: None,
+            height: None,
+            x: None,
+            y: None,
+            display: None,
+            windows_closed: Some(windows_closed),
         }
     }
 
@@ -294,6 +341,7 @@ impl EventData {
     pub fn app_name(&self) -> Option<&str> {
         match self {
             EventData::App { app, .. } => Some(app),
+            EventData::AppTerminated { app, .. } => Some(app),
             EventData::Window { app, .. } => Some(app),
             EventData::Display { .. } => None,
         }
@@ -303,6 +351,7 @@ impl EventData {
     pub fn titles(&self) -> Option<&[String]> {
         match self {
             EventData::App { titles, .. } => titles.as_deref(),
+            EventData::AppTerminated { .. } => None,
             EventData::Window { titles, .. } => titles.as_deref(),
             EventData::Display { .. } => None,
         }
@@ -362,6 +411,14 @@ impl Event {
         )
     }
 
+    /// create app.terminated event
+    pub fn app_terminated(app: String, pid: i32, force: bool) -> Self {
+        Self::new(
+            EventType::AppTerminated,
+            EventData::app_terminated(app, pid, force),
+        )
+    }
+
     /// create window.maximized event
     pub fn window_maximized(app: String, pid: i32, titles: Option<Vec<String>>) -> Self {
         Self::new(
@@ -396,6 +453,19 @@ impl Event {
         Self::new(
             EventType::WindowMoved,
             EventData::window_moved(app, pid, titles, x, y, display),
+        )
+    }
+
+    /// create window.closed event
+    pub fn window_closed(
+        app: String,
+        pid: i32,
+        titles: Option<Vec<String>>,
+        windows_closed: usize,
+    ) -> Self {
+        Self::new(
+            EventType::WindowClosed,
+            EventData::window_closed(app, pid, titles, windows_closed),
         )
     }
 
@@ -929,7 +999,10 @@ mod tests {
 
         // prefix pattern
         let expanded = EventBus::expand_filters(&["app.*".to_string()]);
-        assert_eq!(expanded, vec!["app.focused", "app.launched"]);
+        assert_eq!(
+            expanded,
+            vec!["app.focused", "app.launched", "app.terminated"]
+        );
 
         // exact match
         let expanded = EventBus::expand_filters(&["app.launched".to_string()]);
@@ -942,6 +1015,7 @@ mod tests {
         assert!(expanded.contains(&"window.maximized".to_string()));
         assert!(expanded.contains(&"window.resized".to_string()));
         assert!(expanded.contains(&"window.moved".to_string()));
+        assert!(expanded.contains(&"window.closed".to_string()));
     }
 
     #[test]

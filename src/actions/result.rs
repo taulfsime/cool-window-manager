@@ -52,6 +52,23 @@ pub enum ActionData {
         match_info: Option<MatchData>,
     },
 
+    /// kill action result
+    Kill {
+        app: AppData,
+        #[serde(rename = "match")]
+        match_info: MatchData,
+        force: bool,
+        terminated: bool,
+    },
+
+    /// close action result
+    Close {
+        app: AppData,
+        #[serde(rename = "match")]
+        match_info: MatchData,
+        windows_closed: usize,
+    },
+
     /// list action result
     List { items: Vec<serde_json::Value> },
 
@@ -223,6 +240,29 @@ impl ActionResult {
             data: ActionData::Launched {
                 message: format!("{} launched, run command again once ready", app),
                 app,
+            },
+        }
+    }
+
+    pub fn kill(app: AppData, match_info: MatchData, force: bool, terminated: bool) -> Self {
+        Self {
+            action: "kill",
+            data: ActionData::Kill {
+                app,
+                match_info,
+                force,
+                terminated,
+            },
+        }
+    }
+
+    pub fn close(app: AppData, match_info: MatchData, windows_closed: usize) -> Self {
+        Self {
+            action: "close",
+            data: ActionData::Close {
+                app,
+                match_info,
+                windows_closed,
             },
         }
     }

@@ -78,16 +78,12 @@ fn test_list_events_shows_all_event_types() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // check that all event types are listed
-    assert!(
-        stdout.contains("daemon.started"),
-        "should list daemon.started"
-    );
-    assert!(
-        stdout.contains("daemon.stopped"),
-        "should list daemon.stopped"
-    );
     assert!(stdout.contains("app.launched"), "should list app.launched");
     assert!(stdout.contains("app.focused"), "should list app.focused");
+    assert!(
+        stdout.contains("app.terminated"),
+        "should list app.terminated"
+    );
     assert!(
         stdout.contains("window.maximized"),
         "should list window.maximized"
@@ -97,6 +93,18 @@ fn test_list_events_shows_all_event_types() {
         "should list window.resized"
     );
     assert!(stdout.contains("window.moved"), "should list window.moved");
+    assert!(
+        stdout.contains("window.closed"),
+        "should list window.closed"
+    );
+    assert!(
+        stdout.contains("display.connected"),
+        "should list display.connected"
+    );
+    assert!(
+        stdout.contains("display.disconnected"),
+        "should list display.disconnected"
+    );
 }
 
 #[test]
@@ -118,8 +126,8 @@ fn test_list_events_detailed() {
 
     // detailed output should include descriptions
     assert!(
-        stdout.contains("Daemon process started"),
-        "should show description for daemon.started"
+        stdout.contains("Display was connected"),
+        "should show description for display.connected"
     );
     assert!(
         stdout.contains("Application was focused"),
@@ -142,7 +150,7 @@ fn test_list_events_json() {
     // check JSON structure
     assert!(result.get("items").is_some(), "should have items array");
     let items = result["items"].as_array().unwrap();
-    assert_eq!(items.len(), 7, "should have 7 event types");
+    assert_eq!(items.len(), 9, "should have 9 event types");
 
     // check that each item has a name
     for item in items {
@@ -159,8 +167,8 @@ fn test_list_events_names_output() {
     let lines: Vec<&str> = stdout.lines().collect();
 
     // should have one event per line
-    assert_eq!(lines.len(), 7, "should have 7 event types");
-    assert!(lines.contains(&"daemon.started"));
+    assert_eq!(lines.len(), 9, "should have 9 event types");
+    assert!(lines.contains(&"display.connected"));
     assert!(lines.contains(&"app.launched"));
     assert!(lines.contains(&"window.resized"));
 }

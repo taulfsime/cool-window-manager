@@ -430,6 +430,64 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 ));
             }
         }
+        "kill" => {
+            let app_name = action_arg.ok_or_else(|| anyhow!("kill action requires app name"))?;
+
+            // check for :force suffix
+            let (target_name, force) = if let Some(idx) = app_name.rfind(":force") {
+                (&app_name[..idx], true)
+            } else {
+                (app_name, false)
+            };
+
+            let running_apps = matching::get_running_apps()?;
+            let match_result =
+                matching::find_app(target_name, &running_apps, config.settings.fuzzy_threshold);
+
+            match match_result {
+                Some(result) => {
+                    let accepted = manager::terminate_app(&result.app, force, false)?;
+                    if !accepted {
+                        return Err(anyhow!(
+                            "{} declined to terminate (may have unsaved changes)",
+                            result.app.name
+                        ));
+                    }
+                    // emit app.terminated event
+                    events::emit(Event::app_terminated(
+                        result.app.name.clone(),
+                        result.app.pid,
+                        force,
+                    ));
+                }
+                None => {
+                    return Err(anyhow!("Application '{}' not found", target_name));
+                }
+            }
+        }
+        "close" => {
+            let app_name = action_arg.ok_or_else(|| anyhow!("close action requires app name"))?;
+
+            let running_apps = matching::get_running_apps()?;
+            let match_result =
+                matching::find_app(app_name, &running_apps, config.settings.fuzzy_threshold);
+
+            match match_result {
+                Some(result) => {
+                    let windows_closed = manager::close_app_windows(&result.app, false)?;
+                    // emit window.closed event
+                    events::emit(Event::window_closed(
+                        result.app.name.clone(),
+                        result.app.pid,
+                        Some(result.app.titles.clone()),
+                        windows_closed,
+                    ));
+                }
+                None => {
+                    return Err(anyhow!("Application '{}' not found", app_name));
+                }
+            }
+        }
         _ => {
             return Err(anyhow!("Unknown action: {}", action_type));
         }

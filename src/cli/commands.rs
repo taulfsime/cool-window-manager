@@ -130,6 +130,36 @@ pub enum Commands {
         verbose: bool,
     },
 
+    /// Kill (terminate) an application
+    Kill {
+        /// Target app name(s) (fuzzy matched), tries each in order until one is found
+        #[arg(short, long, required = true, action = clap::ArgAction::Append)]
+        app: Vec<String>,
+
+        /// Force terminate without save dialogs (like Force Quit)
+        #[arg(long, short)]
+        force: bool,
+
+        /// Wait for app to terminate before returning
+        #[arg(long, short)]
+        wait: bool,
+
+        /// Show verbose output including match details
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Close an application's window(s) (app stays running)
+    Close {
+        /// Target app name(s) (fuzzy matched), tries each in order until one is found
+        #[arg(short, long, required = true, action = clap::ArgAction::Append)]
+        app: Vec<String>,
+
+        /// Show verbose output including match details
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
     /// Record keyboard shortcuts or window layouts
     Record {
         #[command(subcommand)]
@@ -688,6 +718,65 @@ pub fn execute(cli: Cli) -> Result<()> {
                 overflow,
                 launch: resolve_launch_flags(launch, no_launch),
             };
+            let ctx = ExecutionContext::new_with_verbose(&config, true, verbose);
+
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
+                }
+            }
+        }
+
+        Commands::Kill {
+            app: apps,
+            force,
+            wait,
+            verbose,
+        } => {
+            let config = config::load_with_override(config_path)?;
+            let apps = resolve_app_names(&apps)?;
+
+            let cmd = Command::Kill {
+                app: apps,
+                force,
+                wait,
+            };
+            let ctx = ExecutionContext::new_with_verbose(&config, true, verbose);
+
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
+                }
+            }
+        }
+
+        Commands::Close { app: apps, verbose } => {
+            let config = config::load_with_override(config_path)?;
+            let apps = resolve_app_names(&apps)?;
+
+            let cmd = Command::Close { app: apps };
             let ctx = ExecutionContext::new_with_verbose(&config, true, verbose);
 
             match actions::execute(cmd, &ctx) {

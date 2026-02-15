@@ -48,6 +48,8 @@ pub fn execute(cmd: Command, ctx: &ExecutionContext) -> Result<ActionResult, Act
             display,
             launch,
         } => handlers::move_window::execute(app, to, display, launch, ctx),
+        Command::Kill { app, force, wait } => handlers::kill::execute(app, force, wait, ctx),
+        Command::Close { app } => handlers::close::execute(app, ctx),
 
         // query commands
         Command::List { resource, detailed } => match resource {

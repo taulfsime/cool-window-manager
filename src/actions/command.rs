@@ -56,6 +56,22 @@ pub enum Command {
         launch: Option<bool>,
     },
 
+    /// kill (terminate) an application
+    Kill {
+        /// target app name(s) - required
+        app: Vec<String>,
+        /// force terminate without save dialogs
+        force: bool,
+        /// wait for app to terminate before returning
+        wait: bool,
+    },
+
+    /// close window(s) of an application
+    Close {
+        /// target app name(s) - required (matches by name or title)
+        app: Vec<String>,
+    },
+
     // ==================== Query Commands ====================
     /// list resources
     List {
@@ -316,6 +332,8 @@ impl Command {
             Command::Maximize { .. } => "maximize",
             Command::Resize { .. } => "resize",
             Command::Move { .. } => "move",
+            Command::Kill { .. } => "kill",
+            Command::Close { .. } => "close",
             Command::List { .. } => "list",
             Command::Get { .. } => "get",
             Command::Ping => "ping",
@@ -435,6 +453,18 @@ mod tests {
         }
         .is_interactive());
         assert!(!Command::Ping.is_interactive());
+
+        // kill and close are not interactive
+        assert!(!Command::Kill {
+            app: vec!["Safari".to_string()],
+            force: false,
+            wait: false,
+        }
+        .is_interactive());
+        assert!(!Command::Close {
+            app: vec!["Safari".to_string()],
+        }
+        .is_interactive());
     }
 
     #[test]
@@ -482,6 +512,22 @@ mod tests {
         assert_eq!(
             Command::Daemon(DaemonCommand::Status).method_name(),
             "daemon"
+        );
+        assert_eq!(
+            Command::Kill {
+                app: vec!["Safari".to_string()],
+                force: false,
+                wait: false,
+            }
+            .method_name(),
+            "kill"
+        );
+        assert_eq!(
+            Command::Close {
+                app: vec!["Safari".to_string()],
+            }
+            .method_name(),
+            "close"
         );
     }
 }

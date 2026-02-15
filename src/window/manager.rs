@@ -862,6 +862,232 @@ pub fn launch_app(app_name: &str, verbose: bool) -> Result<()> {
     Ok(())
 }
 
+/// Terminate an application
+///
+/// If `force` is true, uses forceTerminate() which immediately kills the app.
+/// If `force` is false, uses terminate() which sends a quit request (app can decline).
+///
+/// Returns true if the termination request was accepted, false if declined.
+#[allow(deprecated)]
+pub fn terminate_app(app: &AppInfo, force: bool, verbose: bool) -> Result<bool> {
+    use objc2_app_kit::NSRunningApplication;
+
+    if verbose {
+        println!(
+            "Terminating: {} (PID: {}) [force={}]",
+            app.name, app.pid, force
+        );
+    }
+
+    let running_app = NSRunningApplication::runningApplicationWithProcessIdentifier(app.pid);
+
+    let Some(running_app) = running_app else {
+        return Err(anyhow!(
+            "Could not find running application with PID {}",
+            app.pid
+        ));
+    };
+
+    let success = if force {
+        running_app.forceTerminate()
+    } else {
+        running_app.terminate()
+    };
+
+    if verbose {
+        if success {
+            println!("Termination request accepted");
+        } else {
+            println!("Termination request declined (app may have unsaved changes)");
+        }
+    }
+
+    Ok(success)
+}
+
+/// Wait for an application to terminate
+///
+/// Polls until the app is no longer running or timeout is reached.
+/// Returns true if app terminated, false if timeout.
+pub fn wait_for_termination(pid: i32, timeout_ms: u64, verbose: bool) -> bool {
+    use objc2_app_kit::NSRunningApplication;
+    use std::time::{Duration, Instant};
+
+    let start = Instant::now();
+    let timeout = Duration::from_millis(timeout_ms);
+
+    while start.elapsed() < timeout {
+        let running_app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid);
+
+        match running_app {
+            None => {
+                if verbose {
+                    println!("Application terminated");
+                }
+                return true;
+            }
+            Some(app) => {
+                if app.isTerminated() {
+                    if verbose {
+                        println!("Application terminated");
+                    }
+                    return true;
+                }
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    if verbose {
+        println!("Timeout waiting for termination");
+    }
+    false
+}
+
+/// Close all windows of an application
+///
+/// Uses the Accessibility API to click the close button on each window.
+/// Returns the number of windows that were closed.
+pub fn close_app_windows(app: &AppInfo, verbose: bool) -> Result<usize> {
+    use core_foundation::base::CFTypeRef;
+
+    if !accessibility::is_trusted() {
+        return Err(anyhow!(
+            "Accessibility permissions required. Run 'cwm check-permissions' for help."
+        ));
+    }
+
+    if verbose {
+        println!("Closing windows for: {} (PID: {})", app.name, app.pid);
+    }
+
+    let app_element = unsafe { AXUIElementCreateApplication(app.pid) };
+    if app_element.is_null() {
+        return Err(anyhow!("Failed to create AXUIElement for PID {}", app.pid));
+    }
+
+    // get all windows
+    let windows_attr = CFString::new("AXWindows");
+    let mut windows_value: CFTypeRef = std::ptr::null_mut();
+
+    let result = unsafe {
+        AXUIElementCopyAttributeValue(
+            app_element,
+            windows_attr.as_concrete_TypeRef(),
+            &mut windows_value,
+        )
+    };
+
+    if result != K_AX_ERROR_SUCCESS || windows_value.is_null() {
+        unsafe {
+            core_foundation::base::CFRelease(app_element as CFTypeRef);
+        }
+        return Err(anyhow!(
+            "Failed to get windows for application (error: {})",
+            result
+        ));
+    }
+
+    let count = unsafe { CFArrayGetCount(windows_value as _) };
+
+    if count == 0 {
+        unsafe {
+            core_foundation::base::CFRelease(windows_value);
+            core_foundation::base::CFRelease(app_element as CFTypeRef);
+        }
+        if verbose {
+            println!("No windows to close");
+        }
+        return Ok(0);
+    }
+
+    if verbose {
+        println!("Found {} window(s)", count);
+    }
+
+    let mut closed_count = 0;
+
+    // iterate through windows and close each one
+    for i in 0..count {
+        let window = unsafe { CFArrayGetValueAtIndex(windows_value as _, i) as AXUIElementRef };
+
+        if window.is_null() {
+            continue;
+        }
+
+        // try to close this window
+        if close_single_window(window, verbose).is_ok() {
+            closed_count += 1;
+        }
+    }
+
+    unsafe {
+        core_foundation::base::CFRelease(windows_value);
+        core_foundation::base::CFRelease(app_element as CFTypeRef);
+    }
+
+    if verbose {
+        println!("Closed {} window(s)", closed_count);
+    }
+
+    Ok(closed_count)
+}
+
+/// Close a single window by clicking its close button
+fn close_single_window(window: AXUIElementRef, verbose: bool) -> Result<()> {
+    use core_foundation::base::CFTypeRef;
+
+    // get the close button
+    let close_button_attr = CFString::new("AXCloseButton");
+    let mut close_button: CFTypeRef = std::ptr::null_mut();
+
+    let result = unsafe {
+        AXUIElementCopyAttributeValue(
+            window,
+            close_button_attr.as_concrete_TypeRef(),
+            &mut close_button,
+        )
+    };
+
+    if result != K_AX_ERROR_SUCCESS || close_button.is_null() {
+        if verbose {
+            println!("Window has no close button (error: {})", result);
+        }
+        return Err(anyhow!("Window has no close button"));
+    }
+
+    // perform the press action on the close button
+    let press_action = CFString::new("AXPress");
+    let result = unsafe {
+        AXUIElementPerformAction(
+            close_button as AXUIElementRef,
+            press_action.as_concrete_TypeRef(),
+        )
+    };
+
+    unsafe {
+        core_foundation::base::CFRelease(close_button);
+    }
+
+    if result != K_AX_ERROR_SUCCESS {
+        if verbose {
+            println!("Failed to click close button (error: {})", result);
+        }
+        return Err(anyhow!("Failed to close window (error: {})", result));
+    }
+
+    Ok(())
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXUIElementPerformAction(
+        element: AXUIElementRef,
+        action: core_foundation::string::CFStringRef,
+    ) -> i32;
+}
+
 /// Get current window position
 unsafe fn get_window_position(window: AXUIElementRef) -> Result<(f64, f64)> {
     use core_foundation::base::CFTypeRef;
