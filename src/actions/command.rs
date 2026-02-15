@@ -105,6 +105,11 @@ pub enum Command {
     /// macOS Spotlight integration
     Spotlight(SpotlightCommand),
 
+    // ==================== Events Commands ====================
+    /// event subscription and waiting
+    #[allow(dead_code)]
+    Events(EventsCommand),
+
     // ==================== Install Commands ====================
     /// install cwm to system PATH
     Install {
@@ -148,6 +153,8 @@ pub enum ListResource {
     Displays,
     /// display aliases (system and user-defined)
     Aliases,
+    /// available event types
+    Events,
 }
 
 /// target for get command
@@ -232,6 +239,30 @@ pub enum SpotlightCommand {
     Example,
 }
 
+/// events subcommands
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum EventsCommand {
+    /// listen for events and stream to stdout
+    Listen {
+        /// event patterns to filter (empty = all events)
+        event: Vec<String>,
+        /// app name/title filters (empty = all apps)
+        app: Vec<String>,
+        /// custom output format
+        format: Option<String>,
+    },
+    /// wait for specific event(s) then exit
+    Wait {
+        /// event type(s) to wait for (empty = any event)
+        event: Vec<String>,
+        /// app name/title filters (empty = all apps)
+        app: Vec<String>,
+        /// timeout in seconds (None = wait forever)
+        timeout: Option<u64>,
+    },
+}
+
 /// record subcommands
 /// note: these variants exist for IPC rejection and is_interactive checks
 /// the actual implementation is in CLI handlers
@@ -272,6 +303,8 @@ impl Command {
                 completions_only: false,
                 ..
             } => true,
+            // events listen/wait are blocking but not interactive
+            Command::Events(_) => false,
             _ => false,
         }
     }
@@ -294,6 +327,8 @@ impl Command {
             Command::Daemon(_) => "daemon",
             Command::Config(_) => "config",
             Command::Spotlight(_) => "spotlight",
+            Command::Events(EventsCommand::Listen { .. }) => "events_listen",
+            Command::Events(EventsCommand::Wait { .. }) => "events_wait",
             Command::Install { .. } => "install",
             Command::Uninstall { .. } => "uninstall",
             Command::Update { .. } => "update",
@@ -307,6 +342,7 @@ impl std::fmt::Display for ListResource {
             ListResource::Apps => write!(f, "apps"),
             ListResource::Displays => write!(f, "displays"),
             ListResource::Aliases => write!(f, "aliases"),
+            ListResource::Events => write!(f, "events"),
         }
     }
 }
@@ -319,8 +355,9 @@ impl std::str::FromStr for ListResource {
             "apps" => Ok(ListResource::Apps),
             "displays" => Ok(ListResource::Displays),
             "aliases" => Ok(ListResource::Aliases),
+            "events" => Ok(ListResource::Events),
             _ => Err(format!(
-                "invalid resource '{}', expected: apps, displays, aliases",
+                "invalid resource '{}', expected: apps, displays, aliases, events",
                 s
             )),
         }
@@ -411,12 +448,20 @@ mod tests {
             "aliases".parse::<ListResource>().unwrap(),
             ListResource::Aliases
         );
+        assert_eq!(
+            "events".parse::<ListResource>().unwrap(),
+            ListResource::Events
+        );
 
         // case insensitive
         assert_eq!("APPS".parse::<ListResource>().unwrap(), ListResource::Apps);
         assert_eq!(
             "Displays".parse::<ListResource>().unwrap(),
             ListResource::Displays
+        );
+        assert_eq!(
+            "EVENTS".parse::<ListResource>().unwrap(),
+            ListResource::Events
         );
 
         // invalid

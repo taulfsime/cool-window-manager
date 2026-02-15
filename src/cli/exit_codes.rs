@@ -29,6 +29,12 @@ pub const WINDOW_NOT_FOUND: i32 = 6;
 /// target display doesn't exist
 pub const DISPLAY_NOT_FOUND: i32 = 7;
 
+/// daemon is not running
+pub const DAEMON_NOT_RUNNING: i32 = 8;
+
+/// operation timed out
+pub const TIMEOUT: i32 = 9;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44,6 +50,8 @@ mod tests {
             CONFIG_ERROR,
             WINDOW_NOT_FOUND,
             DISPLAY_NOT_FOUND,
+            DAEMON_NOT_RUNNING,
+            TIMEOUT,
         ];
 
         // verify all codes are unique

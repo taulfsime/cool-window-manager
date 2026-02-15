@@ -188,9 +188,10 @@ cwm config set settings.update.check_frequency manual
 | `cwm maximize [--app <name>]` | Maximize a window to fill the screen |
 | `cwm move [--to <position>] [--display <target>] [--app <name>]` | Move a window to a position and/or display |
 | `cwm resize --to <size> [--app <name>]` | Resize a window to a target size |
-| `cwm list <resource>` | List resources (apps, displays, aliases) |
+| `cwm list <resource>` | List resources (apps, displays, aliases, events) |
 | `cwm check-permissions` | Check accessibility permissions |
 | `cwm config <subcommand>` | Manage configuration |
+| `cwm events <subcommand>` | Subscribe to window events |
 | `cwm daemon <subcommand>` | Manage background daemon |
 | `cwm spotlight <subcommand>` | Manage Spotlight integration |
 | `cwm record <shortcut\|layout>` | Record keyboard shortcuts or window layouts |
@@ -413,6 +414,7 @@ List resources (apps, displays, or aliases).
 cwm list apps                    # list running applications
 cwm list displays                # list available displays
 cwm list aliases                 # list display aliases
+cwm list events                  # list available event types
 
 # JSON output
 cwm list apps --json             # basic JSON (name, pid)
@@ -434,6 +436,7 @@ Resources:
 - `apps` - Running applications with their window titles
 - `displays` - Available displays with resolution and position
 - `aliases` - Display aliases (system: builtin, external, main, secondary; and user-defined)
+- `events` - Available event types for subscription
 
 Options:
 - `--json` - Output in JSON format
@@ -468,6 +471,80 @@ Available fields for format:
 - `app.name`, `app.pid`, `app.bundle_id`
 - `window.title`, `window.x`, `window.y`, `window.width`, `window.height`
 - `display.index`, `display.name`
+
+### events
+
+Subscribe to real-time window manager events. Requires the daemon to be running.
+
+```bash
+# stream all events
+cwm events listen
+
+# filter by event type (glob patterns)
+cwm events listen --event "app.*"
+cwm events listen --event "window.*"
+
+# filter by app name (supports regex)
+cwm events listen --app Safari
+cwm events listen --app '/chrome|safari/i'
+
+# wait for specific event
+cwm events wait --event app.focused --app Safari
+cwm events wait --event window.maximized --timeout 30
+
+# scripting: run command when app is focused
+cwm events wait --event app.focused --app Slack && say "Slack focused"
+```
+
+Subcommands:
+- `listen` - Stream events to stdout (JSON, one per line)
+- `wait` - Block until a specific event occurs
+
+#### events listen
+
+Stream events continuously until interrupted (Ctrl+C).
+
+Options:
+- `--event <PATTERN>` - Filter by event type using glob patterns (e.g., `"app.*"`, `"window.moved"`)
+- `--app <NAME>` - Filter by app name (repeatable, supports regex matching)
+
+Output format (JSON, one event per line):
+```json
+{"event":"app.focused","ts":1707900000000,"app":"Safari","pid":1234}
+{"event":"window.resized","ts":1707900001000,"app":"Safari","width":1200,"height":800}
+```
+
+#### events wait
+
+Block until a matching event occurs, then exit.
+
+Options:
+- `--event <TYPE>` - Event type to wait for (required, e.g., `app.focused`, `window.maximized`)
+- `--app <NAME>` - Filter by app name (repeatable, supports regex matching)
+- `--timeout <SECONDS>` - Timeout in seconds (default: no timeout)
+- `--quiet` - No output on success, exit code only
+
+Exit codes:
+- `0` - Event received
+- `1` - Error
+- `8` - Timeout
+- `9` - Daemon not running
+
+#### Event Types
+
+| Event | Description | Data Fields |
+|-------|-------------|-------------|
+| `daemon.started` | Daemon process started | - |
+| `daemon.stopped` | Daemon process stopped | - |
+| `app.launched` | App launched (via app_rules) | `app`, `pid` |
+| `app.focused` | App window focused | `app`, `pid`, `match_type` |
+| `window.maximized` | Window maximized | `app`, `pid` |
+| `window.resized` | Window resized | `app`, `pid`, `width`, `height` |
+| `window.moved` | Window moved | `app`, `pid`, `x`, `y`, `display_index`, `display_name` |
+
+All events include:
+- `event` - Event type string
+- `ts` - Unix timestamp in milliseconds
 
 ### config
 
@@ -572,7 +649,21 @@ echo "focus:Safari" | nc -U ~/.cwm/cwm.sock
 # OK
 ```
 
-Available methods: `ping`, `status`, `focus`, `maximize`, `resize`, `move`, `list_apps`, `list_displays`, `action`.
+Available methods: `ping`, `status`, `focus`, `maximize`, `resize`, `move`, `list_apps`, `list_displays`, `list_events`, `subscribe`, `action`.
+
+#### Event Subscription via IPC
+
+Subscribe to events over a persistent socket connection:
+
+```bash
+# subscribe to all events (keeps connection open)
+echo '{"method":"subscribe","id":1}' | nc -U ~/.cwm/cwm.sock
+
+# subscribe with filters
+echo '{"method":"subscribe","params":{"events":["app.*"],"apps":["Safari"]},"id":1}' | nc -U ~/.cwm/cwm.sock
+```
+
+The daemon streams events as JSON-RPC notifications (no `id` field) until the connection closes.
 
 For detailed IPC documentation and examples in Python, Node.js, Ruby, Go, Rust, and Hammerspoon, see [SCRIPTS.md](SCRIPTS.md#ipc-socket).
 

@@ -63,6 +63,12 @@ mod macos {
                 return;
             }
 
+            // emit app.launched event for all app launches
+            crate::daemon::events::emit(crate::daemon::events::Event::app_launched(
+                app_name.clone(),
+                pid,
+            ));
+
             // check if this app matches any rules
             let matched_rule = {
                 let rules_guard = APP_RULES.lock().ok();

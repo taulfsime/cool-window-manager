@@ -174,7 +174,8 @@ cool-window-mng/
     │   ├── commands.rs     # CLI command definitions and execution
     │   ├── convert.rs      # Commands::to_command() conversion to unified Command
     │   ├── exit_codes.rs   # documented exit codes for scripting
-    │   └── output.rs       # output formatting (JSON, text, format strings)
+    │   ├── output.rs       # output formatting (JSON, text, format strings)
+    │   └── events.rs       # CLI handlers for events listen/wait commands
     ├── config/
     │   ├── mod.rs          # config loading, saving, value manipulation, JSONC parsing
     │   ├── schema.rs       # Config, Shortcut, AppRule, Settings, UpdateSettings
@@ -184,7 +185,8 @@ cool-window-mng/
     │   ├── hotkeys.rs      # global hotkey recording and listening (CGEventTap)
     │   ├── ipc.rs          # PID file management, Unix socket IPC (JSON-RPC 2.0 only)
     │   ├── launchd.rs      # macOS launchd plist for auto-start
-    │   └── app_watcher.rs  # NSWorkspace notifications for app launches
+    │   ├── app_watcher.rs  # NSWorkspace notifications for app launches
+    │   └── events.rs       # Event enum, EventBus for pub/sub, subscriber management
     ├── display/
     │   └── mod.rs          # display enumeration, multi-monitor targeting
     ├── installer/
@@ -234,7 +236,7 @@ Unified action layer providing consistent behavior across CLI, IPC, and future H
 | `maximize.rs` | maximize action - fills screen |
 | `resize.rs` | resize action - percentage, pixels, or points |
 | `move_window.rs` | move action - positions window (anchors, coordinates, percentages) and/or moves to another display |
-| `list.rs` | list apps/displays/aliases |
+| `list.rs` | list apps/displays/aliases/events |
 | `get.rs` | get focused window or specific app's window info |
 | `system.rs` | ping, status, version, check_permissions |
 | `daemon.rs` | daemon status (start/stop/install are CLI-only) |
@@ -245,7 +247,7 @@ Unified action layer providing consistent behavior across CLI, IPC, and future H
 
 **Key types:**
 
-- `Command`: Unified enum for all commands (Focus, Maximize, Resize, Move, List, Get, Ping, Status, Version, CheckPermissions, Record, Daemon, Config, Spotlight, Install, Uninstall, Update)
+- `Command`: Unified enum for all commands (Focus, Maximize, Resize, Move, List, Get, Ping, Status, Version, CheckPermissions, Record, Daemon, Events, Config, Spotlight, Install, Uninstall, Update)
 - `ExecutionContext`: Contains config reference, verbose flag, and `is_cli` flag
 - `ActionResult`: Serializable result with action name and typed data
 - `ActionError`: Error with exit code, message, and optional suggestions
@@ -269,8 +271,9 @@ Handles command-line argument parsing and command execution.
 | `convert.rs` | `Commands::to_command()` conversion from CLI args to unified `Command` enum |
 | `exit_codes.rs` | exit code constants for scripting (SUCCESS, ERROR, APP_NOT_FOUND, etc.) |
 | `output.rs` | output formatting: `OutputMode` enum, JSON-RPC 2.0 response types, `format_template()` for custom format strings |
+| `events.rs` | CLI handlers for `events listen` and `events wait` commands |
 
-Commands defined: `focus`, `maximize`, `move`, `resize`, `list`, `get`, `check-permissions`, `record`, `config`, `daemon`, `version`, `install`, `uninstall`, `update`, `spotlight`
+Commands defined: `focus`, `maximize`, `move`, `resize`, `list`, `get`, `check-permissions`, `record`, `config`, `daemon`, `events`, `version`, `install`, `uninstall`, `update`, `spotlight`
 
 **CLI Command Reference:**
 
@@ -280,11 +283,12 @@ Commands defined: `focus`, `maximize`, `move`, `resize`, `list`, `get`, `check-p
 | `maximize` | `cwm maximize [--app <name>]` | Maximize window to fill screen |
 | `move` | `cwm move [--to <position>] [--display <target>] [--app <name>]` | Move window to position and/or display |
 | `resize` | `cwm resize --to <size> [--app <name>]` | Resize window (percent, pixels, or points) |
-| `list` | `cwm list <apps\|displays\|aliases> [--json] [--names] [--format] [--detailed]` | List resources |
+| `list` | `cwm list <apps\|displays\|aliases\|events> [--json] [--names] [--format] [--detailed]` | List resources |
 | `get` | `cwm get <focused\|window> [--app <name>] [--format]` | Get window information |
 | `check-permissions` | `cwm check-permissions [--prompt]` | Check accessibility permissions |
 | `record` | `cwm record <shortcut\|layout> [OPTIONS]` | Record keyboard shortcuts or window layouts |
 | `config` | `cwm config <show\|path\|set\|reset\|default\|verify>` | Manage configuration |
+| `events` | `cwm events <listen\|wait>` | Subscribe to window events |
 | `daemon` | `cwm daemon <start\|stop\|status\|install\|uninstall>` | Manage background daemon |
 | `spotlight` | `cwm spotlight <install\|list\|remove\|example>` | Manage Spotlight integration |
 | `install` | `cwm install [--path <dir>] [--force] [--completions[=SHELL]] [--no-completions] [--completions-only]` | Install cwm to system PATH |
@@ -408,6 +412,7 @@ Background process that listens for hotkeys and app launches.
 | `ipc.rs` | PID file management, Unix socket IPC (`IpcRequest`, `IpcResponse`, `send_request()`, `send_command()`) |
 | `launchd.rs` | `install_launchd()`, `uninstall_launchd()` for auto-start |
 | `app_watcher.rs` | `AppWatcher` struct, NSWorkspace notification observer |
+| `events.rs` | `Event` enum, `EventBus` for pub/sub, `Subscriber` management, event filtering |
 
 The daemon uses:
 - PID file at `/tmp/cwm.pid` for single-instance enforcement
@@ -422,7 +427,7 @@ The daemon exposes a Unix socket for inter-process communication, allowing exter
 - Socket location: `~/.cwm/cwm.sock`
 - Protocol: JSON-RPC 2.0 (the `"jsonrpc": "2.0"` field is optional for convenience)
 - All requests must be JSON format
-- Available methods: all commands from `Command` enum (focus, maximize, resize, move, list, get, ping, status, version, config, etc.)
+- Available methods: all commands from `Command` enum (focus, maximize, resize, move, list, get, ping, status, version, config, subscribe, etc.)
 
 **Request format:**
 ```json
@@ -739,6 +744,7 @@ Tests are located in `#[cfg(test)]` modules within:
 | `src/window/matching.rs` | name matching (exact, prefix, fuzzy), title matching (exact, prefix, fuzzy) |
 | `src/window/manager.rs` | ResizeTarget parsing, find_display_for_point, WindowData/DisplayDataInfo serialization |
 | `src/daemon/mod.rs` | parse_shortcuts, find_shortcut_launch, handle_ipc_request |
+| `src/daemon/events.rs` | Event serialization, EventBus pub/sub, subscriber filtering, glob matching |
 | `src/daemon/hotkeys.rs` | hotkey string parsing, keycode conversion, modifier extraction |
 | `src/daemon/launchd.rs` | plist generation |
 | `src/daemon/ipc.rs` | IPC request parsing, response formatting |
@@ -770,6 +776,7 @@ Integration tests for CLI commands, install, update, and rollback:
 | `tests/integration_tests/test_rollback.rs` | backup creation, test failure rollback, checksum mismatch, corrupt download |
 | `tests/integration_tests/test_channels.rs` | dev/beta/stable channels, channel priority, upgrade paths |
 | `tests/integration_tests/test_man_page.rs` | man page existence, sections (NAME, SYNOPSIS, DESCRIPTION, SUBCOMMANDS), command documentation |
+| `tests/integration_tests/test_events.rs` | events listen/wait commands, list events, event filtering |
 
 Note: Some integration tests require a mock GitHub API server and are skipped when not available.
 

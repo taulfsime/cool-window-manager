@@ -229,6 +229,12 @@ impl JsonRpcRequest {
                 prerelease: params.get_bool_or("prerelease", false),
             }),
 
+            // ==================== Events Commands ====================
+            // subscribe is handled specially by the daemon for persistent connections
+            "subscribe" => Err(ActionError::not_supported(
+                "subscribe is handled directly by the daemon socket listener",
+            )),
+
             // ==================== Interactive/CLI-only Commands ====================
             "record_shortcut" => Err(ActionError::not_supported(
                 "record_shortcut is interactive and not available via IPC",

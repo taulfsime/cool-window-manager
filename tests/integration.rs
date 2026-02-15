@@ -17,6 +17,9 @@ mod test_cli_config;
 #[path = "integration_tests/test_cli_daemon.rs"]
 mod test_cli_daemon;
 
+#[path = "integration_tests/test_events.rs"]
+mod test_events;
+
 #[path = "integration_tests/test_cli_focus.rs"]
 mod test_cli_focus;
 

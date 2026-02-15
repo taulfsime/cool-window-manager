@@ -1,5 +1,6 @@
 mod commands;
 mod convert;
+pub mod events;
 pub mod exit_codes;
 pub mod output;
 

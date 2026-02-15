@@ -29,6 +29,9 @@ strsim = "0.11"
 # Regex matching
 regex = "1"
 
+# Lazy static for global state
+lazy_static = "1.4"
+
 # Async runtime for daemon
 tokio = { version = "1", features = ["full"] }
 

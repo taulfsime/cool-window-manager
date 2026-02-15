@@ -12,7 +12,8 @@ mod parse;
 mod result;
 
 pub use command::{
-    Command, ConfigCommand, DaemonCommand, GetTarget, ListResource, RecordCommand, SpotlightCommand,
+    Command, ConfigCommand, DaemonCommand, EventsCommand, GetTarget, ListResource, RecordCommand,
+    SpotlightCommand,
 };
 pub use context::ExecutionContext;
 pub use error::ActionError;
@@ -53,6 +54,7 @@ pub fn execute(cmd: Command, ctx: &ExecutionContext) -> Result<ActionResult, Act
             ListResource::Apps => handlers::list::execute_list_apps(detailed, ctx),
             ListResource::Displays => handlers::list::execute_list_displays(detailed, ctx),
             ListResource::Aliases => handlers::list::execute_list_aliases(detailed, ctx),
+            ListResource::Events => handlers::list::execute_list_events(detailed, ctx),
         },
         Command::Get { target } => match target {
             GetTarget::Focused => handlers::get::execute_get_focused(ctx),
@@ -102,6 +104,16 @@ pub fn execute(cmd: Command, ctx: &ExecutionContext) -> Result<ActionResult, Act
                 ConfigCommand::Reset => handlers::config::execute_reset(config_override, ctx),
             }
         }
+
+        // events commands (handled by CLI directly for streaming output)
+        Command::Events(events_cmd) => match events_cmd {
+            EventsCommand::Listen { .. } => Err(ActionError::not_supported(
+                "events listen should be called via CLI handler directly (streaming output)",
+            )),
+            EventsCommand::Wait { .. } => Err(ActionError::not_supported(
+                "events wait should be called via CLI handler directly (blocking operation)",
+            )),
+        },
 
         // spotlight commands
         Command::Spotlight(spotlight_cmd) => match spotlight_cmd {

@@ -3,6 +3,7 @@
 use crate::actions::context::ExecutionContext;
 use crate::actions::error::ActionError;
 use crate::actions::result::ActionResult;
+use crate::daemon::events::EventType;
 use crate::display;
 use crate::window::matching;
 
@@ -169,4 +170,28 @@ pub fn execute_list_aliases(
     }
 
     Ok(ActionResult::list("list-aliases", items))
+}
+
+/// execute list events action
+pub fn execute_list_events(
+    detailed: bool,
+    _ctx: &ExecutionContext,
+) -> Result<ActionResult, ActionError> {
+    let items: Vec<serde_json::Value> = EventType::all()
+        .iter()
+        .map(|e| {
+            if detailed {
+                serde_json::json!({
+                    "name": e.as_str(),
+                    "description": e.description(),
+                })
+            } else {
+                serde_json::json!({
+                    "name": e.as_str(),
+                })
+            }
+        })
+        .collect();
+
+    Ok(ActionResult::list("list-events", items))
 }

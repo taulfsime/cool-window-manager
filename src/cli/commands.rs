@@ -241,6 +241,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: SpotlightCommands,
     },
+
+    /// Subscribe to window manager events
+    Events {
+        #[command(subcommand)]
+        command: EventsCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -329,6 +335,39 @@ pub enum SpotlightCommands {
 }
 
 #[derive(Subcommand)]
+pub enum EventsCommands {
+    /// Listen for events and stream to stdout
+    Listen {
+        /// Event patterns to filter (e.g., "app.*", "window.resized")
+        #[arg(short, long, action = clap::ArgAction::Append)]
+        event: Vec<String>,
+
+        /// Filter by app name/title (supports regex /pattern/)
+        #[arg(short, long, action = clap::ArgAction::Append)]
+        app: Vec<String>,
+
+        /// Custom output format using {field} placeholders
+        #[arg(long)]
+        format: Option<String>,
+    },
+
+    /// Wait for specific event(s) then exit
+    Wait {
+        /// Event type(s) to wait for (e.g., "app.launched", "app.focused")
+        #[arg(short, long, action = clap::ArgAction::Append)]
+        event: Vec<String>,
+
+        /// Filter by app name/title (supports regex /pattern/)
+        #[arg(short, long, action = clap::ArgAction::Append)]
+        app: Vec<String>,
+
+        /// Timeout in seconds (exit code 1 on timeout)
+        #[arg(short, long)]
+        timeout: Option<u64>,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum GetCommands {
     /// Get info about the currently focused window
     Focused {
@@ -394,6 +433,8 @@ pub enum ListResource {
     Displays,
     /// Display aliases (system and user-defined)
     Aliases,
+    /// Available event types
+    Events,
 }
 
 // JSON output structs for list command (used in tests to verify serialization format)
@@ -955,6 +996,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 eprintln!("  apps      Running applications");
                 eprintln!("  displays  Available displays");
                 eprintln!("  aliases   Display aliases (system and user-defined)");
+                eprintln!("  events    Available event types");
                 eprintln!();
                 eprintln!("Usage: cwm list <RESOURCE> [OPTIONS]");
                 eprintln!();
@@ -963,6 +1005,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 eprintln!("  cwm list apps --json");
                 eprintln!("  cwm list apps --names");
                 eprintln!("  cwm list displays --format '{{index}}: {{name}}'");
+                eprintln!("  cwm list events --detailed");
                 std::process::exit(super::exit_codes::INVALID_ARGS);
             };
 
@@ -980,6 +1023,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 ListResource::Apps => ActionListResource::Apps,
                 ListResource::Displays => ActionListResource::Displays,
                 ListResource::Aliases => ActionListResource::Aliases,
+                ListResource::Events => ActionListResource::Events,
             };
 
             let cmd = Command::List {
@@ -1100,6 +1144,29 @@ pub fn execute(cli: Cli) -> Result<()> {
                                 println!("  {:<20} ({}) → not resolved", name, alias_type);
                             }
                         }
+                    }
+                    ListResource::Events => {
+                        println!("Available events:\n");
+                        for item in &items {
+                            let name = item
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            if detailed {
+                                let desc = item
+                                    .get("description")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                println!("  {:<20} - {}", name, desc);
+                            } else {
+                                println!("  {}", name);
+                            }
+                        }
+                        println!("\nPatterns:");
+                        println!("  *          - All events");
+                        println!("  app.*      - All app events");
+                        println!("  window.*   - All window events");
+                        println!("  daemon.*   - All daemon events");
                     }
                 },
             }
@@ -1555,6 +1622,23 @@ pub fn execute(cli: Cli) -> Result<()> {
                 }
             }
         }
+
+        Commands::Events { command } => match command {
+            EventsCommands::Listen { event, app, format } => {
+                super::events::listen(event, app, format, &output_mode)
+            }
+            EventsCommands::Wait {
+                event,
+                app,
+                timeout,
+            } => {
+                let exit_code = super::events::wait(event, app, timeout, &output_mode)?;
+                if exit_code != 0 {
+                    std::process::exit(exit_code);
+                }
+                Ok(())
+            }
+        },
     }
 }
 

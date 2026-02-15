@@ -1,8 +1,8 @@
 //! conversion helpers for CLI commands
 
-use crate::actions::{Command, ConfigCommand, DaemonCommand, SpotlightCommand};
+use crate::actions::{Command, ConfigCommand, DaemonCommand, EventsCommand, SpotlightCommand};
 
-use super::commands::{ConfigCommands, DaemonCommands, SpotlightCommands};
+use super::commands::{ConfigCommands, DaemonCommands, EventsCommands, SpotlightCommands};
 
 /// convert launch/no_launch flags to Option<bool>
 pub fn resolve_launch_flags(launch: bool, no_launch: bool) -> Option<bool> {
@@ -73,6 +73,31 @@ impl SpotlightCommands {
                 })
             }
             SpotlightCommands::Example => Command::Spotlight(SpotlightCommand::Example),
+        }
+    }
+}
+
+impl EventsCommands {
+    /// convert CLI events command to unified Command enum
+    #[allow(dead_code)]
+    pub fn to_command(&self) -> Command {
+        match self {
+            EventsCommands::Listen { event, app, format } => {
+                Command::Events(EventsCommand::Listen {
+                    event: event.clone(),
+                    app: app.clone(),
+                    format: format.clone(),
+                })
+            }
+            EventsCommands::Wait {
+                event,
+                app,
+                timeout,
+            } => Command::Events(EventsCommand::Wait {
+                event: event.clone(),
+                app: app.clone(),
+                timeout: *timeout,
+            }),
         }
     }
 }

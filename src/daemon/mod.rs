@@ -1,4 +1,5 @@
 pub mod app_watcher;
+pub mod events;
 pub mod hotkeys;
 pub mod ipc;
 mod launchd;
@@ -11,6 +12,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::{self, should_launch, Config};
 use crate::window::{manager, matching};
+
+use events::Event;
 
 use hotkeys::Hotkey;
 use ipc::{
@@ -84,6 +87,9 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
     setup_signal_handlers()?;
 
     log("cwm daemon starting...");
+
+    // emit daemon.started event
+    events::emit(Event::daemon_started());
 
     // load config
     let config = config::load()?;
@@ -178,6 +184,10 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
     let _ = socket_handle.join();
     remove_socket_file()?;
     remove_pid_file()?;
+
+    // emit daemon.stopped event
+    events::emit(Event::daemon_stopped());
+
     log("Daemon stopped.");
 
     Ok(())
@@ -293,6 +303,13 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
             match match_result {
                 Some(result) => {
                     manager::focus_app(&result.app, false)?;
+                    // emit app.focused event
+                    events::emit(Event::app_focused(
+                        result.app.name.clone(),
+                        result.app.pid,
+                        Some(result.app.titles.clone()),
+                        result.describe(),
+                    ));
                 }
                 None => {
                     let do_launch =
@@ -313,6 +330,15 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
             };
 
             manager::maximize_app(target_app.as_ref(), false)?;
+
+            // emit window.maximized event
+            if let Some(ref app) = target_app {
+                events::emit(Event::window_maximized(
+                    app.name.clone(),
+                    app.pid,
+                    Some(app.titles.clone()),
+                ));
+            }
         }
         "move" => {
             let arg_str = action_arg.ok_or_else(|| anyhow!("move requires target"))?;
@@ -348,13 +374,25 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 None
             };
 
-            manager::move_window(
+            let (new_x, new_y, _display_index, display_name) = manager::move_window(
                 target_app.as_ref(),
                 move_target.as_ref(),
                 display_target.as_ref(),
                 false,
                 &config.display_aliases,
             )?;
+
+            // emit window.moved event
+            if let Some(ref app) = target_app {
+                events::emit(Event::window_moved(
+                    app.name.clone(),
+                    app.pid,
+                    Some(app.titles.clone()),
+                    new_x,
+                    new_y,
+                    Some(display_name),
+                ));
+            }
         }
         "resize" => {
             use crate::window::ResizeTarget;
@@ -378,7 +416,19 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 None
             };
 
-            manager::resize_app(target_app.as_ref(), &resize_target, false, false)?;
+            let (width, height) =
+                manager::resize_app(target_app.as_ref(), &resize_target, false, false)?;
+
+            // emit window.resized event
+            if let Some(ref app) = target_app {
+                events::emit(Event::window_resized(
+                    app.name.clone(),
+                    app.pid,
+                    Some(app.titles.clone()),
+                    width as i32,
+                    height as i32,
+                ));
+            }
         }
         _ => {
             return Err(anyhow!("Unknown action: {}", action_type));
@@ -431,9 +481,22 @@ fn execute_action_for_app_info(
     let mut current_delay = initial_delay as f64;
 
     for attempt in 0..max_retries {
-        let result = match action_type {
-            "focus" => manager::focus_app(target_app, false),
-            "maximize" => manager::maximize_app(Some(target_app), false),
+        let result: Result<Option<Event>> = match action_type {
+            "focus" => manager::focus_app(target_app, false).map(|()| {
+                Some(Event::app_focused(
+                    target_app.name.clone(),
+                    target_app.pid,
+                    Some(target_app.titles.clone()),
+                    "exact".to_string(),
+                ))
+            }),
+            "maximize" => manager::maximize_app(Some(target_app), false).map(|()| {
+                Some(Event::window_maximized(
+                    target_app.name.clone(),
+                    target_app.pid,
+                    Some(target_app.titles.clone()),
+                ))
+            }),
             "move" => {
                 let arg_str = match action_arg {
                     Some(s) => s,
@@ -447,7 +510,16 @@ fn execute_action_for_app_info(
                     false,
                     &config.display_aliases,
                 )
-                .map(|_| ())
+                .map(|(new_x, new_y, _display_index, display_name)| {
+                    Some(Event::window_moved(
+                        target_app.name.clone(),
+                        target_app.pid,
+                        Some(target_app.titles.clone()),
+                        new_x,
+                        new_y,
+                        Some(display_name),
+                    ))
+                })
             }
             "resize" => {
                 use crate::window::ResizeTarget;
@@ -457,7 +529,17 @@ fn execute_action_for_app_info(
                     None => return Err(anyhow!("resize requires size")),
                 };
                 let resize_target = ResizeTarget::parse(size_str)?;
-                manager::resize_app(Some(target_app), &resize_target, false, false).map(|_| ())
+                manager::resize_app(Some(target_app), &resize_target, false, false).map(
+                    |(width, height)| {
+                        Some(Event::window_resized(
+                            target_app.name.clone(),
+                            target_app.pid,
+                            Some(target_app.titles.clone()),
+                            width as i32,
+                            height as i32,
+                        ))
+                    },
+                )
             }
             _ => {
                 return Err(anyhow!("Unknown action: {}", action_type));
@@ -465,7 +547,12 @@ fn execute_action_for_app_info(
         };
 
         match result {
-            Ok(()) => return Ok(()),
+            Ok(event) => {
+                if let Some(e) = event {
+                    events::emit(e);
+                }
+                return Ok(());
+            }
             Err(e) => {
                 let err_str = e.to_string();
                 // retry on "no windows" or "attribute unsupported" errors
@@ -628,7 +715,20 @@ fn start_socket_listener(config: Arc<Config>) -> Result<()> {
                 if reader.read_line(&mut line).is_ok() {
                     let line = line.trim();
                     if !line.is_empty() {
-                        // parse request and handle it
+                        // check if this is a subscribe request
+                        if let Ok(request) = IpcRequest::parse(line) {
+                            if request.method == "subscribe" {
+                                // handle subscription in a separate thread
+                                let config_clone = Arc::clone(&config);
+                                let request_clone = request.clone();
+                                std::thread::spawn(move || {
+                                    handle_subscription(stream, request_clone, &config_clone);
+                                });
+                                continue;
+                            }
+                        }
+
+                        // normal request-response handling
                         if let Some(response) = handle_ipc_message(line, &config) {
                             let _ = stream.write_all(response.as_bytes());
                             let _ = stream.write_all(b"\n");
@@ -651,6 +751,97 @@ fn start_socket_listener(config: Arc<Config>) -> Result<()> {
     let _ = std::fs::remove_file(&socket_path);
 
     Ok(())
+}
+
+/// Handle a subscription request - keeps connection open and streams events
+fn handle_subscription(
+    mut stream: std::os::unix::net::UnixStream,
+    request: IpcRequest,
+    _config: &Config,
+) {
+    use std::io::Write;
+    use std::time::Duration;
+
+    // parse event and app filters from params
+    let event_filters: Vec<String> = request
+        .params
+        .get("events")
+        .map(|s| {
+            // handle both single string and comma-separated list
+            s.split(',').map(|e| e.trim().to_string()).collect()
+        })
+        .unwrap_or_default();
+
+    let app_filters: Vec<String> = request
+        .params
+        .get("app")
+        .map(|s| s.split(',').map(|a| a.trim().to_string()).collect())
+        .unwrap_or_default();
+
+    // expand filters to actual event types for response
+    let subscribed = events::EventBus::expand_filters(&event_filters);
+
+    // subscribe to events
+    let (sub_id, mut receiver) = events::subscribe(event_filters, app_filters);
+
+    log(&format!(
+        "Subscription {} started: {:?}",
+        sub_id, subscribed
+    ));
+
+    // send success response
+    if let Some(response) =
+        format_success_response(&request, serde_json::json!({ "subscribed": subscribed }))
+    {
+        if stream.write_all(response.as_bytes()).is_err() {
+            events::unsubscribe(sub_id);
+            return;
+        }
+        if stream.write_all(b"\n").is_err() {
+            events::unsubscribe(sub_id);
+            return;
+        }
+        let _ = stream.flush();
+    }
+
+    // set a read timeout so we can check for daemon stop
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
+
+    // stream events to client
+    loop {
+        // check if daemon is stopping
+        if DAEMON_SHOULD_STOP.load(Ordering::SeqCst) || SOCKET_SHOULD_STOP.load(Ordering::SeqCst) {
+            break;
+        }
+
+        // try to receive an event (non-blocking with timeout)
+        match receiver.try_recv() {
+            Ok(event) => {
+                let notification = event.to_jsonrpc_notification();
+                if stream.write_all(notification.as_bytes()).is_err() {
+                    break;
+                }
+                if stream.write_all(b"\n").is_err() {
+                    break;
+                }
+                if stream.flush().is_err() {
+                    break;
+                }
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                // no event available, sleep briefly
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                // channel closed
+                break;
+            }
+        }
+    }
+
+    // cleanup
+    events::unsubscribe(sub_id);
+    log(&format!("Subscription {} ended", sub_id));
 }
 
 /// Handle an IPC message and return the response string (or None for notifications)

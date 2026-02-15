@@ -61,7 +61,8 @@ const Commands = (function() {
       ['cwm focus --help', 'Focus command help'],
       ['cwm maximize --help', 'Maximize command help'],
       ['cwm move --help', 'Move command help'],
-      ['cwm resize --help', 'Resize command help']
+      ['cwm resize --help', 'Resize command help'],
+      ['cwm events --help', 'Events command help']
     ];
 
     helpItems.forEach(([cmd, desc]) => {
@@ -245,6 +246,9 @@ const Commands = (function() {
       case 'get':
         cmdCwmGet(subArgs);
         break;
+      case 'events':
+        cmdCwmEvents(subArgs);
+        break;
       case 'version':
         cmdVersion();
         break;
@@ -267,6 +271,7 @@ const Commands = (function() {
     Terminal.writeLine('  resize         Resize window to target size');
     Terminal.writeLine('  list           List apps, displays, or aliases');
     Terminal.writeLine('  get            Get window information');
+    Terminal.writeLine('  events         Subscribe to window events');
     Terminal.writeLine('  daemon         Manage background daemon');
     Terminal.writeLine('  config         Manage configuration');
     Terminal.writeLine('  install        Install cwm to PATH');
@@ -554,6 +559,7 @@ const Commands = (function() {
       Terminal.writeLine('  apps       List running applications');
       Terminal.writeLine('  displays   List available displays');
       Terminal.writeLine('  aliases    List display aliases');
+      Terminal.writeLine('  events     List available event types');
       Terminal.writeLine('');
       Terminal.writeLine('Options:');
       Terminal.writeLine('  --json           Output as JSON');
@@ -566,6 +572,7 @@ const Commands = (function() {
       Terminal.writeLine('  cwm list apps --names | fzf | xargs cwm focus --app');
       Terminal.writeLine("  cwm list apps --format '{name} ({pid})'");
       Terminal.writeLine('  cwm list displays --json');
+      Terminal.writeLine('  cwm list events');
       Terminal.writeLine('');
       return;
     }
@@ -574,7 +581,7 @@ const Commands = (function() {
     
     if (!resource) {
       Terminal.writeLine('');
-      Terminal.writeLine('Available resources: apps, displays, aliases', 'info');
+      Terminal.writeLine('Available resources: apps, displays, aliases, events', 'info');
       Terminal.writeLine("Run 'cwm list <resource> --help' for details", 'info');
       Terminal.writeLine('');
       return;
@@ -632,9 +639,32 @@ const Commands = (function() {
       Terminal.writeLine('  builtin    → Built-in display');
       Terminal.writeLine('  external   → External monitors');
       Terminal.writeLine('  main       → Primary display');
+    } else if (resource === 'events') {
+      if (hasJson) {
+        Terminal.writeLine('{"jsonrpc":"2.0","result":{"events":[', 'output');
+        Terminal.writeLine('  "daemon.started","daemon.stopped",', 'output');
+        Terminal.writeLine('  "app.launched","app.focused",', 'output');
+        Terminal.writeLine('  "window.maximized","window.resized","window.moved"', 'output');
+        Terminal.writeLine(']},"id":null}', 'output');
+      } else {
+        Terminal.writeLine('Available Event Types:', 'highlight');
+        Terminal.writeLine('');
+        Terminal.writeLine('Daemon events:');
+        Terminal.writeLine('  daemon.started   Daemon process started');
+        Terminal.writeLine('  daemon.stopped   Daemon process stopped');
+        Terminal.writeLine('');
+        Terminal.writeLine('App events:');
+        Terminal.writeLine('  app.launched     Application launched (via app_rules)');
+        Terminal.writeLine('  app.focused      Application window focused');
+        Terminal.writeLine('');
+        Terminal.writeLine('Window events:');
+        Terminal.writeLine('  window.maximized Window maximized');
+        Terminal.writeLine('  window.resized   Window resized');
+        Terminal.writeLine('  window.moved     Window moved to position/display');
+      }
     } else {
       Terminal.writeLine(`Unknown resource: ${resource}`, 'error');
-      Terminal.writeLine('Available: apps, displays, aliases', 'info');
+      Terminal.writeLine('Available: apps, displays, aliases, events', 'info');
     }
 
     Terminal.writeLine('');
@@ -699,6 +729,195 @@ const Commands = (function() {
     }
 
     Terminal.writeLine('');
+  }
+
+  function cmdCwmEvents(args) {
+    if (args.includes('--help') || args.includes('-h')) {
+      Terminal.writeLine('');
+      Terminal.writeLine('cwm events - Subscribe to window events', 'highlight');
+      Terminal.writeLine('');
+      Terminal.writeLine('Usage: cwm events <subcommand> [options]');
+      Terminal.writeLine('');
+      Terminal.writeLine('Subcommands:');
+      Terminal.writeLine('  listen     Stream events to stdout');
+      Terminal.writeLine('  wait       Block until specific event occurs');
+      Terminal.writeLine('');
+      Terminal.writeLine('Listen options:');
+      Terminal.writeLine('  --event <pattern>   Filter by event type (glob pattern)');
+      Terminal.writeLine('  --app <name>        Filter by app name (supports regex)');
+      Terminal.writeLine('');
+      Terminal.writeLine('Wait options:');
+      Terminal.writeLine('  --event <type>      Event type to wait for (required)');
+      Terminal.writeLine('  --app <name>        Filter by app name');
+      Terminal.writeLine('  --timeout <secs>    Timeout in seconds (default: no timeout)');
+      Terminal.writeLine('  --quiet             No output, exit code only');
+      Terminal.writeLine('');
+      Terminal.writeLine('Examples:');
+      Terminal.writeLine('  cwm events listen');
+      Terminal.writeLine('  cwm events listen --event "app.*"');
+      Terminal.writeLine('  cwm events listen --app Safari');
+      Terminal.writeLine('  cwm events wait --event app.focused --app Safari');
+      Terminal.writeLine('  cwm events wait --event window.maximized --timeout 30');
+      Terminal.writeLine('');
+      return;
+    }
+
+    const subcommand = args[0];
+
+    if (!subcommand) {
+      Terminal.writeLine('');
+      Terminal.writeLine('Subcommands: listen, wait', 'info');
+      Terminal.writeLine("Run 'cwm events --help' for details", 'info');
+      Terminal.writeLine('');
+      return;
+    }
+
+    if (subcommand === 'listen') {
+      cmdCwmEventsListen(args.slice(1));
+    } else if (subcommand === 'wait') {
+      cmdCwmEventsWait(args.slice(1));
+    } else {
+      Terminal.writeLine(`Unknown subcommand: ${subcommand}`, 'error');
+      Terminal.writeLine('Available: listen, wait', 'info');
+    }
+  }
+
+  function cmdCwmEventsListen(args) {
+    if (args.includes('--help') || args.includes('-h')) {
+      Terminal.writeLine('');
+      Terminal.writeLine('cwm events listen - Stream events to stdout', 'highlight');
+      Terminal.writeLine('');
+      Terminal.writeLine('Usage: cwm events listen [options]');
+      Terminal.writeLine('');
+      Terminal.writeLine('Options:');
+      Terminal.writeLine('  --event <pattern>   Filter by event type (glob: "app.*")');
+      Terminal.writeLine('  --app <name>        Filter by app name (repeatable)');
+      Terminal.writeLine('');
+      Terminal.writeLine('Examples:');
+      Terminal.writeLine('  cwm events listen');
+      Terminal.writeLine('  cwm events listen --event "window.*"');
+      Terminal.writeLine('  cwm events listen --app Safari --app Chrome');
+      Terminal.writeLine('  cwm events listen | jq .event');
+      Terminal.writeLine('');
+      return;
+    }
+
+    // parse --event filter
+    const eventIndex = args.findIndex(a => a === '--event');
+    const eventFilter = eventIndex !== -1 ? args[eventIndex + 1] : null;
+
+    // parse --app filter
+    const appIndex = args.findIndex(a => a === '--app');
+    const appFilter = appIndex !== -1 ? args[appIndex + 1] : null;
+
+    Terminal.writeLine('');
+    Terminal.writeLine('Listening for events... (simulated)', 'info');
+    if (eventFilter) {
+      Terminal.writeLine(`  Event filter: ${eventFilter}`, 'info');
+    }
+    if (appFilter) {
+      Terminal.writeLine(`  App filter: ${appFilter}`, 'info');
+    }
+    Terminal.writeLine('');
+    
+    // simulate some events
+    const events = [
+      { event: 'app.focused', ts: Date.now(), app: 'Safari', pid: 1234 },
+      { event: 'window.resized', ts: Date.now() + 100, app: 'Safari', width: 1200, height: 800 },
+      { event: 'window.moved', ts: Date.now() + 200, app: 'Terminal', x: 100, y: 50, display: 0 }
+    ];
+
+    events.forEach(evt => {
+      // apply filters
+      if (eventFilter && !matchGlob(evt.event, eventFilter)) return;
+      if (appFilter && evt.app.toLowerCase() !== appFilter.toLowerCase()) return;
+      
+      Terminal.writeLine(JSON.stringify(evt), 'output');
+    });
+
+    Terminal.writeLine('');
+    Terminal.writeLine('(In real usage, this streams continuously until Ctrl+C)', 'info');
+    Terminal.writeLine('');
+  }
+
+  function cmdCwmEventsWait(args) {
+    if (args.includes('--help') || args.includes('-h')) {
+      Terminal.writeLine('');
+      Terminal.writeLine('cwm events wait - Block until specific event', 'highlight');
+      Terminal.writeLine('');
+      Terminal.writeLine('Usage: cwm events wait --event <type> [options]');
+      Terminal.writeLine('');
+      Terminal.writeLine('Options:');
+      Terminal.writeLine('  --event <type>      Event type to wait for (required)');
+      Terminal.writeLine('  --app <name>        Filter by app name');
+      Terminal.writeLine('  --timeout <secs>    Timeout in seconds');
+      Terminal.writeLine('  --quiet             No output, exit code only');
+      Terminal.writeLine('');
+      Terminal.writeLine('Exit codes:');
+      Terminal.writeLine('  0    Event received');
+      Terminal.writeLine('  1    Error');
+      Terminal.writeLine('  8    Timeout');
+      Terminal.writeLine('  9    Daemon not running');
+      Terminal.writeLine('');
+      Terminal.writeLine('Examples:');
+      Terminal.writeLine('  cwm events wait --event app.focused --app Safari');
+      Terminal.writeLine('  cwm events wait --event window.maximized --timeout 10');
+      Terminal.writeLine('  cwm events wait --event app.launched --quiet && echo "App launched!"');
+      Terminal.writeLine('');
+      return;
+    }
+
+    // parse --event
+    const eventIndex = args.findIndex(a => a === '--event');
+    if (eventIndex === -1 || !args[eventIndex + 1]) {
+      Terminal.writeLine('Error: --event argument required', 'error');
+      Terminal.writeLine("Usage: cwm events wait --event <type>", 'info');
+      return;
+    }
+    const eventType = args[eventIndex + 1];
+
+    // parse --app
+    const appIndex = args.findIndex(a => a === '--app');
+    const appFilter = appIndex !== -1 ? args[appIndex + 1] : null;
+
+    // parse --timeout
+    const timeoutIndex = args.findIndex(a => a === '--timeout');
+    const timeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : null;
+
+    const isQuiet = args.includes('--quiet') || args.includes('-q');
+
+    Terminal.writeLine('');
+    Terminal.writeLine(`Waiting for event: ${eventType}`, 'info');
+    if (appFilter) {
+      Terminal.writeLine(`  App filter: ${appFilter}`, 'info');
+    }
+    if (timeout) {
+      Terminal.writeLine(`  Timeout: ${timeout}s`, 'info');
+    }
+    Terminal.writeLine('');
+
+    // simulate receiving the event
+    setTimeout(() => {
+      const event = {
+        event: eventType,
+        ts: Date.now(),
+        app: appFilter || 'Safari',
+        pid: 1234
+      };
+
+      if (!isQuiet) {
+        Terminal.writeLine(JSON.stringify(event), 'output');
+      }
+      Terminal.writeLine('');
+      Terminal.writeLine('✓ Event received', 'success');
+      Terminal.writeLine('');
+    }, 500);
+  }
+
+  // simple glob matching for event filters
+  function matchGlob(str, pattern) {
+    const regex = new RegExp('^' + pattern.replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+    return regex.test(str);
   }
 
   // simulated pipe command handler
