@@ -186,6 +186,7 @@ cool-window-mng/
     │   ├── ipc.rs          # PID file management, Unix socket IPC (JSON-RPC 2.0 only)
     │   ├── launchd.rs      # macOS launchd plist for auto-start
     │   ├── app_watcher.rs  # NSWorkspace notifications for app launches
+    │   ├── display_watcher.rs # CoreGraphics display connect/disconnect detection
     │   └── events.rs       # Event enum, EventBus for pub/sub, subscriber management
     ├── display/
     │   └── mod.rs          # display enumeration, multi-monitor targeting
@@ -412,6 +413,7 @@ Background process that listens for hotkeys and app launches.
 | `ipc.rs` | PID file management, Unix socket IPC (`IpcRequest`, `IpcResponse`, `send_request()`, `send_command()`) |
 | `launchd.rs` | `install_launchd()`, `uninstall_launchd()` for auto-start |
 | `app_watcher.rs` | `AppWatcher` struct, NSWorkspace notification observer |
+| `display_watcher.rs` | `start_watching()`, `stop_watching()`, CoreGraphics display reconfiguration callbacks |
 | `events.rs` | `Event` enum, `EventBus` for pub/sub, `Subscriber` management, event filtering |
 
 The daemon uses:
@@ -744,7 +746,8 @@ Tests are located in `#[cfg(test)]` modules within:
 | `src/window/matching.rs` | name matching (exact, prefix, fuzzy), title matching (exact, prefix, fuzzy) |
 | `src/window/manager.rs` | ResizeTarget parsing, find_display_for_point, WindowData/DisplayDataInfo serialization |
 | `src/daemon/mod.rs` | parse_shortcuts, find_shortcut_launch, handle_ipc_request |
-| `src/daemon/events.rs` | Event serialization, EventBus pub/sub, subscriber filtering, glob matching |
+| `src/daemon/events.rs` | Event serialization, EventBus pub/sub, subscriber filtering, display events |
+| `src/daemon/display_watcher.rs` | compute_aliases_for_display, system/user alias matching |
 | `src/daemon/hotkeys.rs` | hotkey string parsing, keycode conversion, modifier extraction |
 | `src/daemon/launchd.rs` | plist generation |
 | `src/daemon/ipc.rs` | IPC request parsing, response formatting |

@@ -19,12 +19,6 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventType {
-    /// daemon process started
-    #[serde(rename = "daemon.started")]
-    DaemonStarted,
-    /// daemon process stopped
-    #[serde(rename = "daemon.stopped")]
-    DaemonStopped,
     /// application was launched (detected by app watcher)
     #[serde(rename = "app.launched")]
     AppLaunched,
@@ -40,58 +34,64 @@ pub enum EventType {
     /// window was moved by cwm
     #[serde(rename = "window.moved")]
     WindowMoved,
+    /// display was connected
+    #[serde(rename = "display.connected")]
+    DisplayConnected,
+    /// display was disconnected
+    #[serde(rename = "display.disconnected")]
+    DisplayDisconnected,
 }
 
 impl EventType {
     /// get the string representation of this event type
     pub fn as_str(&self) -> &'static str {
         match self {
-            EventType::DaemonStarted => "daemon.started",
-            EventType::DaemonStopped => "daemon.stopped",
             EventType::AppLaunched => "app.launched",
             EventType::AppFocused => "app.focused",
             EventType::WindowMaximized => "window.maximized",
             EventType::WindowResized => "window.resized",
             EventType::WindowMoved => "window.moved",
+            EventType::DisplayConnected => "display.connected",
+            EventType::DisplayDisconnected => "display.disconnected",
         }
     }
 
     /// get all event types
     pub fn all() -> &'static [EventType] {
         &[
-            EventType::DaemonStarted,
-            EventType::DaemonStopped,
             EventType::AppLaunched,
             EventType::AppFocused,
             EventType::WindowMaximized,
             EventType::WindowResized,
             EventType::WindowMoved,
+            EventType::DisplayConnected,
+            EventType::DisplayDisconnected,
         ]
     }
 
     /// get description for this event type
     pub fn description(&self) -> &'static str {
         match self {
-            EventType::DaemonStarted => "Daemon process started",
-            EventType::DaemonStopped => "Daemon process stopped",
             EventType::AppLaunched => "Application was launched (detected by app watcher)",
             EventType::AppFocused => "Application was focused by cwm",
             EventType::WindowMaximized => "Window was maximized by cwm",
             EventType::WindowResized => "Window was resized by cwm",
             EventType::WindowMoved => "Window was moved by cwm",
+            EventType::DisplayConnected => "Display was connected",
+            EventType::DisplayDisconnected => "Display was disconnected",
         }
     }
 
     /// parse event type from string
     pub fn parse(s: &str) -> Option<EventType> {
         match s {
-            "daemon.started" => Some(EventType::DaemonStarted),
-            "daemon.stopped" => Some(EventType::DaemonStopped),
             "app.launched" => Some(EventType::AppLaunched),
             "app.focused" => Some(EventType::AppFocused),
             "window.maximized" => Some(EventType::WindowMaximized),
             "window.resized" => Some(EventType::WindowResized),
             "window.moved" => Some(EventType::WindowMoved),
+            "display.connected" => Some(EventType::DisplayConnected),
+            "display.disconnected" => Some(EventType::DisplayDisconnected),
             _ => None,
         }
     }
@@ -127,9 +127,6 @@ impl std::fmt::Display for EventType {
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum EventData {
-    /// daemon lifecycle event data
-    Daemon { pid: i32 },
-
     /// app event data (app.launched, app.focused)
     App {
         app: String,
@@ -157,14 +154,23 @@ pub enum EventData {
         #[serde(skip_serializing_if = "Option::is_none")]
         display: Option<String>,
     },
+
+    /// display event data (display.connected, display.disconnected)
+    Display {
+        index: usize,
+        name: String,
+        unique_id: String,
+        width: u32,
+        height: u32,
+        x: i32,
+        y: i32,
+        is_main: bool,
+        is_builtin: bool,
+        aliases: Vec<String>,
+    },
 }
 
 impl EventData {
-    /// create daemon event data
-    pub fn daemon(pid: i32) -> Self {
-        EventData::Daemon { pid }
-    }
-
     /// create app event data
     pub fn app(app: String, pid: i32) -> Self {
         EventData::App {
@@ -256,21 +262,49 @@ impl EventData {
         }
     }
 
+    /// create display event data
+    #[allow(clippy::too_many_arguments)]
+    pub fn display(
+        index: usize,
+        name: String,
+        unique_id: String,
+        width: u32,
+        height: u32,
+        x: i32,
+        y: i32,
+        is_main: bool,
+        is_builtin: bool,
+        aliases: Vec<String>,
+    ) -> Self {
+        EventData::Display {
+            index,
+            name,
+            unique_id,
+            width,
+            height,
+            x,
+            y,
+            is_main,
+            is_builtin,
+            aliases,
+        }
+    }
+
     /// get the app name if this event has one
     pub fn app_name(&self) -> Option<&str> {
         match self {
-            EventData::Daemon { .. } => None,
             EventData::App { app, .. } => Some(app),
             EventData::Window { app, .. } => Some(app),
+            EventData::Display { .. } => None,
         }
     }
 
     /// get the window titles if this event has them
     pub fn titles(&self) -> Option<&[String]> {
         match self {
-            EventData::Daemon { .. } => None,
             EventData::App { titles, .. } => titles.as_deref(),
             EventData::Window { titles, .. } => titles.as_deref(),
+            EventData::Display { .. } => None,
         }
     }
 }
@@ -299,22 +333,6 @@ impl Event {
             ts: Utc::now(),
             data,
         }
-    }
-
-    /// create daemon.started event
-    pub fn daemon_started() -> Self {
-        Self::new(
-            EventType::DaemonStarted,
-            EventData::daemon(std::process::id() as i32),
-        )
-    }
-
-    /// create daemon.stopped event
-    pub fn daemon_stopped() -> Self {
-        Self::new(
-            EventType::DaemonStopped,
-            EventData::daemon(std::process::id() as i32),
-        )
     }
 
     /// create app.launched event
@@ -378,6 +396,48 @@ impl Event {
         Self::new(
             EventType::WindowMoved,
             EventData::window_moved(app, pid, titles, x, y, display),
+        )
+    }
+
+    /// create display.connected event
+    pub fn display_connected(
+        index: usize,
+        name: String,
+        unique_id: String,
+        width: u32,
+        height: u32,
+        x: i32,
+        y: i32,
+        is_main: bool,
+        is_builtin: bool,
+        aliases: Vec<String>,
+    ) -> Self {
+        Self::new(
+            EventType::DisplayConnected,
+            EventData::display(
+                index, name, unique_id, width, height, x, y, is_main, is_builtin, aliases,
+            ),
+        )
+    }
+
+    /// create display.disconnected event
+    pub fn display_disconnected(
+        index: usize,
+        name: String,
+        unique_id: String,
+        width: u32,
+        height: u32,
+        x: i32,
+        y: i32,
+        is_main: bool,
+        is_builtin: bool,
+        aliases: Vec<String>,
+    ) -> Self {
+        Self::new(
+            EventType::DisplayDisconnected,
+            EventData::display(
+                index, name, unique_id, width, height, x, y, is_main, is_builtin, aliases,
+            ),
         )
     }
 
@@ -669,20 +729,28 @@ mod tests {
 
     #[test]
     fn test_event_type_as_str() {
-        assert_eq!(EventType::DaemonStarted.as_str(), "daemon.started");
         assert_eq!(EventType::AppLaunched.as_str(), "app.launched");
         assert_eq!(EventType::WindowResized.as_str(), "window.resized");
+        assert_eq!(EventType::DisplayConnected.as_str(), "display.connected");
+        assert_eq!(
+            EventType::DisplayDisconnected.as_str(),
+            "display.disconnected"
+        );
     }
 
     #[test]
     fn test_event_type_parse() {
         assert_eq!(
-            EventType::parse("daemon.started"),
-            Some(EventType::DaemonStarted)
-        );
-        assert_eq!(
             EventType::parse("app.launched"),
             Some(EventType::AppLaunched)
+        );
+        assert_eq!(
+            EventType::parse("display.connected"),
+            Some(EventType::DisplayConnected)
+        );
+        assert_eq!(
+            EventType::parse("display.disconnected"),
+            Some(EventType::DisplayDisconnected)
         );
         assert_eq!(EventType::parse("invalid"), None);
     }
@@ -696,7 +764,7 @@ mod tests {
     #[test]
     fn test_event_type_matches_filter_wildcard() {
         assert!(EventType::AppLaunched.matches_filter("*"));
-        assert!(EventType::DaemonStarted.matches_filter("*"));
+        assert!(EventType::DisplayConnected.matches_filter("*"));
     }
 
     #[test]
@@ -709,8 +777,9 @@ mod tests {
         assert!(EventType::WindowMoved.matches_filter("window.*"));
         assert!(!EventType::AppLaunched.matches_filter("window.*"));
 
-        assert!(EventType::DaemonStarted.matches_filter("daemon.*"));
-        assert!(!EventType::AppLaunched.matches_filter("daemon.*"));
+        assert!(EventType::DisplayConnected.matches_filter("display.*"));
+        assert!(EventType::DisplayDisconnected.matches_filter("display.*"));
+        assert!(!EventType::AppLaunched.matches_filter("display.*"));
     }
 
     #[test]
@@ -726,14 +795,25 @@ mod tests {
 
     #[test]
     fn test_event_data_app_name() {
-        let daemon_data = EventData::daemon(123);
-        assert!(daemon_data.app_name().is_none());
-
         let app_data = EventData::app("Safari".to_string(), 123);
         assert_eq!(app_data.app_name(), Some("Safari"));
 
         let window_data = EventData::window_maximized("Chrome".to_string(), 456, None);
         assert_eq!(window_data.app_name(), Some("Chrome"));
+
+        let display_data = EventData::display(
+            0,
+            "Test Display".to_string(),
+            "1E6D_5B11_12345".to_string(),
+            1920,
+            1080,
+            0,
+            0,
+            true,
+            false,
+            vec!["main".to_string()],
+        );
+        assert!(display_data.app_name().is_none());
     }
 
     #[test]
@@ -815,13 +895,25 @@ mod tests {
         let (_id, mut rx) = bus.subscribe(vec!["app.*".to_string()], vec![]);
 
         bus.emit(Event::app_launched("Safari".to_string(), 1234));
-        bus.emit(Event::daemon_started()); // should not be received
+        // display event should not be received by app.* subscriber
+        bus.emit(Event::display_connected(
+            0,
+            "Test".to_string(),
+            "1234".to_string(),
+            1920,
+            1080,
+            0,
+            0,
+            true,
+            false,
+            vec![],
+        ));
 
         // check that we received the app event
         let event = rx.try_recv().unwrap();
         assert_eq!(event.event_type, EventType::AppLaunched);
 
-        // daemon event should not be received
+        // display event should not be received
         assert!(rx.try_recv().is_err());
     }
 
@@ -860,5 +952,64 @@ mod tests {
         assert!(json.contains("\"jsonrpc\":\"2.0\""));
         assert!(json.contains("\"method\":\"event\""));
         assert!(json.contains("\"params\":"));
+    }
+
+    #[test]
+    fn test_display_event_serialization() {
+        let event = Event::display_connected(
+            1,
+            "LG UltraFine".to_string(),
+            "1E6D_5B11_12345".to_string(),
+            3840,
+            2160,
+            2560,
+            0,
+            false,
+            false,
+            vec!["external".to_string(), "office".to_string()],
+        );
+        let json = serde_json::to_string(&event).unwrap();
+
+        assert!(json.contains("\"type\":\"display.connected\""));
+        assert!(json.contains("\"name\":\"LG UltraFine\""));
+        assert!(json.contains("\"unique_id\":\"1E6D_5B11_12345\""));
+        assert!(json.contains("\"width\":3840"));
+        assert!(json.contains("\"height\":2160"));
+        assert!(json.contains("\"is_main\":false"));
+        assert!(json.contains("\"is_builtin\":false"));
+        assert!(json.contains("\"aliases\":[\"external\",\"office\"]"));
+    }
+
+    #[test]
+    fn test_display_event_matches_filters() {
+        let event = Event::display_connected(
+            0,
+            "Test".to_string(),
+            "1234".to_string(),
+            1920,
+            1080,
+            0,
+            0,
+            true,
+            true,
+            vec![],
+        );
+
+        // no filters = matches all
+        assert!(event.matches_filters(&[], &[]));
+
+        // event type filter
+        assert!(event.matches_filters(&["display.connected".to_string()], &[]));
+        assert!(event.matches_filters(&["display.*".to_string()], &[]));
+        assert!(!event.matches_filters(&["app.*".to_string()], &[]));
+
+        // app filter should not match display events (no app name)
+        assert!(!event.matches_filters(&[], &["Safari".to_string()]));
+    }
+
+    #[test]
+    fn test_event_bus_expand_filters_display() {
+        let expanded = EventBus::expand_filters(&["display.*".to_string()]);
+        assert_eq!(expanded, vec!["display.connected", "display.disconnected"]);
     }
 }

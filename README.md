@@ -534,13 +534,13 @@ Exit codes:
 
 | Event | Description | Data Fields |
 |-------|-------------|-------------|
-| `daemon.started` | Daemon process started | - |
-| `daemon.stopped` | Daemon process stopped | - |
 | `app.launched` | App launched (via app_rules) | `app`, `pid` |
 | `app.focused` | App window focused | `app`, `pid`, `match_type` |
 | `window.maximized` | Window maximized | `app`, `pid` |
 | `window.resized` | Window resized | `app`, `pid`, `width`, `height` |
 | `window.moved` | Window moved | `app`, `pid`, `x`, `y`, `display_index`, `display_name` |
+| `display.connected` | Display connected | `index`, `name`, `unique_id`, `width`, `height`, `x`, `y`, `is_main`, `is_builtin`, `aliases` |
+| `display.disconnected` | Display disconnected | `index`, `name`, `unique_id`, `width`, `height`, `x`, `y`, `is_main`, `is_builtin`, `aliases` |
 
 All events include:
 - `event` - Event type string

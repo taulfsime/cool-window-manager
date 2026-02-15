@@ -3,8 +3,8 @@ mod schema;
 
 pub use json_schema::write_schema_file;
 pub use schema::{
-    should_launch, AppRule, AutoUpdateMode, Config, Settings, Shortcut, SpotlightShortcut,
-    TelemetrySettings, UpdateFrequency, UpdateSettings,
+    should_launch, AppRule, AutoUpdateMode, Config, DisplayAliases, Settings, Shortcut,
+    SpotlightShortcut, TelemetrySettings, UpdateFrequency, UpdateSettings,
 };
 
 use anyhow::{anyhow, Context, Result};

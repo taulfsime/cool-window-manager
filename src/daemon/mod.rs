@@ -1,4 +1,5 @@
 pub mod app_watcher;
+pub mod display_watcher;
 pub mod events;
 pub mod hotkeys;
 pub mod ipc;
@@ -88,9 +89,6 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
 
     log("cwm daemon starting...");
 
-    // emit daemon.started event
-    events::emit(Event::daemon_started());
-
     // load config
     let config = config::load()?;
 
@@ -120,6 +118,10 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
             log(&format!("  {} -> {}", hotkey, action));
         }
     }
+
+    // start display watcher for connect/disconnect events
+    display_watcher::start_watching(config.display_aliases.clone())?;
+    log("Watching for display changes...");
 
     // start app watcher if we have rules
     if has_app_rules {
@@ -179,14 +181,12 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
     })?;
 
     // cleanup
+    display_watcher::stop_watching();
     app_watcher::stop_watching();
     stop_socket_listener();
     let _ = socket_handle.join();
     remove_socket_file()?;
     remove_pid_file()?;
-
-    // emit daemon.stopped event
-    events::emit(Event::daemon_stopped());
 
     log("Daemon stopped.");
 
