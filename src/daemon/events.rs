@@ -487,10 +487,10 @@ impl Event {
 /// supports exact match, prefix match, and regex (/pattern/ or /pattern/i)
 fn matches_app_filter(app_name: &str, titles: &[String], filter: &str) -> bool {
     // check if filter is a regex pattern
-    if filter.starts_with('/') {
-        if let Some(end_slash) = filter[1..].rfind('/') {
-            let pattern = &filter[1..=end_slash];
-            let flags = &filter[end_slash + 2..];
+    if let Some(stripped) = filter.strip_prefix('/') {
+        if let Some(end_slash) = stripped.rfind('/') {
+            let pattern = &stripped[..end_slash];
+            let flags = &stripped[end_slash + 1..];
             let case_insensitive = flags.contains('i');
 
             let regex = if case_insensitive {

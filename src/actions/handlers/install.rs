@@ -173,9 +173,9 @@ fn install_completions_interactive(
             }
         }
         Some("all") => comp::CompletionShell::all().to_vec(),
-        Some(shell_name) => match comp::CompletionShell::from_str(shell_name) {
-            Some(shell) => vec![shell],
-            None => {
+        Some(shell_name) => match shell_name.parse() {
+            Ok(shell) => vec![shell],
+            Err(_) => {
                 eprintln!("Unknown shell: {}. Skipping completions.", shell_name);
                 return Ok(Vec::new());
             }

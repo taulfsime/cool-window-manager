@@ -56,7 +56,7 @@ fn try_resolve_explicit_icon(icon_spec: &str, dest_path: &Path) -> Result<bool> 
             }
             _ => {
                 // try to use as-is (might be an icns without extension)
-                if let Ok(_) = std::fs::copy(icon_path, dest_path) {
+                if std::fs::copy(icon_path, dest_path).is_ok() {
                     return Ok(true);
                 }
             }
@@ -301,7 +301,7 @@ fn generate_minimal_icon(dest_path: &Path) -> Result<()> {
         0x69u8, 0x63, 0x6e, 0x73, // 'icns' magic
         0x00, 0x00, 0x00, 0x08, // file size (just header)
     ];
-    std::fs::write(dest_path, &minimal_icns)
+    std::fs::write(dest_path, minimal_icns)
         .with_context(|| "failed to write minimal icon placeholder")?;
 
     Ok(())

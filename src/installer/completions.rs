@@ -6,6 +6,7 @@ use clap_complete::{generate, Shell};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use crate::cli::Cli;
 
@@ -17,16 +18,20 @@ pub enum CompletionShell {
     Fish,
 }
 
-impl CompletionShell {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for CompletionShell {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "bash" => Some(Self::Bash),
-            "zsh" => Some(Self::Zsh),
-            "fish" => Some(Self::Fish),
-            _ => None,
+            "bash" => Ok(Self::Bash),
+            "zsh" => Ok(Self::Zsh),
+            "fish" => Ok(Self::Fish),
+            _ => Err(()),
         }
     }
+}
 
+impl CompletionShell {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Bash => "bash",
@@ -35,7 +40,7 @@ impl CompletionShell {
         }
     }
 
-    fn to_clap_shell(&self) -> Shell {
+    fn to_clap_shell(self) -> Shell {
         match self {
             Self::Bash => Shell::Bash,
             Self::Zsh => Shell::Zsh,
@@ -64,7 +69,7 @@ pub fn detect_shell() -> Option<CompletionShell> {
     std::env::var("SHELL")
         .ok()
         .and_then(|s| s.rsplit('/').next().map(String::from))
-        .and_then(|name| CompletionShell::from_str(&name))
+        .and_then(|name| name.parse().ok())
 }
 
 /// generate completion script content for a shell
@@ -108,10 +113,8 @@ pub fn uninstall_all() -> Vec<(CompletionShell, PathBuf)> {
 
     for shell in CompletionShell::all() {
         let path = shell.user_path();
-        if path.exists() {
-            if fs::remove_file(&path).is_ok() {
-                removed.push((shell, path));
-            }
+        if path.exists() && fs::remove_file(&path).is_ok() {
+            removed.push((shell, path));
         }
     }
 
@@ -153,7 +156,7 @@ pub fn prompt_shell_selection() -> Result<Option<Vec<CompletionShell>>> {
             "all" => Ok(Some(CompletionShell::all().to_vec())),
             _ => {
                 // try to parse as shell name
-                if let Some(s) = CompletionShell::from_str(&input) {
+                if let Ok(s) = input.parse() {
                     Ok(Some(vec![s]))
                 } else {
                     Ok(Some(vec![shell])) // default to detected
@@ -165,7 +168,7 @@ pub fn prompt_shell_selection() -> Result<Option<Vec<CompletionShell>>> {
             "n" | "no" | "none" | "" => Ok(None),
             "all" => Ok(Some(CompletionShell::all().to_vec())),
             _ => {
-                if let Some(s) = CompletionShell::from_str(&input) {
+                if let Ok(s) = input.parse() {
                     Ok(Some(vec![s]))
                 } else {
                     eprintln!("Unknown shell: {}. Skipping completions.", input);
@@ -210,9 +213,9 @@ pub fn install_completions_for_arg(shell_arg: &str) -> Result<Vec<(CompletionShe
             }
         },
         "all" => CompletionShell::all().to_vec(),
-        name => match CompletionShell::from_str(name) {
-            Some(shell) => vec![shell],
-            None => {
+        name => match name.parse() {
+            Ok(shell) => vec![shell],
+            Err(_) => {
                 return Err(anyhow!(
                     "unknown shell: {}. Valid options: bash, zsh, fish, all",
                     name
@@ -244,17 +247,11 @@ mod tests {
 
     #[test]
     fn test_shell_from_str() {
-        assert_eq!(
-            CompletionShell::from_str("bash"),
-            Some(CompletionShell::Bash)
-        );
-        assert_eq!(CompletionShell::from_str("ZSH"), Some(CompletionShell::Zsh));
-        assert_eq!(
-            CompletionShell::from_str("Fish"),
-            Some(CompletionShell::Fish)
-        );
-        assert_eq!(CompletionShell::from_str("unknown"), None);
-        assert_eq!(CompletionShell::from_str(""), None);
+        assert_eq!("bash".parse::<CompletionShell>(), Ok(CompletionShell::Bash));
+        assert_eq!("ZSH".parse::<CompletionShell>(), Ok(CompletionShell::Zsh));
+        assert_eq!("Fish".parse::<CompletionShell>(), Ok(CompletionShell::Fish));
+        assert_eq!("unknown".parse::<CompletionShell>(), Err(()));
+        assert_eq!("".parse::<CompletionShell>(), Err(()));
     }
 
     #[test]
