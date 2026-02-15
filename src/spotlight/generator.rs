@@ -10,7 +10,7 @@ use super::signing::sign_app_bundle;
 use super::{default_apps_directory, BUNDLE_ID_PREFIX, SHORTCUT_PREFIX};
 
 /// embedded stub executable (compiled at build time)
-const STUB_EXECUTABLE: &[u8] = include_bytes!("../../assets/spotlight_stub");
+const STUB_EXECUTABLE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/assets/spotlight_stub"));
 
 /// returns the directory where spotlight apps are installed
 pub fn get_apps_directory() -> PathBuf {

@@ -1,21 +1,26 @@
 // generates man page from clap CLI definition
-// outputs to man/cwm.1
+// useful for local development and viewing the man page
+// note: the main build uses build.rs to generate the man page to OUT_DIR
 
 use clap::CommandFactory;
 use clap_mangen::Man;
 use cwm::cli::Cli;
 
 fn main() -> std::io::Result<()> {
-    // command already has CalVer version from #[command(version = env!("SEMVER"))]
     let cmd = Cli::command();
     let man = Man::new(cmd);
 
-    std::fs::create_dir_all("man")?;
+    // output to target/man-gen for local development
+    let out_dir = "target/man-gen";
+    std::fs::create_dir_all(out_dir)?;
 
     let mut buffer = Vec::new();
     man.render(&mut buffer)?;
-    std::fs::write("man/cwm.1", buffer)?;
 
-    println!("Generated man/cwm.1");
+    let man_path = format!("{}/cwm.1", out_dir);
+    std::fs::write(&man_path, buffer)?;
+
+    println!("Generated {}", man_path);
+    println!("View with: man {}", man_path);
     Ok(())
 }
