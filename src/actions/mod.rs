@@ -12,8 +12,8 @@ mod parse;
 mod result;
 
 pub use command::{
-    Command, ConfigCommand, DaemonCommand, EventsCommand, GetTarget, ListResource, RecordCommand,
-    SpotlightCommand,
+    Command, ConfigCommand, DaemonCommand, EventsCommand, GetTarget, HistoryCommand, ListResource,
+    RecordCommand, SpotlightCommand,
 };
 pub use context::ExecutionContext;
 pub use error::ActionError;
@@ -115,6 +115,14 @@ pub fn execute(cmd: Command, ctx: &ExecutionContext) -> Result<ActionResult, Act
             EventsCommand::Wait { .. } => Err(ActionError::not_supported(
                 "events wait should be called via CLI handler directly (blocking operation)",
             )),
+        },
+
+        // history commands (undo/redo require daemon)
+        Command::Undo => handlers::history::execute_undo(ctx),
+        Command::Redo => handlers::history::execute_redo(ctx),
+        Command::History(history_cmd) => match history_cmd {
+            HistoryCommand::List => handlers::history::execute_list(ctx),
+            HistoryCommand::Clear => handlers::history::execute_clear(ctx),
         },
 
         // spotlight commands

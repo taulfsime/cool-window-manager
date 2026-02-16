@@ -6,6 +6,7 @@ pub mod config;
 pub mod daemon;
 pub mod focus;
 pub mod get;
+pub mod history;
 pub mod install;
 pub mod kill;
 pub mod list;

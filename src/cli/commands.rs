@@ -277,6 +277,18 @@ pub enum Commands {
         #[command(subcommand)]
         command: EventsCommands,
     },
+
+    /// Undo the last window action (requires daemon)
+    Undo,
+
+    /// Redo the last undone action (requires daemon)
+    Redo,
+
+    /// Manage undo/redo history
+    History {
+        #[command(subcommand)]
+        command: HistoryCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -395,6 +407,14 @@ pub enum EventsCommands {
         #[arg(short, long)]
         timeout: Option<u64>,
     },
+}
+
+#[derive(Subcommand)]
+pub enum HistoryCommands {
+    /// List history entries
+    List,
+    /// Clear all history
+    Clear,
 }
 
 #[derive(Subcommand)]
@@ -1729,6 +1749,161 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(())
             }
         },
+
+        Commands::Undo => {
+            let config = config::load_with_override(config_path)?;
+            let cmd = Command::Undo;
+            let ctx = ExecutionContext::cli_with_config_path(&config, false, config_path);
+
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
+                    } else {
+                        let value = serde_json::to_value(&result).unwrap_or_default();
+                        if let Some(res) = value.get("result") {
+                            if let Some(app) = res
+                                .get("app")
+                                .and_then(|a| a.get("name"))
+                                .and_then(|n| n.as_str())
+                            {
+                                let x = res
+                                    .get("restored")
+                                    .and_then(|r| r.get("x"))
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0);
+                                let y = res
+                                    .get("restored")
+                                    .and_then(|r| r.get("y"))
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0);
+                                let w = res
+                                    .get("restored")
+                                    .and_then(|r| r.get("width"))
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                let h = res
+                                    .get("restored")
+                                    .and_then(|r| r.get("height"))
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                println!("Restored {} to {}x{} at ({}, {})", app, w, h, x, y);
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
+                }
+            }
+        }
+
+        Commands::Redo => {
+            let config = config::load_with_override(config_path)?;
+            let cmd = Command::Redo;
+            let ctx = ExecutionContext::cli_with_config_path(&config, false, config_path);
+
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
+                    } else {
+                        let value = serde_json::to_value(&result).unwrap_or_default();
+                        if let Some(res) = value.get("result") {
+                            if let Some(app) = res
+                                .get("app")
+                                .and_then(|a| a.get("name"))
+                                .and_then(|n| n.as_str())
+                            {
+                                let x = res
+                                    .get("restored")
+                                    .and_then(|r| r.get("x"))
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0);
+                                let y = res
+                                    .get("restored")
+                                    .and_then(|r| r.get("y"))
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0);
+                                let w = res
+                                    .get("restored")
+                                    .and_then(|r| r.get("width"))
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                let h = res
+                                    .get("restored")
+                                    .and_then(|r| r.get("height"))
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                println!("Restored {} to {}x{} at ({}, {})", app, w, h, x, y);
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
+                }
+            }
+        }
+
+        Commands::History { command } => {
+            let config = config::load_with_override(config_path)?;
+            let cmd = command.to_command();
+            let ctx = ExecutionContext::cli_with_config_path(&config, false, config_path);
+
+            match actions::execute(cmd, &ctx) {
+                Ok(result) => {
+                    if output_mode.is_json() {
+                        output::print_json(&result);
+                    } else {
+                        let value = serde_json::to_value(&result).unwrap_or_default();
+                        match result.action {
+                            "history_list" => {
+                                if let Some(res) = value.get("result") {
+                                    let undo_count = res
+                                        .get("undo")
+                                        .and_then(|u| u.as_array())
+                                        .map(|a| a.len())
+                                        .unwrap_or(0);
+                                    let redo_count = res
+                                        .get("redo")
+                                        .and_then(|r| r.as_array())
+                                        .map(|a| a.len())
+                                        .unwrap_or(0);
+                                    println!("Undo stack: {} entries", undo_count);
+                                    println!("Redo stack: {} entries", redo_count);
+                                }
+                            }
+                            "history_clear" => {
+                                println!("History cleared");
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    if output_mode.is_json() {
+                        output::print_json_error(err.code, &err.message);
+                        std::process::exit(err.code);
+                    } else {
+                        Err(anyhow!("{}", err.message))
+                    }
+                }
+            }
+        }
     }
 }
 

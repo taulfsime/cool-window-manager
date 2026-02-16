@@ -249,6 +249,30 @@ impl JsonRpcRequest {
                 prerelease: params.get_bool_or("prerelease", false),
             }),
 
+            // ==================== History Commands ====================
+            "undo" => Ok(Command::Undo),
+
+            "redo" => Ok(Command::Redo),
+
+            "history" | "history_list" | "history_clear" => {
+                // handle both "history" with command param and direct method names
+                if self.method == "history_list" {
+                    Ok(Command::History(HistoryCommand::List))
+                } else if self.method == "history_clear" {
+                    Ok(Command::History(HistoryCommand::Clear))
+                } else {
+                    let cmd = params.get_string("command")?;
+                    match cmd.as_str() {
+                        "list" => Ok(Command::History(HistoryCommand::List)),
+                        "clear" => Ok(Command::History(HistoryCommand::Clear)),
+                        _ => Err(ActionError::invalid_args(format!(
+                            "unknown history command '{}', expected: list, clear",
+                            cmd
+                        ))),
+                    }
+                }
+            }
+
             // ==================== Events Commands ====================
             // subscribe is handled specially by the daemon for persistent connections
             "subscribe" => Err(ActionError::not_supported(
@@ -907,5 +931,49 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("unknown method"));
+    }
+
+    #[test]
+    fn test_parse_undo() {
+        let req = JsonRpcRequest::parse(r#"{"method":"undo"}"#).unwrap();
+        let cmd = req.to_command().unwrap();
+        assert!(matches!(cmd, Command::Undo));
+    }
+
+    #[test]
+    fn test_parse_redo() {
+        let req = JsonRpcRequest::parse(r#"{"method":"redo"}"#).unwrap();
+        let cmd = req.to_command().unwrap();
+        assert!(matches!(cmd, Command::Redo));
+    }
+
+    #[test]
+    fn test_parse_history_list() {
+        let req =
+            JsonRpcRequest::parse(r#"{"method":"history","params":{"command":"list"}}"#).unwrap();
+        let cmd = req.to_command().unwrap();
+        assert!(matches!(cmd, Command::History(HistoryCommand::List)));
+    }
+
+    #[test]
+    fn test_parse_history_list_direct() {
+        let req = JsonRpcRequest::parse(r#"{"method":"history_list"}"#).unwrap();
+        let cmd = req.to_command().unwrap();
+        assert!(matches!(cmd, Command::History(HistoryCommand::List)));
+    }
+
+    #[test]
+    fn test_parse_history_clear() {
+        let req =
+            JsonRpcRequest::parse(r#"{"method":"history","params":{"command":"clear"}}"#).unwrap();
+        let cmd = req.to_command().unwrap();
+        assert!(matches!(cmd, Command::History(HistoryCommand::Clear)));
+    }
+
+    #[test]
+    fn test_parse_history_clear_direct() {
+        let req = JsonRpcRequest::parse(r#"{"method":"history_clear"}"#).unwrap();
+        let cmd = req.to_command().unwrap();
+        assert!(matches!(cmd, Command::History(HistoryCommand::Clear)));
     }
 }

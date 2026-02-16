@@ -28,9 +28,11 @@ use ipc::{
 pub use launchd::{install, uninstall};
 
 use crate::cli::exit_codes;
+use crate::history::HistoryManager;
 
 static DAEMON_SHOULD_STOP: AtomicBool = AtomicBool::new(false);
 static LOG_FILE: Mutex<Option<File>> = Mutex::new(None);
+static HISTORY_MANAGER: Mutex<Option<HistoryManager>> = Mutex::new(None);
 
 fn log(msg: &str) {
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
@@ -95,6 +97,24 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
 
     // load config
     let config = config::load()?;
+
+    // initialize history manager if enabled
+    if config.settings.history.enabled {
+        match HistoryManager::new(
+            config.settings.history.limit,
+            config.settings.history.flush_delay_ms,
+        ) {
+            Ok(manager) => {
+                if let Ok(mut guard) = HISTORY_MANAGER.lock() {
+                    *guard = Some(manager);
+                }
+                log("History manager initialized");
+            }
+            Err(e) => {
+                log_err(&format!("Failed to initialize history manager: {}", e));
+            }
+        }
+    }
 
     if config.shortcuts.is_empty() {
         log("No shortcuts configured. Add shortcuts with 'cwm record shortcut'");
@@ -213,6 +233,17 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
     let _ = socket_handle.join();
     remove_socket_file()?;
     remove_pid_file()?;
+
+    // flush history to disk before exit
+    if let Ok(guard) = HISTORY_MANAGER.lock() {
+        if let Some(ref manager) = *guard {
+            if let Err(e) = manager.flush() {
+                log_err(&format!("Failed to flush history: {}", e));
+            } else {
+                log("History flushed to disk");
+            }
+        }
+    }
 
     log("Daemon stopped.");
 
@@ -355,7 +386,19 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 None
             };
 
+            // capture state before action for history
+            let app_name_for_history = target_app
+                .as_ref()
+                .map(|a| a.name.as_str())
+                .unwrap_or("focused");
+            let pre_action_state = capture_window_state(app_name_for_history, config);
+
             manager::maximize_app(target_app.as_ref(), false)?;
+
+            // push to history on success
+            if let Some(entry) = pre_action_state {
+                push_to_history(entry);
+            }
 
             // emit window.maximized event
             if let Some(ref app) = target_app {
@@ -400,6 +443,13 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 None
             };
 
+            // capture state before action for history
+            let app_name_for_history = target_app
+                .as_ref()
+                .map(|a| a.name.as_str())
+                .unwrap_or("focused");
+            let pre_action_state = capture_window_state(app_name_for_history, config);
+
             let (new_x, new_y, _display_index, display_name) = manager::move_window(
                 target_app.as_ref(),
                 move_target.as_ref(),
@@ -407,6 +457,11 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 false,
                 &config.display_aliases,
             )?;
+
+            // push to history on success
+            if let Some(entry) = pre_action_state {
+                push_to_history(entry);
+            }
 
             // emit window.moved event
             if let Some(ref app) = target_app {
@@ -442,8 +497,20 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 None
             };
 
+            // capture state before action for history
+            let app_name_for_history = target_app
+                .as_ref()
+                .map(|a| a.name.as_str())
+                .unwrap_or("focused");
+            let pre_action_state = capture_window_state(app_name_for_history, config);
+
             let (width, height) =
                 manager::resize_app(target_app.as_ref(), &resize_target, false, false)?;
+
+            // push to history on success
+            if let Some(entry) = pre_action_state {
+                push_to_history(entry);
+            }
 
             // emit window.resized event
             if let Some(ref app) = target_app {
@@ -514,6 +581,12 @@ fn execute_action(action: &str, config: &Config) -> Result<()> {
                 }
             }
         }
+        "undo" => {
+            handle_undo(config).map_err(|(_, msg)| anyhow!("{}", msg))?;
+        }
+        "redo" => {
+            handle_redo(config).map_err(|(_, msg)| anyhow!("{}", msg))?;
+        }
         _ => {
             return Err(anyhow!("Unknown action: {}", action_type));
         }
@@ -555,6 +628,14 @@ fn execute_action_for_app_info(
     if let Err(e) = manager::focus_app(target_app, false) {
         log(&format!("Note: Could not focus app before action: {}", e));
     }
+
+    // capture state before geometry-changing actions for history
+    let is_geometry = is_geometry_action(action_type);
+    let pre_action_state = if is_geometry {
+        capture_window_state(&target_app.name, config)
+    } else {
+        None
+    };
 
     // retry logic with exponential backoff from config
     let max_retries = config.settings.retry.count;
@@ -632,6 +713,10 @@ fn execute_action_for_app_info(
 
         match result {
             Ok(event) => {
+                // push to history on success for geometry actions
+                if let Some(entry) = pre_action_state {
+                    push_to_history(entry);
+                }
                 if let Some(e) = event {
                     events::emit(e);
                 }
@@ -1123,6 +1208,286 @@ fn handle_ipc_message(line: &str, config: &Config) -> Option<String> {
     }
 }
 
+/// Handle undo command - restore previous window state
+fn handle_undo(config: &Config) -> Result<serde_json::Value, (i32, String)> {
+    let mut guard = HISTORY_MANAGER.lock().map_err(|_| {
+        (
+            exit_codes::ERROR,
+            "Failed to lock history manager".to_string(),
+        )
+    })?;
+
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| (exit_codes::ERROR, "History not enabled".to_string()))?;
+
+    // pop from undo stack
+    let entry = manager
+        .pop_undo()
+        .map_err(|e| (exit_codes::ERROR, e.to_string()))?
+        .ok_or_else(|| (exit_codes::ERROR, "Nothing to undo".to_string()))?;
+
+    // capture current state before restoring
+    let app_name = entry
+        .commands
+        .first()
+        .and_then(|c| c.params.get("app"))
+        .and_then(|a| a.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.as_str())
+        .unwrap_or("focused");
+
+    let current_state = capture_window_state(app_name, config);
+
+    // execute the restore commands
+    for cmd in &entry.commands {
+        if let Err(e) = execute_stored_command(cmd, config) {
+            log_err(&format!("Failed to execute undo command: {}", e));
+            // push entry back to undo stack on failure
+            let _ = manager.push_undo(entry);
+            return Err((exit_codes::ERROR, format!("Undo failed: {}", e)));
+        }
+    }
+
+    // push current state to redo stack
+    if let Some(state) = current_state {
+        let _ = manager.push_redo(state);
+    }
+
+    // get the restored window info for response
+    let restored_info = get_window_info_for_response(app_name, config);
+
+    Ok(serde_json::json!({
+        "action": "undo",
+        "app": {
+            "name": app_name
+        },
+        "restored": restored_info
+    }))
+}
+
+/// Handle redo command - re-apply undone action
+fn handle_redo(config: &Config) -> Result<serde_json::Value, (i32, String)> {
+    let mut guard = HISTORY_MANAGER.lock().map_err(|_| {
+        (
+            exit_codes::ERROR,
+            "Failed to lock history manager".to_string(),
+        )
+    })?;
+
+    let manager = guard
+        .as_mut()
+        .ok_or_else(|| (exit_codes::ERROR, "History not enabled".to_string()))?;
+
+    // pop from redo stack
+    let entry = manager
+        .pop_redo()
+        .map_err(|e| (exit_codes::ERROR, e.to_string()))?
+        .ok_or_else(|| (exit_codes::ERROR, "Nothing to redo".to_string()))?;
+
+    // capture current state before restoring
+    let app_name = entry
+        .commands
+        .first()
+        .and_then(|c| c.params.get("app"))
+        .and_then(|a| a.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|v| v.as_str())
+        .unwrap_or("focused");
+
+    let current_state = capture_window_state(app_name, config);
+
+    // execute the restore commands
+    for cmd in &entry.commands {
+        if let Err(e) = execute_stored_command(cmd, config) {
+            log_err(&format!("Failed to execute redo command: {}", e));
+            // push entry back to redo stack on failure
+            let _ = manager.push_redo(entry);
+            return Err((exit_codes::ERROR, format!("Redo failed: {}", e)));
+        }
+    }
+
+    // push current state to undo stack
+    if let Some(state) = current_state {
+        let _ = manager.push_undo(state);
+    }
+
+    // get the restored window info for response
+    let restored_info = get_window_info_for_response(app_name, config);
+
+    Ok(serde_json::json!({
+        "action": "redo",
+        "app": {
+            "name": app_name
+        },
+        "restored": restored_info
+    }))
+}
+
+/// Handle history list command
+fn handle_history_list() -> Result<serde_json::Value, (i32, String)> {
+    let guard = HISTORY_MANAGER.lock().map_err(|_| {
+        (
+            exit_codes::ERROR,
+            "Failed to lock history manager".to_string(),
+        )
+    })?;
+
+    let manager = guard
+        .as_ref()
+        .ok_or_else(|| (exit_codes::ERROR, "History not enabled".to_string()))?;
+
+    let data = manager
+        .get_data()
+        .map_err(|e| (exit_codes::ERROR, e.to_string()))?;
+
+    Ok(serde_json::json!({
+        "action": "history_list",
+        "result": {
+            "undo": data.undo,
+            "redo": data.redo
+        }
+    }))
+}
+
+/// Handle history clear command
+fn handle_history_clear() -> Result<serde_json::Value, (i32, String)> {
+    let guard = HISTORY_MANAGER.lock().map_err(|_| {
+        (
+            exit_codes::ERROR,
+            "Failed to lock history manager".to_string(),
+        )
+    })?;
+
+    let manager = guard
+        .as_ref()
+        .ok_or_else(|| (exit_codes::ERROR, "History not enabled".to_string()))?;
+
+    manager
+        .clear()
+        .map_err(|e| (exit_codes::ERROR, e.to_string()))?;
+
+    Ok(serde_json::json!({
+        "action": "history_clear",
+        "result": {
+            "status": "cleared"
+        }
+    }))
+}
+
+/// Capture current window state for an app
+fn capture_window_state(app_name: &str, config: &Config) -> Option<crate::history::HistoryEntry> {
+    use crate::history::{HistoryEntry, StoredCommand};
+    use chrono::Utc;
+
+    let (app, window_data, _display) = if app_name == "focused" {
+        manager::get_focused_window_info().ok()?
+    } else {
+        let running_apps = matching::get_running_apps().ok()?;
+        let match_result =
+            matching::find_app(app_name, &running_apps, config.settings.fuzzy_threshold)?;
+        manager::get_window_info_for_app(&match_result.app).ok()?
+    };
+
+    let app_param = serde_json::json!([app.name]);
+
+    Some(HistoryEntry {
+        commands: vec![
+            StoredCommand {
+                method: "resize".to_string(),
+                params: serde_json::json!({
+                    "app": app_param,
+                    "to": format!("{}x{}px", window_data.width, window_data.height)
+                }),
+            },
+            StoredCommand {
+                method: "move".to_string(),
+                params: serde_json::json!({
+                    "app": app_param,
+                    "to": format!("{},{}px", window_data.x, window_data.y)
+                }),
+            },
+        ],
+        timestamp: Utc::now(),
+    })
+}
+
+/// Execute a stored command from history
+fn execute_stored_command(
+    cmd: &crate::history::StoredCommand,
+    config: &Config,
+) -> Result<(), String> {
+    use crate::actions::{execute, ExecutionContext, JsonRpcRequest};
+
+    let json_str = serde_json::json!({
+        "method": cmd.method,
+        "params": cmd.params,
+    })
+    .to_string();
+
+    let json_request = JsonRpcRequest::parse(&json_str).map_err(|e| e.message)?;
+    let command = json_request.to_command().map_err(|e| e.message)?;
+    let ctx = ExecutionContext::new(config, false);
+
+    execute(command, &ctx).map_err(|e| e.message)?;
+    Ok(())
+}
+
+/// Get window info for response
+fn get_window_info_for_response(app_name: &str, config: &Config) -> serde_json::Value {
+    let result = if app_name == "focused" {
+        manager::get_focused_window_info()
+    } else {
+        let running_apps = matching::get_running_apps().ok();
+        running_apps
+            .and_then(|apps| matching::find_app(app_name, &apps, config.settings.fuzzy_threshold))
+            .and_then(|m| manager::get_window_info_for_app(&m.app).ok())
+            .ok_or_else(|| anyhow::anyhow!("App not found"))
+    };
+
+    match result {
+        Ok((_, window_data, _)) => serde_json::json!({
+            "x": window_data.x,
+            "y": window_data.y,
+            "width": window_data.width,
+            "height": window_data.height
+        }),
+        Err(_) => serde_json::json!({}),
+    }
+}
+
+/// Check if a method is a geometry-changing action that should be recorded in history
+fn is_geometry_action(method: &str) -> bool {
+    matches!(method, "maximize" | "resize" | "move")
+}
+
+/// Extract app name from request params for history capture
+fn get_app_from_params(params: &std::collections::HashMap<String, String>) -> Option<String> {
+    // try "app" param first (may be JSON array or single string)
+    if let Some(app_str) = params.get("app") {
+        // try parsing as JSON array
+        if let Ok(arr) = serde_json::from_str::<Vec<String>>(app_str) {
+            return arr.into_iter().next();
+        }
+        // otherwise treat as single string
+        if !app_str.is_empty() {
+            return Some(app_str.clone());
+        }
+    }
+    None
+}
+
+/// Push a history entry to the undo stack (clears redo stack)
+fn push_to_history(entry: crate::history::HistoryEntry) {
+    if let Ok(mut guard) = HISTORY_MANAGER.lock() {
+        if let Some(ref mut manager) = *guard {
+            if let Err(e) = manager.push_undo(entry) {
+                log_err(&format!("Failed to push history entry: {}", e));
+            }
+        }
+    }
+}
+
 /// Handle a parsed IPC request
 /// Returns Ok(json_value) on success, Err((code, message)) on error
 fn handle_ipc_request(
@@ -1145,6 +1510,36 @@ fn handle_ipc_request(
             .map_err(|e| (exit_codes::ERROR, e.to_string()));
     }
 
+    // handle history commands directly (they need access to daemon state)
+    match request.method.as_str() {
+        "undo" => return handle_undo(config),
+        "redo" => return handle_redo(config),
+        "history_list" => return handle_history_list(),
+        "history_clear" => return handle_history_clear(),
+        "history" => {
+            // handle history with command param
+            if let Some(cmd) = request.params.get("command") {
+                return match cmd.as_str() {
+                    "list" => handle_history_list(),
+                    "clear" => handle_history_clear(),
+                    _ => Err((
+                        exit_codes::INVALID_ARGS,
+                        format!("unknown history command '{}', expected: list, clear", cmd),
+                    )),
+                };
+            }
+        }
+        _ => {}
+    }
+
+    // capture window state before geometry-changing actions
+    let pre_action_state = if is_geometry_action(&request.method) {
+        let app_name = get_app_from_params(&request.params);
+        capture_window_state(app_name.as_deref().unwrap_or("focused"), config)
+    } else {
+        None
+    };
+
     // convert IpcRequest to JSON string and parse with JsonRpcRequest
     let json_str = serde_json::json!({
         "method": request.method,
@@ -1163,6 +1558,10 @@ fn handle_ipc_request(
 
     match execute(cmd, &ctx) {
         Ok(result) => {
+            // push pre-action state to history on success
+            if let Some(entry) = pre_action_state {
+                push_to_history(entry);
+            }
             // serialize the ActionResult to JSON
             serde_json::to_value(&result).map_err(|e| (exit_codes::ERROR, e.to_string()))
         }

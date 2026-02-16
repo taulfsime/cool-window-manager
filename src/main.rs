@@ -4,6 +4,7 @@ mod conditions;
 mod config;
 mod daemon;
 mod display;
+mod history;
 mod installer;
 mod spotlight;
 mod version;

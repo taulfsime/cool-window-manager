@@ -1,8 +1,12 @@
 //! conversion helpers for CLI commands
 
-use crate::actions::{Command, ConfigCommand, DaemonCommand, EventsCommand, SpotlightCommand};
+use crate::actions::{
+    Command, ConfigCommand, DaemonCommand, EventsCommand, HistoryCommand, SpotlightCommand,
+};
 
-use super::commands::{ConfigCommands, DaemonCommands, EventsCommands, SpotlightCommands};
+use super::commands::{
+    ConfigCommands, DaemonCommands, EventsCommands, HistoryCommands, SpotlightCommands,
+};
 
 /// convert launch/no_launch flags to Option<bool>
 pub fn resolve_launch_flags(launch: bool, no_launch: bool) -> Option<bool> {
@@ -102,6 +106,16 @@ impl EventsCommands {
     }
 }
 
+impl HistoryCommands {
+    /// convert CLI history command to unified Command enum
+    pub fn to_command(&self) -> Command {
+        match self {
+            HistoryCommands::List => Command::History(HistoryCommand::List),
+            HistoryCommands::Clear => Command::History(HistoryCommand::Clear),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,5 +194,20 @@ mod tests {
             }
             _ => panic!("unexpected command type"),
         }
+    }
+
+    #[test]
+    fn test_history_commands_to_command() {
+        let cmd = HistoryCommands::List;
+        assert!(matches!(
+            cmd.to_command(),
+            Command::History(HistoryCommand::List)
+        ));
+
+        let cmd = HistoryCommands::Clear;
+        assert!(matches!(
+            cmd.to_command(),
+            Command::History(HistoryCommand::Clear)
+        ));
     }
 }

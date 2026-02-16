@@ -210,6 +210,7 @@ cool-window-mng/
     │   └── events.rs       # Event enum, EventBus for pub/sub, subscriber management
     ├── display/
     │   └── mod.rs          # display enumeration, multi-monitor targeting
+    ├── history.rs          # undo/redo history management with debounced persistence
     ├── installer/
     │   ├── mod.rs          # module exports
     │   ├── paths.rs        # installation path detection and validation
@@ -265,10 +266,11 @@ Unified action layer providing consistent behavior across CLI, IPC, and future H
 | `spotlight.rs` | spotlight list/example (install/remove are CLI-only) |
 | `install.rs` | update_check (install/uninstall/update are CLI-only) |
 | `record.rs` | record layout handler (record shortcut is CLI-only) |
+| `history.rs` | undo/redo/history handlers (communicate with daemon via IPC) |
 
 **Key types:**
 
-- `Command`: Unified enum for all commands (Focus, Maximize, Resize, Move, List, Get, Ping, Status, Version, CheckPermissions, Record, Daemon, Events, Config, Spotlight, Install, Uninstall, Update)
+- `Command`: Unified enum for all commands (Focus, Maximize, Resize, Move, List, Get, Ping, Status, Version, CheckPermissions, Record, Daemon, Events, Config, Spotlight, Install, Uninstall, Update, Undo, Redo, History)
 - `ExecutionContext`: Contains config reference, verbose flag, and `is_cli` flag
 - `ActionResult`: Serializable result with action name and typed data
 - `ActionError`: Error with exit code, message, and optional suggestions
@@ -294,7 +296,7 @@ Handles command-line argument parsing and command execution.
 | `output.rs` | output formatting: `OutputMode` enum, JSON-RPC 2.0 response types, `format_template()` for custom format strings |
 | `events.rs` | CLI handlers for `events listen` and `events wait` commands |
 
-Commands defined: `focus`, `maximize`, `move`, `resize`, `list`, `get`, `check-permissions`, `record`, `config`, `daemon`, `events`, `version`, `install`, `uninstall`, `update`, `spotlight`
+Commands defined: `focus`, `maximize`, `move`, `resize`, `list`, `get`, `check-permissions`, `record`, `config`, `daemon`, `events`, `version`, `install`, `uninstall`, `update`, `spotlight`, `undo`, `redo`, `history`
 
 **CLI Command Reference:**
 
@@ -316,6 +318,9 @@ Commands defined: `focus`, `maximize`, `move`, `resize`, `list`, `get`, `check-p
 | `uninstall` | `cwm uninstall [--path <dir>]` | Remove cwm from system |
 | `update` | `cwm update [--check] [--force] [--prerelease]` | Update to latest version |
 | `version` | `cwm version` | Display version information |
+| `undo` | `cwm undo` | Undo last window geometry change |
+| `redo` | `cwm redo` | Redo last undone action |
+| `history` | `cwm history <list\|clear>` | View or clear undo/redo history |
 
 Common flags for window commands: `--launch`, `--no-launch`, `--verbose/-v`
 
@@ -343,9 +348,10 @@ Key types:
 - `Shortcut`: hotkey binding with keys, action, app, optional overrides
 - `AppRule`: automatic action when an app launches
 - `SpotlightShortcut`: macOS Spotlight integration shortcut definition
-- `Settings`: global defaults (fuzzy_threshold, launch, animate, delay_ms, retry, update)
+- `Settings`: global defaults (fuzzy_threshold, launch, animate, delay_ms, retry, update, history)
 - `Retry`: retry configuration (count, delay_ms, backoff)
 - `UpdateSettings`: update configuration (enabled, check_frequency, auto_update, channels, telemetry)
+- `HistorySettings`: undo/redo history configuration (enabled, limit, flush_delay_ms)
 - `UpdateChannels`: channel selection (dev, beta, stable)
 - `TelemetrySettings`: error reporting settings
 
@@ -849,6 +855,7 @@ Integration tests for CLI commands, install, update, and rollback:
 | `tests/integration_tests/test_channels.rs` | dev/beta/stable channels, channel priority, upgrade paths |
 | `tests/integration_tests/test_man_page.rs` | man page existence, sections (NAME, SYNOPSIS, DESCRIPTION, SUBCOMMANDS), command documentation |
 | `tests/integration_tests/test_events.rs` | events listen/wait commands, list events, event filtering |
+| `tests/integration_tests/test_history.rs` | undo/redo/history commands, config settings, daemon requirement |
 
 Note: Some integration tests require a mock GitHub API server and are skipped when not available.
 

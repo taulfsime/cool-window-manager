@@ -195,6 +195,9 @@ cwm config set settings.update.check_frequency manual
 | `cwm daemon <subcommand>` | Manage background daemon |
 | `cwm spotlight <subcommand>` | Manage Spotlight integration |
 | `cwm record <shortcut\|layout>` | Record keyboard shortcuts or window layouts |
+| `cwm undo` | Undo last window geometry change |
+| `cwm redo` | Redo last undone action |
+| `cwm history <list\|clear>` | View or clear undo/redo history |
 | `cwm install` | Install cwm to system PATH |
 | `cwm uninstall` | Remove cwm from system |
 | `cwm update` | Update to latest version |
@@ -573,6 +576,9 @@ Config keys:
 - `settings.update.channels.dev` - Enable dev channel (true/false)
 - `settings.update.channels.beta` - Enable beta channel (true/false)
 - `settings.update.channels.stable` - Enable stable channel (true/false)
+- `settings.history.enabled` - Enable undo/redo history (true/false)
+- `settings.history.limit` - Maximum history entries (default: 50)
+- `settings.history.flush_delay_ms` - Delay before persisting to disk (default: 2000)
 
 ### record
 
@@ -682,6 +688,51 @@ cwm spotlight example           # show example configuration
 ```
 
 Shortcuts appear in Spotlight with a "cwm: " prefix. For example, search for "cwm: Focus Safari" to run the shortcut.
+
+### undo / redo / history
+
+Undo and redo window geometry changes (maximize, resize, move). Requires the daemon to be running.
+
+```bash
+cwm undo                         # undo last geometry change
+cwm redo                         # redo last undone action
+cwm history list                 # show undo/redo history
+cwm history clear                # clear all history
+```
+
+**How it works:**
+- When you maximize, resize, or move a window, the previous geometry is saved to the undo stack
+- `cwm undo` restores the previous geometry and pushes the current state to the redo stack
+- `cwm redo` re-applies the undone action
+- History is global (single stack for all windows) with a configurable limit (default: 50)
+- History is persisted to `~/.cwm/history.json` with debounced writes
+
+**Configuration:**
+
+```json
+{
+  "settings": {
+    "history": {
+      "enabled": true,
+      "limit": 50,
+      "flush_delay_ms": 2000
+    }
+  }
+}
+```
+
+**Hotkey support:**
+
+You can bind undo/redo to hotkeys in your config:
+
+```json
+{
+  "shortcuts": [
+    { "keys": "ctrl+alt+z", "action": "undo" },
+    { "keys": "ctrl+alt+shift+z", "action": "redo" }
+  ]
+}
+```
 
 ## Scripting
 

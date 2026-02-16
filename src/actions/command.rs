@@ -126,6 +126,16 @@ pub enum Command {
     #[allow(dead_code)]
     Events(EventsCommand),
 
+    // ==================== History Commands ====================
+    /// undo the last window action
+    Undo,
+
+    /// redo the last undone action
+    Redo,
+
+    /// history management
+    History(HistoryCommand),
+
     // ==================== Install Commands ====================
     /// install cwm to system PATH
     Install {
@@ -279,6 +289,15 @@ pub enum EventsCommand {
     },
 }
 
+/// history subcommands
+#[derive(Debug, Clone)]
+pub enum HistoryCommand {
+    /// list history entries
+    List,
+    /// clear all history
+    Clear,
+}
+
 /// record subcommands
 /// note: these variants exist for IPC rejection and is_interactive checks
 /// the actual implementation is in CLI handlers
@@ -347,6 +366,10 @@ impl Command {
             Command::Spotlight(_) => "spotlight",
             Command::Events(EventsCommand::Listen { .. }) => "events_listen",
             Command::Events(EventsCommand::Wait { .. }) => "events_wait",
+            Command::Undo => "undo",
+            Command::Redo => "redo",
+            Command::History(HistoryCommand::List) => "history_list",
+            Command::History(HistoryCommand::Clear) => "history_clear",
             Command::Install { .. } => "install",
             Command::Uninstall { .. } => "uninstall",
             Command::Update { .. } => "update",
@@ -529,5 +552,27 @@ mod tests {
             .method_name(),
             "close"
         );
+    }
+
+    #[test]
+    fn test_undo_redo_method_names() {
+        assert_eq!(Command::Undo.method_name(), "undo");
+        assert_eq!(Command::Redo.method_name(), "redo");
+        assert_eq!(
+            Command::History(HistoryCommand::List).method_name(),
+            "history_list"
+        );
+        assert_eq!(
+            Command::History(HistoryCommand::Clear).method_name(),
+            "history_clear"
+        );
+    }
+
+    #[test]
+    fn test_undo_redo_not_interactive() {
+        assert!(!Command::Undo.is_interactive());
+        assert!(!Command::Redo.is_interactive());
+        assert!(!Command::History(HistoryCommand::List).is_interactive());
+        assert!(!Command::History(HistoryCommand::Clear).is_interactive());
     }
 }

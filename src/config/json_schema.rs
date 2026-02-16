@@ -360,6 +360,32 @@ pub const JSON_SCHEMA: &str = r##"{
         },
         "update": {
           "$ref": "#/$defs/UpdateSettings"
+        },
+        "history": {
+          "$ref": "#/$defs/HistorySettings"
+        }
+      }
+    },
+    "HistorySettings": {
+      "type": "object",
+      "description": "Undo/redo history settings",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable undo/redo history tracking"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 50,
+          "description": "Maximum number of entries in the undo stack"
+        },
+        "flush_delay_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2000,
+          "description": "Delay in milliseconds before flushing history to disk"
         }
       }
     },
@@ -495,6 +521,7 @@ mod tests {
         assert!(defs.get("UpdateSettings").is_some());
         assert!(defs.get("UpdateChannels").is_some());
         assert!(defs.get("TelemetrySettings").is_some());
+        assert!(defs.get("HistorySettings").is_some());
         assert!(defs.get("Condition").is_some());
         assert!(defs.get("CompareOp").is_some());
         assert!(defs.get("InOp").is_some());

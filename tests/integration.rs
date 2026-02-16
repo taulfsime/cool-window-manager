@@ -29,6 +29,9 @@ mod test_cli_focus;
 #[path = "integration_tests/test_cli_get.rs"]
 mod test_cli_get;
 
+#[path = "integration_tests/test_history.rs"]
+mod test_history;
+
 #[path = "integration_tests/test_cli_maximize.rs"]
 mod test_cli_maximize;
 

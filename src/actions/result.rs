@@ -82,6 +82,12 @@ pub enum ActionData {
     /// launched app (when app was not running and was launched)
     Launched { app: String, message: String },
 
+    /// undo action result
+    Undo { app: AppData, restored: WindowData },
+
+    /// redo action result
+    Redo { app: AppData, restored: WindowData },
+
     /// simple result with arbitrary JSON data (for system commands, etc.)
     Simple { result: serde_json::Value },
 }
@@ -272,6 +278,20 @@ impl ActionResult {
         Self {
             action,
             data: ActionData::Simple { result },
+        }
+    }
+
+    pub fn undo(app: AppData, restored: WindowData) -> Self {
+        Self {
+            action: "undo",
+            data: ActionData::Undo { app, restored },
+        }
+    }
+
+    pub fn redo(app: AppData, restored: WindowData) -> Self {
+        Self {
+            action: "redo",
+            data: ActionData::Redo { app, restored },
         }
     }
 }

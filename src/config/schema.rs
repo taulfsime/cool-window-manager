@@ -119,6 +119,8 @@ pub const DEFAULT_DELAY_MS: u64 = 500;
 pub const DEFAULT_RETRY_COUNT: u32 = 10;
 pub const DEFAULT_RETRY_DELAY_MS: u64 = 100;
 pub const DEFAULT_RETRY_BACKOFF: f64 = 1.5;
+pub const DEFAULT_HISTORY_LIMIT: usize = 50;
+pub const DEFAULT_HISTORY_FLUSH_DELAY_MS: u64 = 2000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -135,6 +137,8 @@ pub struct Settings {
     pub retry: Retry,
     #[serde(default)]
     pub update: UpdateSettings,
+    #[serde(default)]
+    pub history: HistorySettings,
 }
 
 fn default_fuzzy_threshold() -> usize {
@@ -154,6 +158,7 @@ impl Default for Settings {
             delay_ms: DEFAULT_DELAY_MS,
             retry: Retry::default(),
             update: UpdateSettings::default(),
+            history: HistorySettings::default(),
         }
     }
 }
@@ -186,6 +191,37 @@ impl Default for Retry {
             count: DEFAULT_RETRY_COUNT,
             delay_ms: DEFAULT_RETRY_DELAY_MS,
             backoff: DEFAULT_RETRY_BACKOFF,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistorySettings {
+    /// enable undo/redo history tracking
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// maximum number of entries in the undo stack
+    #[serde(default = "default_history_limit")]
+    pub limit: usize,
+    /// delay in milliseconds before flushing history to disk
+    #[serde(default = "default_history_flush_delay_ms")]
+    pub flush_delay_ms: u64,
+}
+
+fn default_history_limit() -> usize {
+    DEFAULT_HISTORY_LIMIT
+}
+
+fn default_history_flush_delay_ms() -> u64 {
+    DEFAULT_HISTORY_FLUSH_DELAY_MS
+}
+
+impl Default for HistorySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            limit: DEFAULT_HISTORY_LIMIT,
+            flush_delay_ms: DEFAULT_HISTORY_FLUSH_DELAY_MS,
         }
     }
 }
@@ -731,5 +767,68 @@ mod tests {
 
         let config: Config = serde_json::from_str(json).unwrap();
         assert!(config.spotlight.is_empty());
+    }
+
+    #[test]
+    fn test_history_settings_defaults() {
+        let settings = HistorySettings::default();
+
+        assert!(settings.enabled);
+        assert_eq!(settings.limit, DEFAULT_HISTORY_LIMIT);
+        assert_eq!(settings.flush_delay_ms, DEFAULT_HISTORY_FLUSH_DELAY_MS);
+    }
+
+    #[test]
+    fn test_history_settings_serialization() {
+        let settings = HistorySettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        let parsed: HistorySettings = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.enabled, settings.enabled);
+        assert_eq!(parsed.limit, settings.limit);
+        assert_eq!(parsed.flush_delay_ms, settings.flush_delay_ms);
+    }
+
+    #[test]
+    fn test_config_with_history_settings() {
+        let json = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {
+                "history": {
+                    "enabled": false,
+                    "limit": 100,
+                    "flush_delay_ms": 5000
+                }
+            }
+        }"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+
+        assert!(!config.settings.history.enabled);
+        assert_eq!(config.settings.history.limit, 100);
+        assert_eq!(config.settings.history.flush_delay_ms, 5000);
+    }
+
+    #[test]
+    fn test_partial_history_settings_uses_defaults() {
+        let json = r#"{
+            "shortcuts": [],
+            "app_rules": [],
+            "settings": {
+                "history": {
+                    "limit": 25
+                }
+            }
+        }"#;
+
+        let config: Config = serde_json::from_str(json).unwrap();
+
+        assert!(config.settings.history.enabled);
+        assert_eq!(config.settings.history.limit, 25);
+        assert_eq!(
+            config.settings.history.flush_delay_ms,
+            DEFAULT_HISTORY_FLUSH_DELAY_MS
+        );
     }
 }
