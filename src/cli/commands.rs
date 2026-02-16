@@ -842,6 +842,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     action: action.clone(),
                     app: app.clone(),
                     launch: None,
+                    when: None,
                 };
 
                 if launch {

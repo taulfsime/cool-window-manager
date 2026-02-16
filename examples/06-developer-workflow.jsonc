@@ -1,0 +1,96 @@
+// developer workflow
+// optimized shortcuts for coding with IDE, terminal, and browser
+{
+  "$schema": "../config.schema.json",
+  "conditions": {
+    "docked": {
+      "display.count": { ">=": 2 }
+    },
+    "ide_running": {
+      "any": [
+        { "app.running": "Visual Studio Code" },
+        { "app.running": "Cursor" },
+        { "app.running": "Xcode" },
+        { "app.running": "IntelliJ IDEA" }
+      ]
+    },
+    "work_hours": {
+      "time": "9:00-18:00",
+      "time.day": "mon-fri"
+    }
+  },
+  "shortcuts": [
+    {
+      "keys": "ctrl+alt+c",
+      "action": "focus",
+      "app": "Cursor",
+      "launch": true
+    },
+    {
+      "keys": "ctrl+alt+v",
+      "action": "focus",
+      "app": "Visual Studio Code",
+      "launch": true
+    },
+    {
+      "keys": "ctrl+alt+t",
+      "action": "focus",
+      "app": "Terminal",
+      "launch": true
+    },
+    {
+      "keys": "ctrl+alt+g",
+      "action": "focus",
+      "app": "GitHub Desktop",
+      "launch": true
+    },
+    {
+      "keys": "ctrl+alt+d",
+      "action": "focus",
+      "app": "Docker Desktop"
+    }
+  ],
+  "app_rules": [
+    {
+      "app": "Visual Studio Code",
+      "action": "move:external",
+      "when": { "$ref": "docked" }
+    },
+    {
+      "app": "Visual Studio Code",
+      "action": "maximize",
+      "when": { "display.count": { "==": 1 } }
+    },
+    {
+      "app": "Cursor",
+      "action": "move:external",
+      "when": { "$ref": "docked" }
+    },
+    {
+      "app": "Cursor",
+      "action": "maximize",
+      "when": { "display.count": { "==": 1 } }
+    },
+    {
+      "app": "Terminal",
+      "action": "move:builtin",
+      "delay_ms": 300,
+      "when": { "$ref": "docked" }
+    },
+    {
+      "app": "Terminal",
+      "action": "resize:60",
+      "delay_ms": 300,
+      "when": { "display.count": { "==": 1 } }
+    },
+    {
+      "app": "GitHub Desktop",
+      "action": "resize:70"
+    }
+  ],
+  "settings": {
+    "fuzzy_threshold": 2,
+    "launch": false,
+    "delay_ms": 500
+  }
+}

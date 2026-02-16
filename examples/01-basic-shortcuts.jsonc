@@ -1,0 +1,36 @@
+// basic shortcuts without conditions
+// simple hotkey bindings for common window actions
+{
+  "$schema": "../config.schema.json",
+  "shortcuts": [
+    {
+      "keys": "ctrl+alt+s",
+      "action": "focus",
+      "app": "Safari",
+      "launch": true
+    },
+    {
+      "keys": "ctrl+alt+t",
+      "action": "focus",
+      "app": "Terminal",
+      "launch": true
+    },
+    {
+      "keys": "ctrl+alt+m",
+      "action": "maximize"
+    },
+    {
+      "keys": "ctrl+alt+c",
+      "action": "resize:80"
+    },
+    {
+      "keys": "ctrl+alt+n",
+      "action": "move:next"
+    }
+  ],
+  "app_rules": [],
+  "settings": {
+    "fuzzy_threshold": 2,
+    "launch": false
+  }
+}

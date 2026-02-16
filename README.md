@@ -930,6 +930,72 @@ If the window is not ready after the initial delay, the action will be retried w
 
 This is useful for automatically moving apps to specific monitors or resizing them when launched.
 
+### Conditions
+
+Shortcuts and app rules support a `when` field for conditional execution. Actions only run when the condition evaluates to true.
+
+```json
+{
+  "shortcuts": [
+    {
+      "keys": "ctrl+alt+e",
+      "action": "move:external",
+      "when": { "display.connected": "external" }
+    }
+  ],
+  "app_rules": [
+    {
+      "app": "Slack",
+      "action": "move:external",
+      "when": { "display.count": { ">=": 2 } }
+    }
+  ]
+}
+```
+
+**Supported condition fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `time` | string | Time range: `"9:00-17:00"`, `"9:00AM-5:00PM"`, `"22:00-06:00"` (overnight) |
+| `time.day` | string | Day(s): `"mon"`, `"mon-fri"`, `"mon,wed,fri"` |
+| `display.count` | number | Number of connected displays |
+| `display.connected` | string | Display alias is connected (`builtin`, `external`, `main`, or custom) |
+| `app.running` | string | Check if an app is running |
+| `app.focused` | string/bool | Which app has focus |
+| `app.fullscreen` | bool | Target window fullscreen state |
+| `app.minimized` | bool | Target window minimized state |
+
+**Logical operators:**
+
+```json
+{
+  "all": [{ "display.count": { ">=": 2 } }, { "time.day": "mon-fri" }],
+  "any": [{ "app.running": "Safari" }, { "app.running": "Chrome" }],
+  "not": { "app.fullscreen": true }
+}
+```
+
+**Global definitions with `$ref`:**
+
+```json
+{
+  "conditions": {
+    "docked": { "display.count": { ">=": 2 } },
+    "work_hours": { "time": "9:00-17:00", "time.day": "mon-fri" }
+  },
+  "shortcuts": [
+    {
+      "keys": "ctrl+alt+m",
+      "action": "maximize",
+      "when": { "$ref": "docked" }
+    }
+  ]
+}
+```
+
+For complete documentation, see [CONDITIONS.md](CONDITIONS.md). Example configs are in the `examples/` directory.
+
 ### Spotlight shortcuts
 
 Spotlight shortcuts create macOS app bundles that appear in Spotlight search. When triggered, they execute cwm commands.

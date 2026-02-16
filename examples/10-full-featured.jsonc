@@ -1,0 +1,159 @@
+// full-featured configuration
+// comprehensive example using all cwm features with conditions
+{
+  "$schema": "../config.schema.json",
+  "display_aliases": {
+    // run: cwm list displays --detailed
+    "office_main": ["DELL_P2723QE_ABC123"],
+    "office_side": ["LG_27UK850_DEF456"],
+    "home_monitor": ["SAMSUNG_U28E590_GHI789"]
+  },
+  "conditions": {
+    // time-based
+    "work_hours": { "time": "9:00-17:00", "time.day": "mon-fri" },
+    "lunch": { "time": "12:00-13:00", "time.day": "mon-fri" },
+    "evening": { "time": "17:00-22:00" },
+    "night": { "any": [{ "time": "22:00-23:59" }, { "time": "00:00-07:00" }] },
+    "weekend": { "time.day": "sat,sun" },
+
+    // location-based
+    "at_office": {
+      "any": [
+        { "display.connected": "office_main" },
+        { "display.connected": "office_side" }
+      ]
+    },
+    "at_home": { "display.connected": "home_monitor" },
+    "mobile": {
+      "all": [
+        { "display.count": { "==": 1 } },
+        { "display.connected": "builtin" }
+      ]
+    },
+
+    // display-based
+    "docked": { "display.count": { ">=": 2 } },
+    "triple_monitor": { "display.count": { ">=": 3 } },
+    "has_external": { "display.connected": "external" },
+
+    // app-based
+    "browser_running": {
+      "any": [
+        { "app.running": "Safari" },
+        { "app.running": "Chrome" },
+        { "app.running": "Firefox" },
+        { "app.running": "Arc" }
+      ]
+    },
+    "ide_running": {
+      "any": [
+        { "app.running": "Visual Studio Code" },
+        { "app.running": "Cursor" },
+        { "app.running": "Xcode" }
+      ]
+    },
+
+    // window state
+    "can_manipulate": {
+      "all": [
+        { "not": { "app.fullscreen": true } },
+        { "app.minimized": false }
+      ]
+    },
+
+    // combined
+    "productive_work": {
+      "all": [
+        { "$ref": "work_hours" },
+        { "$ref": "docked" },
+        { "not": { "$ref": "lunch" } }
+      ]
+    },
+    "relaxed_mode": {
+      "any": [
+        { "$ref": "evening" },
+        { "$ref": "weekend" }
+      ]
+    }
+  },
+  "shortcuts": [
+    // app focus shortcuts
+    { "keys": "ctrl+alt+s", "action": "focus", "app": "Safari", "launch": true },
+    { "keys": "ctrl+alt+t", "action": "focus", "app": "Terminal", "launch": true },
+    { "keys": "ctrl+alt+c", "action": "focus", "app": "Cursor", "launch": true },
+    { "keys": "ctrl+alt+k", "action": "focus", "app": "Slack", "launch": true, "when": { "$ref": "work_hours" } },
+    { "keys": "ctrl+alt+z", "action": "focus", "app": "Zoom", "when": { "$ref": "work_hours" } },
+
+    // window manipulation
+    { "keys": "ctrl+alt+m", "action": "maximize", "when": { "$ref": "can_manipulate" } },
+    { "keys": "ctrl+alt+8", "action": "resize:80", "when": { "$ref": "can_manipulate" } },
+    { "keys": "ctrl+alt+6", "action": "resize:60", "when": { "$ref": "can_manipulate" } },
+
+    // display movement
+    { "keys": "ctrl+alt+n", "action": "move:next", "when": { "$ref": "docked" } },
+    { "keys": "ctrl+alt+p", "action": "move:prev", "when": { "$ref": "docked" } },
+    { "keys": "ctrl+alt+e", "action": "move:external", "when": { "$ref": "has_external" } },
+    { "keys": "ctrl+alt+b", "action": "move:builtin", "when": { "$ref": "docked" } },
+
+    // location-specific
+    { "keys": "ctrl+alt+1", "action": "move:office_main", "when": { "$ref": "at_office" } },
+    { "keys": "ctrl+alt+2", "action": "move:office_side", "when": { "$ref": "at_office" } },
+    { "keys": "ctrl+alt+h", "action": "move:home_monitor", "when": { "$ref": "at_home" } }
+  ],
+  "app_rules": [
+    // slack placement (fallback chain)
+    { "app": "Slack", "action": "move:office_side", "when": { "$ref": "at_office" } },
+    { "app": "Slack", "action": "move:home_monitor", "when": { "$ref": "at_home" } },
+    { "app": "Slack", "action": "move:external", "when": { "$ref": "has_external" } },
+    { "app": "Slack", "action": "resize:50", "when": { "$ref": "mobile" } },
+
+    // ide placement
+    { "app": "Cursor", "action": "move:office_main", "when": { "$ref": "at_office" } },
+    { "app": "Cursor", "action": "move:external", "when": { "$ref": "docked" } },
+    { "app": "Cursor", "action": "maximize" },
+
+    { "app": "Visual Studio Code", "action": "move:office_main", "when": { "$ref": "at_office" } },
+    { "app": "Visual Studio Code", "action": "move:external", "when": { "$ref": "docked" } },
+    { "app": "Visual Studio Code", "action": "maximize" },
+
+    // terminal
+    { "app": "Terminal", "action": "move:builtin", "delay_ms": 300, "when": { "$ref": "docked" } },
+    { "app": "Terminal", "action": "resize:60", "delay_ms": 300 },
+
+    // browser
+    { "app": "Safari", "action": "move:external", "when": { "$ref": "docked" } },
+    { "app": "Safari", "action": "maximize" },
+
+    // communication apps during work
+    { "app": "Zoom", "action": "maximize", "when": { "$ref": "work_hours" } },
+    { "app": "Microsoft Teams", "action": "resize:70", "when": { "$ref": "work_hours" } }
+  ],
+  "spotlight": [
+    { "name": "Focus Safari", "action": "focus", "app": "Safari", "launch": true },
+    { "name": "Focus Terminal", "action": "focus", "app": "Terminal", "launch": true },
+    { "name": "Maximize Window", "action": "maximize" },
+    { "name": "Move to External", "action": "move:external" },
+    { "name": "Resize 80%", "action": "resize:80" }
+  ],
+  "settings": {
+    "fuzzy_threshold": 2,
+    "launch": false,
+    "animate": false,
+    "delay_ms": 500,
+    "retry": {
+      "count": 10,
+      "delay_ms": 100,
+      "backoff": 1.5
+    },
+    "update": {
+      "enabled": true,
+      "check_frequency": "daily",
+      "auto_update": "prompt",
+      "channels": {
+        "dev": false,
+        "beta": false,
+        "stable": true
+      }
+    }
+  }
+}

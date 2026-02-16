@@ -12,6 +12,20 @@ pub const JSON_SCHEMA: &str = r##"{
       "type": "string",
       "description": "JSON schema reference"
     },
+    "conditions": {
+      "type": "object",
+      "description": "Global condition definitions that can be referenced by $ref in shortcuts and app_rules",
+      "additionalProperties": {
+        "$ref": "#/$defs/Condition"
+      },
+      "default": {},
+      "examples": [
+        {
+          "work_hours": { "time": "9:00AM-5:00PM", "time.day": "mon-fri" },
+          "docked": { "display.count": { ">=": 2 } }
+        }
+      ]
+    },
     "shortcuts": {
       "type": "array",
       "description": "Global hotkey shortcuts",
@@ -80,6 +94,10 @@ pub const JSON_SCHEMA: &str = r##"{
         "launch": {
           "type": "boolean",
           "description": "Launch the app if not running. Overrides global settings.launch."
+        },
+        "when": {
+          "$ref": "#/$defs/Condition",
+          "description": "Condition that must be true for this shortcut to execute"
         }
       },
       "if": {
@@ -107,8 +125,150 @@ pub const JSON_SCHEMA: &str = r##"{
           "type": "integer",
           "minimum": 0,
           "description": "Delay in milliseconds before executing the action. Overrides global settings.delay_ms."
+        },
+        "when": {
+          "$ref": "#/$defs/Condition",
+          "description": "Condition that must be true for this rule to execute"
         }
       }
+    },
+    "Condition": {
+      "description": "A condition that evaluates to true or false. Supports logical operators (all, any, not), comparison operators, and field conditions.",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Object with field conditions (implicit AND) or logical operators",
+          "properties": {
+            "all": {
+              "type": "array",
+              "description": "All conditions must be true (AND)",
+              "items": { "$ref": "#/$defs/Condition" }
+            },
+            "any": {
+              "type": "array",
+              "description": "Any condition must be true (OR)",
+              "items": { "$ref": "#/$defs/Condition" }
+            },
+            "not": {
+              "$ref": "#/$defs/Condition",
+              "description": "Negate a condition"
+            },
+            "$ref": {
+              "type": "string",
+              "description": "Reference to a named condition defined in 'conditions'"
+            },
+            "time": {
+              "type": "string",
+              "description": "Time range(s): '9:00-17:00', '9AM-5PM', '9:00-12:00,14:00-18:00'",
+              "examples": ["9:00AM-5:00PM", "22:00-06:00", "9:00-12:00,14:00-18:00"]
+            },
+            "time.day": {
+              "type": "string",
+              "description": "Day(s) of week: 'mon', 'mon-fri', 'mon,wed,fri'",
+              "examples": ["mon-fri", "sat,sun", "mon,wed,fri"]
+            },
+            "display.count": {
+              "description": "Number of connected displays",
+              "oneOf": [
+                { "type": "integer" },
+                { "$ref": "#/$defs/CompareOp" }
+              ]
+            },
+            "display.connected": {
+              "description": "Check if display alias is connected",
+              "oneOf": [
+                { "type": "string" },
+                { "$ref": "#/$defs/InOp" }
+              ]
+            },
+            "app": {
+              "description": "Target app name or title match",
+              "oneOf": [
+                { "type": "string" },
+                { "$ref": "#/$defs/InOp" }
+              ]
+            },
+            "app.running": {
+              "description": "Check if app is running",
+              "oneOf": [
+                { "type": "string" },
+                { "$ref": "#/$defs/InOp" }
+              ]
+            },
+            "app.focused": {
+              "description": "Check if app has focus",
+              "oneOf": [
+                { "type": "string" },
+                { "type": "boolean" },
+                { "$ref": "#/$defs/InOp" }
+              ]
+            },
+            "app.fullscreen": {
+              "type": "boolean",
+              "description": "Check if target window is fullscreen"
+            },
+            "app.minimized": {
+              "type": "boolean",
+              "description": "Check if target window is minimized"
+            },
+            "app.display": {
+              "description": "Check which display target window is on",
+              "oneOf": [
+                { "type": "string" },
+                { "$ref": "#/$defs/InOp" }
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "boolean",
+          "description": "true = always, false = never"
+        }
+      ],
+      "examples": [
+        { "display.count": { ">=": 2 } },
+        { "time": "9AM-5PM", "time.day": "mon-fri" },
+        { "all": [{ "$ref": "work_hours" }, { "display.connected": "external" }] },
+        { "not": { "app.fullscreen": true } }
+      ]
+    },
+    "CompareOp": {
+      "type": "object",
+      "description": "Comparison operator object",
+      "properties": {
+        "==": { "type": "number" },
+        "eq": { "type": "number" },
+        "equals": { "type": "number" },
+        "!=": { "type": "number" },
+        "ne": { "type": "number" },
+        "not_equals": { "type": "number" },
+        ">": { "type": "number" },
+        "gt": { "type": "number" },
+        "greater_than": { "type": "number" },
+        ">=": { "type": "number" },
+        "gte": { "type": "number" },
+        "greater_than_or_equal": { "type": "number" },
+        "<": { "type": "number" },
+        "lt": { "type": "number" },
+        "less_than": { "type": "number" },
+        "<=": { "type": "number" },
+        "lte": { "type": "number" },
+        "less_than_or_equal": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "InOp": {
+      "type": "object",
+      "description": "Set membership operator",
+      "properties": {
+        "in": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["in"],
+      "additionalProperties": false
     },
     "SpotlightShortcut": {
       "type": "object",
@@ -335,6 +495,9 @@ mod tests {
         assert!(defs.get("UpdateSettings").is_some());
         assert!(defs.get("UpdateChannels").is_some());
         assert!(defs.get("TelemetrySettings").is_some());
+        assert!(defs.get("Condition").is_some());
+        assert!(defs.get("CompareOp").is_some());
+        assert!(defs.get("InOp").is_some());
     }
 
     #[test]

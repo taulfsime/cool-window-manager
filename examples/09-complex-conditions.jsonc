@@ -1,0 +1,97 @@
+// complex nested conditions
+// demonstrates all logical operators and comparisons
+{
+  "$schema": "../config.schema.json",
+  "display_aliases": {
+    "ultrawide": ["DELL_U3423WE_12345"]
+  },
+  "conditions": {
+    // basic conditions
+    "work_hours": {
+      "time": "9:00-17:00",
+      "time.day": "mon-fri"
+    },
+    "docked": {
+      "display.count": { ">=": 2 }
+    },
+    "has_ultrawide": {
+      "display.connected": "ultrawide"
+    },
+
+    // combined conditions
+    "work_docked": {
+      "all": [
+        { "$ref": "work_hours" },
+        { "$ref": "docked" }
+      ]
+    },
+
+    // complex: work hours AND (docked OR ultrawide)
+    "productive_setup": {
+      "all": [
+        { "$ref": "work_hours" },
+        {
+          "any": [
+            { "$ref": "docked" },
+            { "$ref": "has_ultrawide" }
+          ]
+        }
+      ]
+    },
+
+    // NOT conditions
+    "not_fullscreen": {
+      "not": { "app.fullscreen": true }
+    },
+    "can_resize": {
+      "all": [
+        { "$ref": "not_fullscreen" },
+        { "app.minimized": false }
+      ]
+    },
+
+    // comparison operators demo
+    "single_display": { "display.count": { "==": 1 } },
+    "multi_display": { "display.count": { ">": 1 } },
+    "triple_setup": { "display.count": { ">=": 3 } },
+    "not_quad": { "display.count": { "<": 4 } }
+  },
+  "shortcuts": [
+    {
+      "keys": "ctrl+alt+p",
+      "action": "maximize",
+      "when": { "$ref": "productive_setup" }
+    },
+    {
+      "keys": "ctrl+alt+r",
+      "action": "resize:80",
+      "when": { "$ref": "can_resize" }
+    },
+    {
+      "keys": "ctrl+alt+u",
+      "action": "move:ultrawide",
+      "when": { "$ref": "has_ultrawide" }
+    }
+  ],
+  "app_rules": [
+    {
+      "app": "Slack",
+      "action": "move:2",
+      "when": { "$ref": "triple_setup" }
+    },
+    {
+      "app": "Slack",
+      "action": "move:external",
+      "when": { "$ref": "multi_display" }
+    },
+    {
+      "app": "Slack",
+      "action": "resize:50",
+      "when": { "$ref": "single_display" }
+    }
+  ],
+  "settings": {
+    "fuzzy_threshold": 2,
+    "delay_ms": 500
+  }
+}

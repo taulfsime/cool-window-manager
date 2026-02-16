@@ -7,6 +7,8 @@ pub struct MatchedRule {
     pub action: String,
     pub delay_ms: Option<u64>,
     pub app_name: String,
+    /// condition that must be true for this rule to execute
+    pub when: Option<serde_json::Value>,
 }
 
 mod macos {
@@ -89,6 +91,7 @@ mod macos {
                                 action: rule.action.clone(),
                                 delay_ms: rule.delay_ms,
                                 app_name: app_name.clone(),
+                                when: rule.when.clone(),
                             });
                             break;
                         }

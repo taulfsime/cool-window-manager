@@ -1582,6 +1582,68 @@ unsafe fn get_window_title(window: AXUIElementRef) -> Option<String> {
     }
 }
 
+/// Check if a window is in fullscreen mode
+unsafe fn is_window_fullscreen(window: AXUIElementRef) -> bool {
+    use core_foundation::base::CFTypeRef;
+    use core_foundation::boolean::CFBoolean;
+
+    let fullscreen_attr = CFString::new("AXFullScreen");
+    let mut fullscreen_value: CFTypeRef = std::ptr::null_mut();
+
+    let result = AXUIElementCopyAttributeValue(
+        window,
+        fullscreen_attr.as_concrete_TypeRef(),
+        &mut fullscreen_value,
+    );
+
+    if result != K_AX_ERROR_SUCCESS || fullscreen_value.is_null() {
+        return false;
+    }
+
+    // convert to boolean
+    let is_fullscreen = CFBoolean::wrap_under_get_rule(fullscreen_value as _).into();
+
+    core_foundation::base::CFRelease(fullscreen_value);
+
+    is_fullscreen
+}
+
+/// Check if a window is minimized
+unsafe fn is_window_minimized(window: AXUIElementRef) -> bool {
+    use core_foundation::base::CFTypeRef;
+    use core_foundation::boolean::CFBoolean;
+
+    let minimized_attr = CFString::new("AXMinimized");
+    let mut minimized_value: CFTypeRef = std::ptr::null_mut();
+
+    let result = AXUIElementCopyAttributeValue(
+        window,
+        minimized_attr.as_concrete_TypeRef(),
+        &mut minimized_value,
+    );
+
+    if result != K_AX_ERROR_SUCCESS || minimized_value.is_null() {
+        return false;
+    }
+
+    // convert to boolean
+    let is_minimized = CFBoolean::wrap_under_get_rule(minimized_value as _).into();
+
+    core_foundation::base::CFRelease(minimized_value);
+
+    is_minimized
+}
+
+/// Get the display index where a window is located
+#[allow(dead_code)]
+fn get_window_display_index(x: f64, y: f64, width: f64, height: f64) -> Result<usize> {
+    let displays = crate::display::get_displays()?;
+    // use window center to determine display
+    let center_x = x + width / 2.0;
+    let center_y = y + height / 2.0;
+    Ok(find_display_for_point(center_x, center_y, &displays))
+}
+
 /// Get information about the currently focused window
 pub fn get_focused_window_info() -> Result<(AppInfo, WindowData, DisplayDataInfo)> {
     use objc2_app_kit::NSWorkspace;
@@ -1690,6 +1752,109 @@ pub fn get_window_info_for_app(app: &AppInfo) -> Result<(AppInfo, WindowData, Di
     };
 
     Ok((app.clone(), window_data, display_data))
+}
+
+/// Extended window state for condition evaluation
+#[derive(Debug, Clone, Default)]
+pub struct WindowStateInfo {
+    /// window title
+    pub title: Option<String>,
+    /// display index where window is located
+    pub display_index: Option<usize>,
+    /// display name where window is located
+    pub display_name: Option<String>,
+    /// is window in fullscreen mode
+    pub is_fullscreen: bool,
+    /// is window minimized
+    pub is_minimized: bool,
+}
+
+/// Get extended window state for an app (for condition evaluation)
+pub fn get_window_state_for_app(app: &AppInfo) -> Result<WindowStateInfo> {
+    if !accessibility::is_trusted() {
+        return Err(anyhow!(
+            "Accessibility permissions required. Run 'cwm check-permissions' for help."
+        ));
+    }
+
+    let window = unsafe { get_frontmost_window(app.pid)? };
+
+    let (x, y) = unsafe { get_window_position(window)? };
+    let (w, h) = unsafe { get_window_size(window)? };
+    let title = unsafe { get_window_title(window) };
+    let is_fullscreen = unsafe { is_window_fullscreen(window) };
+    let is_minimized = unsafe { is_window_minimized(window) };
+
+    unsafe {
+        core_foundation::base::CFRelease(window as core_foundation::base::CFTypeRef);
+    }
+
+    // find which display the window is on
+    let displays = crate::display::get_displays()?;
+    let display_index = find_display_for_point(x + w / 2.0, y + h / 2.0, &displays);
+    let display_name = displays
+        .iter()
+        .find(|d| d.index == display_index)
+        .map(|d| d.name.clone());
+
+    Ok(WindowStateInfo {
+        title,
+        display_index: Some(display_index),
+        display_name,
+        is_fullscreen,
+        is_minimized,
+    })
+}
+
+/// Get extended window state for the focused window (for condition evaluation)
+#[allow(dead_code)]
+pub fn get_focused_window_state() -> Result<(String, WindowStateInfo)> {
+    use objc2_app_kit::NSWorkspace;
+
+    if !accessibility::is_trusted() {
+        return Err(anyhow!(
+            "Accessibility permissions required. Run 'cwm check-permissions' for help."
+        ));
+    }
+
+    let (window, _pid) = unsafe { get_focused_window()? };
+
+    // get app name
+    let workspace = NSWorkspace::sharedWorkspace();
+    let frontmost_app = workspace.frontmostApplication();
+    let app_name = frontmost_app
+        .as_ref()
+        .and_then(|app| app.localizedName())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    let (x, y) = unsafe { get_window_position(window)? };
+    let (w, h) = unsafe { get_window_size(window)? };
+    let title = unsafe { get_window_title(window) };
+    let is_fullscreen = unsafe { is_window_fullscreen(window) };
+    let is_minimized = unsafe { is_window_minimized(window) };
+
+    unsafe {
+        core_foundation::base::CFRelease(window as core_foundation::base::CFTypeRef);
+    }
+
+    // find which display the window is on
+    let displays = crate::display::get_displays()?;
+    let display_index = find_display_for_point(x + w / 2.0, y + h / 2.0, &displays);
+    let display_name = displays
+        .iter()
+        .find(|d| d.index == display_index)
+        .map(|d| d.name.clone());
+
+    let state = WindowStateInfo {
+        title,
+        display_index: Some(display_index),
+        display_name,
+        is_fullscreen,
+        is_minimized,
+    };
+
+    Ok((app_name, state))
 }
 
 #[cfg(test)]

@@ -1,0 +1,60 @@
+// night mode configuration
+// different behavior during evening and night hours
+{
+  "$schema": "../config.schema.json",
+  "conditions": {
+    "daytime": {
+      "time": "7:00-19:00"
+    },
+    "evening": {
+      "time": "19:00-22:00"
+    },
+    "night": {
+      "any": [
+        { "time": "22:00-23:59" },
+        { "time": "00:00-07:00" }
+      ]
+    },
+    "weekend": {
+      "time.day": "sat,sun"
+    },
+    "late_night_weekend": {
+      "all": [
+        { "$ref": "night" },
+        { "$ref": "weekend" }
+      ]
+    }
+  },
+  "shortcuts": [
+    {
+      "keys": "ctrl+alt+m",
+      "action": "maximize",
+      "when": { "$ref": "daytime" }
+    },
+    {
+      "keys": "ctrl+alt+m",
+      "action": "resize:80",
+      "when": { "$ref": "evening" }
+    },
+    {
+      "keys": "ctrl+alt+m",
+      "action": "resize:60",
+      "when": { "$ref": "night" }
+    }
+  ],
+  "app_rules": [
+    {
+      "app": "Slack",
+      "action": "maximize",
+      "when": { "$ref": "daytime" }
+    },
+    {
+      "app": "Slack",
+      "action": "resize:50",
+      "when": { "$ref": "night" }
+    }
+  ],
+  "settings": {
+    "fuzzy_threshold": 2
+  }
+}

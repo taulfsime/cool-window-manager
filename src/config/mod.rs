@@ -8,11 +8,13 @@ pub use schema::{
 };
 
 use anyhow::{anyhow, Context, Result};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use crate::conditions::{parse_condition, Condition};
 use crate::daemon::hotkeys::Hotkey;
 
 const CONFIG_ENV_VAR: &str = "CWM_CONFIG";
@@ -197,6 +199,9 @@ pub fn verify(path: &Path) -> Result<Vec<String>> {
         }
     };
 
+    // parse condition definitions first (needed for $ref resolution)
+    let condition_defs = parse_condition_definitions(&config.conditions, &mut errors);
+
     // validate shortcuts
     for (i, shortcut) in config.shortcuts.iter().enumerate() {
         let prefix = format!("shortcuts[{}]", i);
@@ -218,6 +223,13 @@ pub fn verify(path: &Path) -> Result<Vec<String>> {
         if shortcut.action == "focus" && shortcut.app.is_none() {
             errors.push(format!("{}: action 'focus' requires 'app' field", prefix));
         }
+
+        // validate when condition
+        if let Some(when) = &shortcut.when {
+            if let Err(e) = parse_condition(when, &condition_defs) {
+                errors.push(format!("{}.when: {}", prefix, e));
+            }
+        }
     }
 
     // validate app_rules
@@ -227,6 +239,13 @@ pub fn verify(path: &Path) -> Result<Vec<String>> {
         // validate action
         if let Err(e) = validate_action(&rule.action) {
             errors.push(format!("{}: {}", prefix, e));
+        }
+
+        // validate when condition
+        if let Some(when) = &rule.when {
+            if let Err(e) = parse_condition(when, &condition_defs) {
+                errors.push(format!("{}.when: {}", prefix, e));
+            }
         }
     }
 
@@ -328,6 +347,34 @@ fn is_valid_alias_name(s: &str) -> bool {
     s.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
+/// parse condition definitions from config, collecting errors
+fn parse_condition_definitions(
+    conditions: &HashMap<String, serde_json::Value>,
+    errors: &mut Vec<String>,
+) -> HashMap<String, Condition> {
+    let mut defs = HashMap::new();
+
+    // first pass: create placeholder refs for all definitions (allows forward references)
+    for name in conditions.keys() {
+        defs.insert(name.clone(), Condition::Ref(name.clone()));
+    }
+
+    // second pass: parse all definitions
+    let mut parsed = HashMap::new();
+    for (name, value) in conditions {
+        match parse_condition(value, &defs) {
+            Ok(condition) => {
+                parsed.insert(name.clone(), condition);
+            }
+            Err(e) => {
+                errors.push(format!("conditions.{}: {}", name, e));
+            }
+        }
+    }
+
+    parsed
+}
+
 pub fn set_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
     let parts: Vec<&str> = key.split('.').collect();
 
@@ -422,18 +469,21 @@ pub fn set_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
 pub fn default_with_examples() -> Config {
     Config {
         schema: Some(schema::DEFAULT_SCHEMA_REF.to_string()),
+        conditions: schema::ConditionDefinitions::new(),
         shortcuts: vec![
             Shortcut {
                 keys: "ctrl+alt+s".to_string(),
                 action: "focus".to_string(),
                 app: Some("Slack".to_string()),
                 launch: Some(true),
+                when: None,
             },
             Shortcut {
                 keys: "ctrl+alt+t".to_string(),
                 action: "focus".to_string(),
                 app: Some("Terminal".to_string()),
                 launch: None,
+                when: None,
             },
             // match by window title instead of app name
             Shortcut {
@@ -441,30 +491,35 @@ pub fn default_with_examples() -> Config {
                 action: "focus".to_string(),
                 app: Some("GitHub".to_string()),
                 launch: None,
+                when: None,
             },
             Shortcut {
                 keys: "ctrl+alt+m".to_string(),
                 action: "maximize".to_string(),
                 app: None,
                 launch: None,
+                when: None,
             },
             Shortcut {
                 keys: "ctrl+alt+right".to_string(),
                 action: "move:next".to_string(),
                 app: None,
                 launch: None,
+                when: None,
             },
             Shortcut {
                 keys: "ctrl+alt+8".to_string(),
                 action: "resize:80".to_string(),
                 app: None,
                 launch: None,
+                when: None,
             },
         ],
         app_rules: vec![AppRule {
             app: "Terminal".to_string(),
             action: "maximize".to_string(),
             delay_ms: Some(500),
+            when: None,
         }],
         settings: Settings::default(),
         spotlight: vec![
@@ -1456,6 +1511,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Terminal".to_string()),
             launch: Some(true),
+            when: None,
         });
 
         // save it

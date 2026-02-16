@@ -6,6 +6,9 @@ pub const DEFAULT_SCHEMA_REF: &str = "./config.schema.json";
 
 pub type DisplayAliases = HashMap<String, Vec<String>>;
 
+/// global condition definitions that can be referenced by $ref
+pub type ConditionDefinitions = HashMap<String, serde_json::Value>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(
@@ -14,6 +17,9 @@ pub struct Config {
         skip_serializing_if = "Option::is_none"
     )]
     pub schema: Option<String>,
+    /// global condition definitions that can be referenced by $ref in shortcuts and app_rules
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub conditions: ConditionDefinitions,
     #[serde(default)]
     pub shortcuts: Vec<Shortcut>,
     #[serde(default)]
@@ -34,6 +40,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             schema: Some(DEFAULT_SCHEMA_REF.to_string()),
+            conditions: ConditionDefinitions::new(),
             shortcuts: Vec::new(),
             app_rules: Vec::new(),
             settings: Settings::default(),
@@ -47,10 +54,13 @@ impl Default for Config {
 pub struct Shortcut {
     pub keys: String,
     pub action: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch: Option<bool>,
+    /// condition that must be true for this shortcut to execute
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<serde_json::Value>,
 }
 
 /// rule to apply an action when an app launches
@@ -59,8 +69,11 @@ pub struct AppRule {
     pub app: String,
     pub action: String,
     /// delay in milliseconds before executing the action (overrides global)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delay_ms: Option<u64>,
+    /// condition that must be true for this rule to execute
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<serde_json::Value>,
 }
 
 /// spotlight shortcut that appears in macOS Spotlight search
@@ -345,11 +358,13 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Slack".to_string()),
             launch: Some(true),
+            when: None,
         });
         config.app_rules.push(AppRule {
             app: "Terminal".to_string(),
             action: "maximize".to_string(),
             delay_ms: Some(1000),
+            when: None,
         });
         config.settings.launch = true;
         config.settings.retry.count = 5;

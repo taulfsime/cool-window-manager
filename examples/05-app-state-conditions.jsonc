@@ -1,0 +1,60 @@
+// app state conditions
+// conditions based on running apps, focus, and window state
+{
+  "$schema": "../config.schema.json",
+  "conditions": {
+    "browser_running": {
+      "any": [
+        { "app.running": "Safari" },
+        { "app.running": "Chrome" },
+        { "app.running": "Firefox" }
+      ]
+    },
+    "slack_focused": {
+      "app.focused": "Slack"
+    },
+    "not_fullscreen": {
+      "not": { "app.fullscreen": true }
+    },
+    "not_minimized": {
+      "app.minimized": false
+    }
+  },
+  "shortcuts": [
+    {
+      "keys": "ctrl+alt+b",
+      "action": "focus",
+      "app": "Safari",
+      "when": { "$ref": "browser_running" }
+    },
+    {
+      "keys": "ctrl+alt+m",
+      "action": "maximize",
+      "when": { "$ref": "not_fullscreen" }
+    },
+    {
+      "keys": "ctrl+alt+r",
+      "action": "resize:80",
+      "when": {
+        "all": [
+          { "$ref": "not_fullscreen" },
+          { "$ref": "not_minimized" }
+        ]
+      }
+    },
+    {
+      "keys": "ctrl+alt+n",
+      "action": "move:next",
+      "when": {
+        "all": [
+          { "display.count": { ">=": 2 } },
+          { "$ref": "not_fullscreen" }
+        ]
+      }
+    }
+  ],
+  "app_rules": [],
+  "settings": {
+    "fuzzy_threshold": 2
+  }
+}

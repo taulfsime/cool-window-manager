@@ -11,8 +11,12 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::config::{self, should_launch, Config};
+use crate::conditions::{evaluate, parse_condition, EvalContext, WindowState};
+use crate::config::{self, should_launch, Config, Shortcut};
+use crate::display;
 use crate::window::{manager, matching};
+
+use std::collections::HashMap;
 
 use events::Event;
 
@@ -135,6 +139,16 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
             ));
             // delay to let the window appear
             std::thread::sleep(std::time::Duration::from_millis(delay));
+
+            // check condition before executing
+            if !check_app_rule_condition(&rule, &config_for_watcher) {
+                log(&format!(
+                    "Condition not met for app rule '{}', skipping",
+                    rule.app_name
+                ));
+                return;
+            }
+
             if let Err(e) =
                 execute_action_for_app(&rule.action, &rule.app_name, &config_for_watcher)
             {
@@ -175,6 +189,18 @@ pub fn start_foreground(log_path: Option<String>) -> Result<()> {
     // even with no shortcuts, we need the run loop for app watcher notifications
     hotkeys::start_hotkey_listener(shortcuts, move |action, hotkey| {
         log(&format!("Hotkey triggered: {} -> {}", hotkey, action));
+
+        // check condition before executing
+        if let Some(shortcut) = find_shortcut_with_condition(&config_for_callback, action) {
+            if !check_shortcut_condition(shortcut, &config_for_callback) {
+                log(&format!(
+                    "Condition not met for shortcut '{}', skipping",
+                    shortcut.keys
+                ));
+                return;
+            }
+        }
+
         if let Err(e) = execute_action(action, &config_for_callback) {
             log_err(&format!("Failed to execute '{}': {}", action, e));
         }
@@ -720,6 +746,170 @@ fn find_shortcut_launch(config: &Config, action: &str) -> Option<bool> {
     None
 }
 
+/// parse config condition definitions (JSON) into parsed conditions
+fn parse_config_conditions(config: &Config) -> HashMap<String, crate::conditions::Condition> {
+    use crate::conditions::Condition;
+
+    let mut parsed = HashMap::new();
+
+    // first pass: parse all definitions without references
+    let empty_defs: HashMap<String, Condition> = HashMap::new();
+    for (name, json_value) in &config.conditions {
+        if let Ok(cond) = parse_condition(json_value, &empty_defs) {
+            parsed.insert(name.clone(), cond);
+        }
+    }
+
+    // second pass: re-parse with all definitions available for $ref resolution
+    let mut final_parsed = HashMap::new();
+    for (name, json_value) in &config.conditions {
+        if let Ok(cond) = parse_condition(json_value, &parsed) {
+            final_parsed.insert(name.clone(), cond);
+        }
+    }
+
+    final_parsed
+}
+
+/// check if a shortcut's condition is satisfied
+/// returns true if no condition or condition evaluates to true
+fn check_shortcut_condition(shortcut: &Shortcut, config: &Config) -> bool {
+    let when = match &shortcut.when {
+        Some(w) => w,
+        None => return true, // no condition = always execute
+    };
+
+    // parse global condition definitions
+    let parsed_defs = parse_config_conditions(config);
+
+    // parse the condition with global definitions
+    let condition = match parse_condition(when, &parsed_defs) {
+        Ok(c) => c,
+        Err(e) => {
+            log_err(&format!(
+                "Failed to parse condition for shortcut '{}': {}",
+                shortcut.keys, e
+            ));
+            return false; // invalid condition = don't execute
+        }
+    };
+
+    // gather context for evaluation
+    let displays = display::get_displays().unwrap_or_default();
+    let running_apps = matching::get_running_apps().unwrap_or_default();
+
+    // get focused app from the frontmost window
+    let focused_app_info = manager::get_focused_window_info().ok();
+    let focused_app_name_owned = focused_app_info
+        .as_ref()
+        .map(|(app, _, _)| app.name.clone());
+    let focused_app_name = focused_app_name_owned.as_deref();
+
+    // get target app name from shortcut
+    let target_app_name = shortcut.app.as_deref();
+
+    // get target window state if we have a target app
+    let target_window_state = target_app_name.and_then(|app_name| {
+        let apps = matching::get_running_apps().ok()?;
+        let match_result = matching::find_app(app_name, &apps, config.settings.fuzzy_threshold)?;
+        manager::get_window_state_for_app(&match_result.app).ok()
+    });
+
+    let window_state = target_window_state.as_ref().map(|ws| WindowState {
+        title: ws.title.clone(),
+        display_index: ws.display_index,
+        display_name: ws.display_name.clone(),
+        is_fullscreen: ws.is_fullscreen,
+        is_minimized: ws.is_minimized,
+    });
+
+    let ctx = EvalContext::new(&displays, &config.display_aliases, &running_apps)
+        .with_focused_app(focused_app_name)
+        .with_target_app(target_app_name)
+        .with_target_window(window_state.as_ref());
+
+    evaluate(&condition, &ctx)
+}
+
+/// find shortcut by action string and check its condition
+fn find_shortcut_with_condition<'a>(config: &'a Config, action: &str) -> Option<&'a Shortcut> {
+    for shortcut in &config.shortcuts {
+        let shortcut_action = if let Some(ref app) = shortcut.app {
+            format!("{}:{}", shortcut.action, app)
+        } else {
+            shortcut.action.clone()
+        };
+
+        if shortcut_action == action {
+            return Some(shortcut);
+        }
+    }
+    None
+}
+
+/// check if an app rule's condition is satisfied
+/// returns true if no condition or condition evaluates to true
+fn check_app_rule_condition(rule: &app_watcher::MatchedRule, config: &Config) -> bool {
+    let when = match &rule.when {
+        Some(w) => w,
+        None => return true, // no condition = always execute
+    };
+
+    // parse global condition definitions
+    let parsed_defs = parse_config_conditions(config);
+
+    // parse the condition with global definitions
+    let condition = match parse_condition(when, &parsed_defs) {
+        Ok(c) => c,
+        Err(e) => {
+            log_err(&format!(
+                "Failed to parse condition for app rule '{}': {}",
+                rule.app_name, e
+            ));
+            return false; // invalid condition = don't execute
+        }
+    };
+
+    // gather context for evaluation
+    let displays = display::get_displays().unwrap_or_default();
+    let running_apps = matching::get_running_apps().unwrap_or_default();
+
+    // get focused app from the frontmost window
+    let focused_app_info = manager::get_focused_window_info().ok();
+    let focused_app_name_owned = focused_app_info
+        .as_ref()
+        .map(|(app, _, _)| app.name.clone());
+    let focused_app_name = focused_app_name_owned.as_deref();
+
+    // target app is the launched app
+    let target_app_name = Some(rule.app_name.as_str());
+
+    // get target window state
+    let target_window_state = {
+        let apps = matching::get_running_apps().ok();
+        apps.and_then(|apps| {
+            let match_result =
+                matching::find_app(&rule.app_name, &apps, config.settings.fuzzy_threshold)?;
+            manager::get_window_state_for_app(&match_result.app).ok()
+        })
+    };
+
+    let window_state = target_window_state.as_ref().map(|ws| WindowState {
+        title: ws.title.clone(),
+        display_index: ws.display_index,
+        display_name: ws.display_name.clone(),
+        is_fullscreen: ws.is_fullscreen,
+        is_minimized: ws.is_minimized,
+    });
+
+    let ctx = EvalContext::new(&displays, &config.display_aliases, &running_apps)
+        .with_focused_app(focused_app_name)
+        .with_target_app(target_app_name)
+        .with_target_window(window_state.as_ref());
+
+    evaluate(&condition, &ctx)
+}
+
 fn setup_signal_handlers() -> Result<()> {
     unsafe {
         libc::signal(libc::SIGTERM, handle_signal as *const () as usize);
@@ -992,6 +1182,7 @@ mod tests {
     fn create_test_config(shortcuts: Vec<Shortcut>) -> Config {
         Config {
             shortcuts,
+            conditions: std::collections::HashMap::new(),
             app_rules: vec![],
             spotlight: vec![],
             display_aliases: std::collections::HashMap::new(),
@@ -1018,6 +1209,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: None,
+            when: None,
         }]);
 
         let result = parse_shortcuts(&config).unwrap();
@@ -1037,6 +1229,7 @@ mod tests {
             action: "maximize".to_string(),
             app: None,
             launch: None,
+            when: None,
         }]);
 
         let result = parse_shortcuts(&config).unwrap();
@@ -1054,18 +1247,21 @@ mod tests {
                 action: "focus".to_string(),
                 app: Some("Safari".to_string()),
                 launch: Some(true),
+                when: None,
             },
             Shortcut {
                 keys: "ctrl+alt+m".to_string(),
                 action: "maximize".to_string(),
                 app: None,
                 launch: None,
+                when: None,
             },
             Shortcut {
                 keys: "ctrl+alt+n".to_string(),
                 action: "move_display".to_string(),
                 app: Some("next".to_string()),
                 launch: None,
+                when: None,
             },
         ]);
 
@@ -1081,12 +1277,14 @@ mod tests {
                 action: "focus".to_string(),
                 app: Some("Safari".to_string()),
                 launch: None,
+                when: None,
             },
             Shortcut {
                 keys: "ctrl+alt+m".to_string(), // valid
                 action: "maximize".to_string(),
                 app: None,
                 launch: None,
+                when: None,
             },
         ]);
 
@@ -1107,6 +1305,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: Some(true),
+            when: None,
         }]);
 
         let result = find_shortcut_launch(&config, "focus:Safari");
@@ -1120,6 +1319,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: Some(false),
+            when: None,
         }]);
 
         let result = find_shortcut_launch(&config, "focus:Safari");
@@ -1133,6 +1333,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: None,
+            when: None,
         }]);
 
         let result = find_shortcut_launch(&config, "focus:Safari");
@@ -1146,6 +1347,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: Some(true),
+            when: None,
         }]);
 
         let result = find_shortcut_launch(&config, "focus:Chrome");
@@ -1159,6 +1361,7 @@ mod tests {
             action: "maximize".to_string(),
             app: None,
             launch: None,
+            when: None,
         }]);
 
         let result = find_shortcut_launch(&config, "maximize");
@@ -1173,12 +1376,14 @@ mod tests {
                 action: "focus".to_string(),
                 app: Some("Safari".to_string()),
                 launch: Some(true),
+                when: None,
             },
             Shortcut {
                 keys: "ctrl+alt+c".to_string(),
                 action: "focus".to_string(),
                 app: Some("Chrome".to_string()),
                 launch: Some(false),
+                when: None,
             },
         ]);
 
@@ -1198,6 +1403,7 @@ mod tests {
             action: "move_display".to_string(),
             app: Some("next".to_string()),
             launch: None,
+            when: None,
         }]);
 
         let result = parse_shortcuts(&config).unwrap();
@@ -1212,6 +1418,7 @@ mod tests {
             action: "resize".to_string(),
             app: Some("80".to_string()),
             launch: None,
+            when: None,
         }]);
 
         let result = parse_shortcuts(&config).unwrap();
@@ -1226,6 +1433,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: None,
+            when: None,
         }]);
 
         let result = parse_shortcuts(&config).unwrap();
@@ -1245,6 +1453,7 @@ mod tests {
             action: "maximize".to_string(),
             app: None,
             launch: None,
+            when: None,
         }]);
 
         let result = parse_shortcuts(&config).unwrap();
@@ -1260,12 +1469,14 @@ mod tests {
                 action: "maximize".to_string(),
                 app: None,
                 launch: None,
+                when: None,
             },
             Shortcut {
                 keys: "ctrl+tab".to_string(),
                 action: "focus".to_string(),
                 app: Some("Safari".to_string()),
                 launch: None,
+                when: None,
             },
         ]);
 
@@ -1284,6 +1495,7 @@ mod tests {
             action: "focus".to_string(),
             app: Some("Safari".to_string()),
             launch: Some(true),
+            when: None,
         }]);
 
         // action matching is case-sensitive
@@ -1308,12 +1520,14 @@ mod tests {
                 action: "focus".to_string(),
                 app: Some("Safari".to_string()),
                 launch: Some(true),
+                when: None,
             },
             Shortcut {
                 keys: "ctrl+shift+s".to_string(),
                 action: "focus".to_string(),
                 app: Some("Safari".to_string()),
                 launch: Some(false),
+                when: None,
             },
         ]);
 
@@ -1346,12 +1560,14 @@ mod tests {
                 action: "focus".to_string(),
                 app: Some("Safari".to_string()),
                 launch: None,
+                when: None,
             },
             Shortcut {
                 keys: "ctrl+alt+m".to_string(),
                 action: "maximize".to_string(),
                 app: None,
                 launch: None,
+                when: None,
             },
         ]);
         let request = IpcRequest::parse(r#"{"method": "status"}"#).unwrap();

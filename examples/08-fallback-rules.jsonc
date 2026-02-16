@@ -1,0 +1,75 @@
+// fallback rules pattern
+// first matching rule wins, allowing graceful degradation
+{
+  "$schema": "../config.schema.json",
+  "display_aliases": {
+    "office": ["10AC_D0B3_67890"],
+    "home": ["1E6D_5B11_12345"]
+  },
+  "conditions": {
+    "at_office": { "display.connected": "office" },
+    "at_home": { "display.connected": "home" },
+    "has_external": { "display.connected": "external" },
+    "docked": { "display.count": { ">=": 2 } }
+  },
+  "shortcuts": [],
+  "app_rules": [
+    // slack: try office first, then home, then external, then maximize
+    {
+      "app": "Slack",
+      "action": "move:office",
+      "when": { "$ref": "at_office" }
+    },
+    {
+      "app": "Slack",
+      "action": "move:home",
+      "when": { "$ref": "at_home" }
+    },
+    {
+      "app": "Slack",
+      "action": "move:external",
+      "when": { "$ref": "has_external" }
+    },
+    {
+      "app": "Slack",
+      "action": "maximize"
+      // no condition = fallback
+    },
+
+    // terminal: prefer builtin when docked, otherwise resize
+    {
+      "app": "Terminal",
+      "action": "move:builtin",
+      "when": { "$ref": "docked" }
+    },
+    {
+      "app": "Terminal",
+      "action": "resize:70"
+      // fallback for single display
+    },
+
+    // browser: external when available, otherwise maximize
+    {
+      "app": "Safari",
+      "action": "move:external",
+      "when": { "$ref": "has_external" }
+    },
+    {
+      "app": "Safari",
+      "action": "maximize"
+    },
+    {
+      "app": "Chrome",
+      "action": "move:external",
+      "when": { "$ref": "has_external" }
+    },
+    {
+      "app": "Chrome",
+      "action": "maximize"
+    }
+  ],
+  "settings": {
+    "fuzzy_threshold": 2,
+    "delay_ms": 500
+  }
+}

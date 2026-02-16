@@ -1,0 +1,66 @@
+// home vs office location detection
+// use display aliases to detect which location you're at
+{
+  "$schema": "../config.schema.json",
+  "display_aliases": {
+    // find your display IDs with: cwm list displays --detailed
+    "office_main": ["10AC_D0B3_67890"],
+    "office_secondary": ["10AC_D0B3_12345"],
+    "home_monitor": ["1E6D_5B11_ABCDE"]
+  },
+  "conditions": {
+    "at_office": {
+      "any": [
+        { "display.connected": "office_main" },
+        { "display.connected": "office_secondary" }
+      ]
+    },
+    "at_home": {
+      "display.connected": "home_monitor"
+    },
+    "mobile": {
+      "all": [
+        { "display.count": { "==": 1 } },
+        { "not": { "display.connected": "home_monitor" } }
+      ]
+    }
+  },
+  "shortcuts": [
+    {
+      "keys": "ctrl+alt+1",
+      "action": "move:office_main",
+      "when": { "$ref": "at_office" }
+    },
+    {
+      "keys": "ctrl+alt+2",
+      "action": "move:office_secondary",
+      "when": { "$ref": "at_office" }
+    },
+    {
+      "keys": "ctrl+alt+h",
+      "action": "move:home_monitor",
+      "when": { "$ref": "at_home" }
+    }
+  ],
+  "app_rules": [
+    {
+      "app": "Slack",
+      "action": "move:office_secondary",
+      "when": { "$ref": "at_office" }
+    },
+    {
+      "app": "Slack",
+      "action": "move:home_monitor",
+      "when": { "$ref": "at_home" }
+    },
+    {
+      "app": "Slack",
+      "action": "resize:60",
+      "when": { "$ref": "mobile" }
+    }
+  ],
+  "settings": {
+    "fuzzy_threshold": 2,
+    "delay_ms": 500
+  }
+}

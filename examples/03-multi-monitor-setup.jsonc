@@ -1,0 +1,64 @@
+// multi-monitor setup
+// conditions based on display count and external monitors
+{
+  "$schema": "../config.schema.json",
+  "conditions": {
+    "docked": {
+      "display.count": { ">=": 2 }
+    },
+    "has_external": {
+      "display.connected": "external"
+    },
+    "single_display": {
+      "display.count": { "==": 1 }
+    }
+  },
+  "shortcuts": [
+    {
+      "keys": "ctrl+alt+e",
+      "action": "move:external",
+      "when": { "$ref": "has_external" }
+    },
+    {
+      "keys": "ctrl+alt+b",
+      "action": "move:builtin",
+      "when": { "$ref": "docked" }
+    },
+    {
+      "keys": "ctrl+alt+n",
+      "action": "move:next",
+      "when": { "$ref": "docked" }
+    },
+    {
+      "keys": "ctrl+alt+m",
+      "action": "maximize"
+    }
+  ],
+  "app_rules": [
+    {
+      "app": "Slack",
+      "action": "move:external",
+      "when": { "$ref": "has_external" }
+    },
+    {
+      "app": "Slack",
+      "action": "maximize",
+      "when": { "$ref": "single_display" }
+    },
+    {
+      "app": "Terminal",
+      "action": "move:builtin",
+      "when": { "$ref": "docked" }
+    },
+    {
+      "app": "Terminal",
+      "action": "resize:80",
+      "when": { "$ref": "single_display" }
+    }
+  ],
+  "settings": {
+    "fuzzy_threshold": 2,
+    "launch": false,
+    "delay_ms": 500
+  }
+}

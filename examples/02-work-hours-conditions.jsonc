@@ -1,0 +1,49 @@
+// work hours conditions
+// shortcuts that only work during business hours
+{
+  "$schema": "../config.schema.json",
+  "conditions": {
+    "work_hours": {
+      "time": "9:00-17:00",
+      "time.day": "mon-fri"
+    },
+    "lunch_break": {
+      "time": "12:00-13:00",
+      "time.day": "mon-fri"
+    }
+  },
+  "shortcuts": [
+    {
+      "keys": "ctrl+alt+s",
+      "action": "focus",
+      "app": "Slack",
+      "launch": true,
+      "when": { "$ref": "work_hours" }
+    },
+    {
+      "keys": "ctrl+alt+z",
+      "action": "focus",
+      "app": "Zoom",
+      "launch": true,
+      "when": { "$ref": "work_hours" }
+    },
+    {
+      "keys": "ctrl+alt+o",
+      "action": "focus",
+      "app": "Outlook",
+      "launch": true,
+      "when": { "$ref": "work_hours" }
+    }
+  ],
+  "app_rules": [
+    {
+      "app": "Slack",
+      "action": "maximize",
+      "when": { "$ref": "work_hours" }
+    }
+  ],
+  "settings": {
+    "fuzzy_threshold": 2,
+    "launch": false
+  }
+}

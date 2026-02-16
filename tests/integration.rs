@@ -11,6 +11,9 @@ mod test_channels;
 #[path = "integration_tests/test_completions.rs"]
 mod test_completions;
 
+#[path = "integration_tests/test_conditions.rs"]
+mod test_conditions;
+
 #[path = "integration_tests/test_cli_config.rs"]
 mod test_cli_config;
 

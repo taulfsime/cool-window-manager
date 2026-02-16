@@ -3,6 +3,7 @@
 
 pub mod actions;
 pub mod cli;
+pub mod conditions;
 pub mod config;
 pub mod daemon;
 pub mod display;
