@@ -238,15 +238,24 @@ install_cwm() {
     
     # verify checksum
     echo "Verifying checksum..."
-    cd "$TEMP_DIR"
+    EXPECTED_HASH=$(cut -d' ' -f1 "$TEMP_DIR/checksum.txt")
+    
     if command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 -c checksum.txt
+        ACTUAL_HASH=$(shasum -a 256 "$TEMP_DIR/cwm.tar.gz" | cut -d' ' -f1)
     elif command -v sha256sum >/dev/null 2>&1; then
-        sha256sum -c checksum.txt
+        ACTUAL_HASH=$(sha256sum "$TEMP_DIR/cwm.tar.gz" | cut -d' ' -f1)
     else
         warn "No checksum tool found, skipping verification"
+        ACTUAL_HASH="$EXPECTED_HASH"
     fi
-    cd - >/dev/null
+    
+    if [ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]; then
+        error "Checksum verification failed!"
+        error "Expected: $EXPECTED_HASH"
+        error "Actual:   $ACTUAL_HASH"
+        exit 1
+    fi
+    info "✓ Checksum verified"
     
     # extract
     echo "Extracting..."
@@ -261,6 +270,29 @@ install_cwm() {
     fi
     
     chmod +x "$INSTALL_DIR/cwm"
+    
+    # install man page
+    MAN_DIR="/usr/local/share/man/man1"
+    if [ -f "$TEMP_DIR/cwm.1" ]; then
+        echo "Installing man page..."
+        if [ ! -d "$MAN_DIR" ]; then
+            if sudo mkdir -p "$MAN_DIR" 2>/dev/null; then
+                :
+            else
+                warn "Could not create $MAN_DIR, skipping man page"
+            fi
+        fi
+        if [ -d "$MAN_DIR" ]; then
+            if [ -w "$MAN_DIR" ]; then
+                cp "$TEMP_DIR/cwm.1" "$MAN_DIR/cwm.1"
+                info "✓ Man page installed (run 'man cwm' to view)"
+            elif sudo cp "$TEMP_DIR/cwm.1" "$MAN_DIR/cwm.1" 2>/dev/null; then
+                info "✓ Man page installed (run 'man cwm' to view)"
+            else
+                warn "Could not install man page to $MAN_DIR"
+            fi
+        fi
+    fi
     
     # save version info
     mkdir -p "$HOME/.cwm"
