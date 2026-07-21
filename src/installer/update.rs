@@ -253,12 +253,21 @@ pub fn perform_update(release: ReleaseInfo, _force: bool) -> Result<()> {
         return Err(anyhow!("Update failed: {}", e));
     }
 
-    // replace current binary
+    // replace current binary atomically
     println!("Installing update...");
 
-    // remove the old binary first before renaming
-    fs::remove_file(&current_exe)?;
-    fs::rename(&new_binary, &current_exe)?;
+    if let Err(e) = fs::rename(&new_binary, &current_exe) {
+        // rename failed (e.g., cross-device), fall back to copy with restore guard
+        if let Err(copy_err) = fs::copy(&new_binary, &current_exe) {
+            // restore from backup
+            let _ = fs::rename(&backup_path, &current_exe);
+            return Err(anyhow!(
+                "Failed to install update: rename: {}, copy: {}",
+                e,
+                copy_err
+            ));
+        }
+    }
 
     // set permissions
     #[cfg(unix)]

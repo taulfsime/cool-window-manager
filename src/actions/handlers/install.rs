@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::actions::context::ExecutionContext;
 use crate::actions::error::ActionError;
 use crate::actions::result::ActionResult;
+use crate::config;
 use crate::version::Version;
 
 /// install - requires CLI (modifies system files, may require sudo, interactive path selection)
@@ -298,7 +299,6 @@ pub fn execute_update(
     prerelease: bool,
     ctx: &ExecutionContext,
 ) -> Result<ActionResult, ActionError> {
-    use crate::config;
     use crate::installer::{check_for_updates, perform_update};
 
     if !ctx.is_cli {
@@ -356,7 +356,7 @@ pub fn execute_update(
             // update last check time in config
             let mut cfg = ctx.config.clone();
             cfg.settings.update.last_check = Some(chrono::Utc::now());
-            if let Err(e) = config::save(&cfg) {
+            if let Err(e) = config::save_with_override(&cfg, ctx.config_path_override()) {
                 eprintln!("warning: failed to save config: {}", e);
             }
 
@@ -373,7 +373,7 @@ pub fn execute_update(
             // update last check time
             let mut cfg = ctx.config.clone();
             cfg.settings.update.last_check = Some(chrono::Utc::now());
-            if let Err(e) = config::save(&cfg) {
+            if let Err(e) = config::save_with_override(&cfg, ctx.config_path_override()) {
                 eprintln!("warning: failed to save config: {}", e);
             }
 

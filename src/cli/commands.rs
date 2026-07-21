@@ -591,6 +591,19 @@ fn resolve_app_names(apps: &[String]) -> Result<Vec<String>> {
     apps.iter().map(|a| resolve_app_name(a)).collect()
 }
 
+/// handle an ActionError with consistent behavior across JSON and text modes
+fn handle_action_error(err: crate::actions::ActionError, output_mode: &OutputMode) -> ! {
+    if output_mode.is_json() {
+        output::print_json_error_with_suggestions(err.code, &err.message, err.suggestions);
+    } else {
+        eprintln!("error: {}", err.message);
+        if !err.suggestions.is_empty() {
+            eprintln!("did you mean: {}?", err.suggestions.join(", "));
+        }
+    }
+    std::process::exit(err.code);
+}
+
 pub fn execute(cli: Cli) -> Result<()> {
     let config_path = cli.config.as_deref();
     let output_mode = OutputMode::from_flags(cli.json, cli.no_json, cli.quiet, false, false);
@@ -619,18 +632,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     // silent on success in text/quiet mode (Unix convention)
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error_with_suggestions(
-                            err.code,
-                            &err.message,
-                            err.suggestions.clone(),
-                        );
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -656,14 +658,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -707,14 +702,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -747,14 +735,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -781,14 +762,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -806,14 +780,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -939,8 +906,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(result) => {
                     if output_mode.is_json() {
                         output::print_json(&result);
-                    } else {
-                        // text output based on action
+                    } else if !output_mode.is_quiet() {
                         let value = serde_json::to_value(&result).unwrap_or_default();
                         if let Some(res) = value.get("result") {
                             if let Some(status) = res.get("status").and_then(|v| v.as_str()) {
@@ -991,14 +957,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -1011,7 +970,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(result) => {
                     if output_mode.is_json() {
                         output::print_json(&result);
-                    } else {
+                    } else if !output_mode.is_quiet() {
                         let value = serde_json::to_value(&result).unwrap_or_default();
                         match result.action {
                             "config_show" | "config_default" => {
@@ -1078,14 +1037,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -1170,7 +1122,8 @@ pub fn execute(cli: Cli) -> Result<()> {
                 OutputMode::Json => {
                     output::print_json(&result);
                 }
-                OutputMode::Text | OutputMode::Quiet => match resource {
+                OutputMode::Quiet => {}
+                OutputMode::Text => match resource {
                     ListResource::Apps => {
                         println!("Running applications:");
                         for item in &items {
@@ -1319,7 +1272,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                         println!("{}", output::format_template(&fmt_str, &value));
                     } else if output_mode.is_json() {
                         output::print_json(&result);
-                    } else {
+                    } else if !output_mode.is_quiet() {
                         // text output - extract data from result
                         let value = serde_json::to_value(&result).unwrap_or_default();
                         if let Some(app) = value.get("app") {
@@ -1352,14 +1305,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -1372,8 +1318,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(result) => {
                     if output_mode.is_json() {
                         output::print_json(&result);
-                    } else {
-                        // text output - extract from result
+                    } else if !output_mode.is_quiet() {
                         let value = serde_json::to_value(&result).unwrap_or_default();
                         if let Some(res) = value.get("result") {
                             let granted = res
@@ -1391,14 +1336,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -1411,8 +1349,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(result) => {
                     if output_mode.is_json() {
                         output::print_json(&result);
-                    } else {
-                        // text output
+                    } else if !output_mode.is_quiet() {
                         let value = serde_json::to_value(&result).unwrap_or_default();
                         if let Some(res) = value.get("result") {
                             let version_str = res
@@ -1437,14 +1374,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -1475,14 +1405,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     // text output is handled by the handler (prints during install)
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -1499,14 +1422,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     // text output is handled by the handler
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -1527,8 +1443,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(result) => {
                     if output_mode.is_json() {
                         output::print_json(&result);
-                    } else {
-                        // text output based on result
+                    } else if !output_mode.is_quiet() {
                         let value = serde_json::to_value(&result).unwrap_or_default();
                         if let Some(res) = value.get("result") {
                             let status = res.get("status").and_then(|v| v.as_str()).unwrap_or("");
@@ -1564,14 +1479,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -1584,7 +1492,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(result) => {
                     if output_mode.is_json() {
                         output::print_json(&result);
-                    } else {
+                    } else if !output_mode.is_quiet() {
                         let value = serde_json::to_value(&result).unwrap_or_default();
                         match result.action {
                             "spotlight_install" => {
@@ -1722,14 +1630,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -1759,7 +1660,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(result) => {
                     if output_mode.is_json() {
                         output::print_json(&result);
-                    } else {
+                    } else if !output_mode.is_quiet() {
                         let value = serde_json::to_value(&result).unwrap_or_default();
                         if let Some(res) = value.get("result") {
                             if let Some(app) = res
@@ -1793,14 +1694,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -1813,7 +1707,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(result) => {
                     if output_mode.is_json() {
                         output::print_json(&result);
-                    } else {
+                    } else if !output_mode.is_quiet() {
                         let value = serde_json::to_value(&result).unwrap_or_default();
                         if let Some(res) = value.get("result") {
                             if let Some(app) = res
@@ -1847,14 +1741,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
 
@@ -1867,7 +1754,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 Ok(result) => {
                     if output_mode.is_json() {
                         output::print_json(&result);
-                    } else {
+                    } else if !output_mode.is_quiet() {
                         let value = serde_json::to_value(&result).unwrap_or_default();
                         match result.action {
                             "history_list" => {
@@ -1894,14 +1781,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                     }
                     Ok(())
                 }
-                Err(err) => {
-                    if output_mode.is_json() {
-                        output::print_json_error(err.code, &err.message);
-                        std::process::exit(err.code);
-                    } else {
-                        Err(anyhow!("{}", err.message))
-                    }
-                }
+                Err(err) => handle_action_error(err, &output_mode),
             }
         }
     }

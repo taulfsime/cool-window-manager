@@ -90,10 +90,18 @@ pub fn generate_app_bundle(shortcut: &SpotlightShortcut, apps_dir: &Path) -> Res
     Ok(app_path)
 }
 
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 /// generates the Info.plist content for an app bundle with enhanced keys
 fn generate_info_plist(shortcut: &SpotlightShortcut) -> String {
-    let bundle_name = shortcut.display_name();
-    let bundle_id = format!("{}.{}", BUNDLE_ID_PREFIX, shortcut.identifier());
+    let bundle_name = escape_xml(&shortcut.display_name());
+    let bundle_id = escape_xml(&format!("{}.{}", BUNDLE_ID_PREFIX, shortcut.identifier()));
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -610,8 +618,8 @@ mod tests {
 
         let plist = generate_info_plist(&shortcut);
 
-        // should contain the name (XML escaping handled by format!)
-        assert!(plist.contains("cwm: Focus \"Safari\" & Chrome"));
+        // special characters must be XML-escaped in the plist
+        assert!(plist.contains("cwm: Focus &quot;Safari&quot; &amp; Chrome"));
         assert!(plist.contains("CFBundleExecutable"));
         assert!(plist.contains("<string>run</string>"));
     }

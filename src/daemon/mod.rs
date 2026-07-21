@@ -1004,10 +1004,12 @@ fn setup_signal_handlers() -> Result<()> {
 }
 
 extern "C" fn handle_signal(_sig: libc::c_int) {
+    // only set atomic flags and call CFRunLoopStop (signal-safe)
+    // non-signal-safe cleanup (app_watcher::stop_watching) happens after
+    // the hotkey listener returns in start_foreground
     DAEMON_SHOULD_STOP.store(true, Ordering::SeqCst);
-    app_watcher::stop_watching();
+    SOCKET_SHOULD_STOP.store(true, Ordering::SeqCst);
     hotkeys::stop_hotkey_listener();
-    stop_socket_listener();
 }
 
 // socket listener state

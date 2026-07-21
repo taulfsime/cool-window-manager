@@ -1160,6 +1160,31 @@ extern "C" {
     ) -> bool;
 }
 
+/// get usable bounds for the display a window is currently on,
+/// falling back to main display if detection fails
+unsafe fn get_window_display_bounds(
+    window: AXUIElementRef,
+    verbose: bool,
+) -> Result<(f64, f64, f64, f64)> {
+    if let Ok((wx, wy)) = get_window_position(window) {
+        if let Ok(displays) = crate::display::get_displays() {
+            let idx = find_display_for_point(wx, wy, &displays);
+            if let Some(display) = displays.iter().find(|d| d.index == idx) {
+                if let Ok(bounds) = get_usable_bounds_for_display(display) {
+                    if verbose {
+                        println!("Window on display {} ({})", display.index, display.name);
+                    }
+                    return Ok(bounds);
+                }
+            }
+        }
+    }
+    if verbose {
+        println!("Could not determine window display, using main display");
+    }
+    Ok(get_usable_display_bounds())
+}
+
 /// Find which display a point is on
 fn find_display_for_point(x: f64, y: f64, displays: &[crate::display::DisplayInfo]) -> usize {
     for display in displays {
@@ -1423,14 +1448,6 @@ pub fn resize_app(
         ));
     }
 
-    // 100% is just maximize (but we need to return size)
-    if matches!(target, ResizeTarget::Percent(100)) {
-        maximize_app(app, verbose)?;
-        // get the maximized size
-        let (_, _, dw, dh) = get_usable_display_bounds();
-        return Ok((dw as u32, dh as u32));
-    }
-
     let (window, pid) = unsafe {
         if let Some(app_info) = app {
             let w = get_frontmost_window(app_info.pid)?;
@@ -1440,12 +1457,25 @@ pub fn resize_app(
         }
     };
 
+    // get bounds for the display the window is currently on
+    let (dx, dy, dw, dh) = unsafe { get_window_display_bounds(window, verbose)? };
+
+    // 100% is just maximize (but we need to return size)
+    if matches!(target, ResizeTarget::Percent(100)) {
+        unsafe {
+            set_window_position(window, dx, dy)?;
+            set_window_size(window, dw, dh)?;
+            core_foundation::base::CFRelease(window as core_foundation::base::CFTypeRef);
+        }
+        if verbose {
+            println!("Done.");
+        }
+        return Ok((dw as u32, dh as u32));
+    }
+
     if verbose {
         println!("Resizing window for PID {} to {:?}", pid, target);
     }
-
-    // get usable display bounds (excluding menu bar and dock)
-    let (dx, dy, dw, dh) = get_usable_display_bounds();
 
     if verbose {
         println!("Usable display bounds: {}x{} at ({}, {})", dw, dh, dx, dy);

@@ -59,7 +59,6 @@ impl OutputMode {
         matches!(self, Self::Json)
     }
 
-    #[allow(dead_code)]
     pub fn is_quiet(&self) -> bool {
         matches!(self, Self::Quiet)
     }
@@ -271,6 +270,7 @@ pub fn print_json<T: Serialize>(data: &T) {
 }
 
 /// print JSON-RPC error to stdout
+#[allow(dead_code)]
 pub fn print_json_error(code: i32, message: &str) {
     let error = JsonRpcError::new(code, message);
     if let Ok(json) = serde_json::to_string(&error) {

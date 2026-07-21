@@ -177,11 +177,11 @@ fn is_modifier_key(keycode: i64) -> bool {
     matches!(keycode, 55..=63)
 }
 
-#[allow(static_mut_refs)]
 mod macos {
     use super::*;
     use std::collections::BTreeSet;
     use std::io::{self, Write};
+    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 
     // modifier flags
     const K_CG_EVENT_FLAG_MASK_CONTROL: u64 = 0x00040000;
@@ -291,7 +291,8 @@ mod macos {
 
     const K_CG_KEYBOARD_EVENT_KEYCODE: u32 = 9;
 
-    // global state for callback
+    // recording state -- only accessed from the event callback (single run loop thread)
+    // and from record_hotkey_impl before/after the run loop runs
     static mut CURRENT_MODIFIERS: Modifiers = Modifiers {
         ctrl: false,
         alt: false,
@@ -300,11 +301,13 @@ mod macos {
     };
     static mut CURRENT_KEYS: Option<BTreeSet<String>> = None;
     static mut LAST_HOTKEY: Option<Hotkey> = None;
-    static mut SHOULD_STOP: bool = false;
-    static mut CANCELLED: bool = false;
-    static mut CURRENT_RUN_LOOP: CFRunLoopRef = std::ptr::null_mut();
     static mut LAST_DISPLAY: String = String::new();
-    static mut EVENT_TAP: CFMachPortRef = std::ptr::null_mut();
+
+    // cross-thread state -- accessed from both the focus-check thread and the main/callback thread
+    static SHOULD_STOP: AtomicBool = AtomicBool::new(false);
+    static CANCELLED: AtomicBool = AtomicBool::new(false);
+    static CURRENT_RUN_LOOP: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
+    static EVENT_TAP: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 
     fn clear_line_and_print(s: &str) {
         print!("\r\x1b[K{}", s);
@@ -312,15 +315,19 @@ mod macos {
     }
 
     fn stop_recording(cancelled: bool) {
-        unsafe {
-            SHOULD_STOP = true;
-            CANCELLED = cancelled;
-            if !CURRENT_RUN_LOOP.is_null() {
-                CFRunLoopStop(CURRENT_RUN_LOOP);
+        SHOULD_STOP.store(true, Ordering::SeqCst);
+        CANCELLED.store(cancelled, Ordering::SeqCst);
+        let run_loop = CURRENT_RUN_LOOP.load(Ordering::SeqCst);
+        if !run_loop.is_null() {
+            unsafe {
+                CFRunLoopStop(run_loop);
             }
         }
     }
 
+    // callback-only state is safe: event_callback runs on a single run loop thread
+    // and init/cleanup only touch these when the run loop is not running
+    #[allow(static_mut_refs)]
     extern "C" fn event_callback(
         _proxy: CGEventTapProxy,
         event_type: u32,
@@ -330,8 +337,9 @@ mod macos {
         unsafe {
             // handle tap disabled by timeout (re-enable it)
             if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
-                if !EVENT_TAP.is_null() {
-                    CGEventTapEnable(EVENT_TAP, true);
+                let tap = EVENT_TAP.load(Ordering::SeqCst);
+                if !tap.is_null() {
+                    CGEventTapEnable(tap, true);
                 }
                 return event;
             }
@@ -417,7 +425,7 @@ mod macos {
     }
 
     // store the initial frontmost app PID when recording starts
-    static mut INITIAL_FRONTMOST_PID: i32 = 0;
+    static INITIAL_FRONTMOST_PID: AtomicI32 = AtomicI32::new(0);
 
     /// Get the current frontmost application PID
     fn get_frontmost_pid() -> i32 {
@@ -434,27 +442,27 @@ mod macos {
 
     /// Check if the same app that was focused when we started is still focused
     fn is_same_app_focused() -> bool {
-        unsafe {
-            let current_frontmost = get_frontmost_pid();
-            if current_frontmost <= 0 || INITIAL_FRONTMOST_PID <= 0 {
-                return true; // assume focused if we can't tell
-            }
-            current_frontmost == INITIAL_FRONTMOST_PID
+        let current_frontmost = get_frontmost_pid();
+        let initial = INITIAL_FRONTMOST_PID.load(Ordering::SeqCst);
+        if current_frontmost <= 0 || initial <= 0 {
+            return true; // assume focused if we can't tell
         }
+        current_frontmost == initial
     }
 
+    #[allow(static_mut_refs)]
     pub fn record_hotkey_impl() -> Result<Hotkey> {
+        // reset cross-thread state
+        SHOULD_STOP.store(false, Ordering::SeqCst);
+        CANCELLED.store(false, Ordering::SeqCst);
+        INITIAL_FRONTMOST_PID.store(get_frontmost_pid(), Ordering::SeqCst);
+
         unsafe {
-            // reset global state
+            // reset callback-only state
             CURRENT_MODIFIERS = Modifiers::default();
             CURRENT_KEYS = Some(BTreeSet::new());
             LAST_HOTKEY = None;
-            SHOULD_STOP = false;
-            CANCELLED = false;
             LAST_DISPLAY = String::new();
-
-            // capture the frontmost app PID at start (this is the terminal running us)
-            INITIAL_FRONTMOST_PID = get_frontmost_pid();
 
             println!("Recording... Press your key combination, then ESC to confirm.");
             println!("(ESC without keys will cancel. Losing focus will cancel.)\n");
@@ -483,20 +491,20 @@ mod macos {
                 ));
             }
 
-            EVENT_TAP = tap;
+            EVENT_TAP.store(tap, Ordering::SeqCst);
 
             // create run loop source
             let source = CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
             if source.is_null() {
                 CFRelease(tap);
-                EVENT_TAP = std::ptr::null_mut();
+                EVENT_TAP.store(std::ptr::null_mut(), Ordering::SeqCst);
                 println!();
                 return Err(anyhow!("Failed to create run loop source"));
             }
 
             // add to run loop
             let run_loop = CFRunLoopGetCurrent();
-            CURRENT_RUN_LOOP = run_loop;
+            CURRENT_RUN_LOOP.store(run_loop, Ordering::SeqCst);
             CFRunLoopAddSource(run_loop, source, kCFRunLoopCommonModes);
 
             // enable tap
@@ -506,7 +514,7 @@ mod macos {
             let check_focus = std::thread::spawn(|| loop {
                 std::thread::sleep(std::time::Duration::from_millis(100));
 
-                if SHOULD_STOP {
+                if SHOULD_STOP.load(Ordering::SeqCst) {
                     break;
                 }
 
@@ -520,18 +528,18 @@ mod macos {
             // run loop
             CFRunLoopRun();
 
-            // cleanup
-            SHOULD_STOP = true; // signal focus thread to stop
+            // cleanup -- signal focus thread to stop
+            SHOULD_STOP.store(true, Ordering::SeqCst);
             let _ = check_focus.join();
 
-            CURRENT_RUN_LOOP = std::ptr::null_mut();
-            EVENT_TAP = std::ptr::null_mut();
+            CURRENT_RUN_LOOP.store(std::ptr::null_mut(), Ordering::SeqCst);
+            EVENT_TAP.store(std::ptr::null_mut(), Ordering::SeqCst);
             CFRelease(source);
             CFRelease(tap);
 
             println!(); // newline after the status line
 
-            if CANCELLED {
+            if CANCELLED.load(Ordering::SeqCst) {
                 return Err(anyhow!("Recording cancelled"));
             }
 
@@ -545,12 +553,15 @@ mod macos {
     // type alias for listener callback to reduce complexity
     type ListenerCallback = Box<dyn Fn(&str, &Hotkey) + Send>;
 
-    // listener state
+    // listener cross-thread state -- accessed from start/stop on different threads
+    static LISTENER_RUNNING: AtomicBool = AtomicBool::new(false);
+    static LISTENER_RUN_LOOP: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
+    static LISTENER_EVENT_TAP: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+    // listener callback-only state -- only accessed from listener_callback or during
+    // init/cleanup when the run loop is not running
     static mut LISTENER_SHORTCUTS: Option<Vec<(Hotkey, String)>> = None;
     static mut LISTENER_CALLBACK: Option<ListenerCallback> = None;
-    static mut LISTENER_RUNNING: bool = false;
-    static mut LISTENER_RUN_LOOP: CFRunLoopRef = std::ptr::null_mut();
-    static mut LISTENER_EVENT_TAP: CFMachPortRef = std::ptr::null_mut();
     static mut LISTENER_PRESSED_KEYS: Option<BTreeSet<String>> = None;
     static mut LISTENER_MODIFIERS: Modifiers = Modifiers {
         ctrl: false,
@@ -559,7 +570,7 @@ mod macos {
         shift: false,
     };
 
-    /// Check if the current key combination matches a registered hotkey
+    #[allow(static_mut_refs)]
     fn check_hotkey_match(
         modifiers: &Modifiers,
         keys: &BTreeSet<String>,
@@ -587,6 +598,7 @@ mod macos {
         None
     }
 
+    #[allow(static_mut_refs)]
     extern "C" fn listener_callback(
         _proxy: CGEventTapProxy,
         event_type: u32,
@@ -596,8 +608,9 @@ mod macos {
         unsafe {
             // handle tap disabled by timeout
             if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
-                if !LISTENER_EVENT_TAP.is_null() {
-                    CGEventTapEnable(LISTENER_EVENT_TAP, true);
+                let tap = LISTENER_EVENT_TAP.load(Ordering::SeqCst);
+                if !tap.is_null() {
+                    CGEventTapEnable(tap, true);
                 }
                 return event;
             }
@@ -654,21 +667,24 @@ mod macos {
         }
     }
 
+    #[allow(static_mut_refs)]
     pub fn start_listener_impl<F>(shortcuts: Vec<(Hotkey, String)>, callback: F) -> Result<()>
     where
         F: Fn(&str, &Hotkey) + Send + 'static,
     {
-        unsafe {
-            if LISTENER_RUNNING {
-                return Err(anyhow!("Listener already running"));
-            }
+        if LISTENER_RUNNING.load(Ordering::SeqCst) {
+            return Err(anyhow!("Listener already running"));
+        }
 
+        unsafe {
             LISTENER_SHORTCUTS = Some(shortcuts);
             LISTENER_CALLBACK = Some(Box::new(callback));
             LISTENER_PRESSED_KEYS = Some(BTreeSet::new());
             LISTENER_MODIFIERS = Modifiers::default();
-            LISTENER_RUNNING = true;
+        }
+        LISTENER_RUNNING.store(true, Ordering::SeqCst);
 
+        unsafe {
             // event mask for key events
             let event_mask: u64 = (1 << K_CG_EVENT_KEY_DOWN)
                 | (1 << K_CG_EVENT_KEY_UP)
@@ -685,7 +701,7 @@ mod macos {
             );
 
             if tap.is_null() {
-                LISTENER_RUNNING = false;
+                LISTENER_RUNNING.store(false, Ordering::SeqCst);
                 LISTENER_SHORTCUTS = None;
                 LISTENER_CALLBACK = None;
                 return Err(anyhow!(
@@ -693,14 +709,14 @@ mod macos {
                 ));
             }
 
-            LISTENER_EVENT_TAP = tap;
+            LISTENER_EVENT_TAP.store(tap, Ordering::SeqCst);
 
             // create run loop source
             let source = CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
             if source.is_null() {
                 CFRelease(tap);
-                LISTENER_EVENT_TAP = std::ptr::null_mut();
-                LISTENER_RUNNING = false;
+                LISTENER_EVENT_TAP.store(std::ptr::null_mut(), Ordering::SeqCst);
+                LISTENER_RUNNING.store(false, Ordering::SeqCst);
                 LISTENER_SHORTCUTS = None;
                 LISTENER_CALLBACK = None;
                 return Err(anyhow!("Failed to create run loop source"));
@@ -708,7 +724,7 @@ mod macos {
 
             // add to run loop
             let run_loop = CFRunLoopGetCurrent();
-            LISTENER_RUN_LOOP = run_loop;
+            LISTENER_RUN_LOOP.store(run_loop, Ordering::SeqCst);
             CFRunLoopAddSource(run_loop, source, kCFRunLoopCommonModes);
 
             // enable tap
@@ -718,9 +734,9 @@ mod macos {
             CFRunLoopRun();
 
             // cleanup
-            LISTENER_RUNNING = false;
-            LISTENER_RUN_LOOP = std::ptr::null_mut();
-            LISTENER_EVENT_TAP = std::ptr::null_mut();
+            LISTENER_RUNNING.store(false, Ordering::SeqCst);
+            LISTENER_RUN_LOOP.store(std::ptr::null_mut(), Ordering::SeqCst);
+            LISTENER_EVENT_TAP.store(std::ptr::null_mut(), Ordering::SeqCst);
             CFRelease(source);
             CFRelease(tap);
             LISTENER_SHORTCUTS = None;
@@ -732,9 +748,10 @@ mod macos {
     }
 
     pub fn stop_listener_impl() {
-        unsafe {
-            if LISTENER_RUNNING && !LISTENER_RUN_LOOP.is_null() {
-                CFRunLoopStop(LISTENER_RUN_LOOP);
+        let run_loop = LISTENER_RUN_LOOP.load(Ordering::SeqCst);
+        if LISTENER_RUNNING.load(Ordering::SeqCst) && !run_loop.is_null() {
+            unsafe {
+                CFRunLoopStop(run_loop);
             }
         }
     }
